@@ -382,6 +382,7 @@ export const Games = {
     setPerms: (id, perms) => api(`/api/games/${encodeURIComponent(id)}/permissions`, { method: 'PUT', body: perms }),
     saveCharacter: (id, character) => api(`/api/games/${encodeURIComponent(id)}/character`, { method: 'PUT', body: { character } }),
     addCustomItem: (id, item) => api(`/api/games/${encodeURIComponent(id)}/items/custom`, { method: 'POST', body: { item } }),
+    addCustomGear: (id, item) => api(`/api/games/${encodeURIComponent(id)}/gear/custom`, { method: 'POST', body: { item } }),
     addDemon: (id, body) => api(`/api/games/${encodeURIComponent(id)}/demons`, { method: 'POST', body }),
     delDemon: (id, demonId) => api(`/api/games/${encodeURIComponent(id)}/demons/${encodeURIComponent(demonId)}`, { method: 'DELETE' }),
 
