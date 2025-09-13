@@ -7,35 +7,6 @@
     }
   ],
   "games": [
-    {
-      "id": "17b0c7e8-9789-4923-94fc-8f8aea2fb55f",
-      "name": "My Campaign",
-      "dmId": "2dbd5fc6-817d-4904-94c9-ff9de128c87d",
-      "players": [
-        {
-          "userId": "2dbd5fc6-817d-4904-94c9-ff9de128c87d",
-          "role": "dm",
-          "character": null
-        }
-      ],
-      "items": {
-        "custom": []
-      },
-      "gear": {
-        "custom": []
-      },
-      "demons": [],
-      "demonPool": {
-        "max": 0,
-        "used": 0
-      },
-      "permissions": {
-        "canEditStats": false,
-        "canEditItems": false,
-        "canEditGear": false,
-        "canEditDemons": false
-      },
-      "invites": []
-    }
+    {}
   ]
 }
