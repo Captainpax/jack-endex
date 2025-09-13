@@ -95,7 +95,12 @@ app.post('/api/games', requireAuth, async (req, res) => {
     gear: { custom: [] },
     demons: [],
     demonPool: { max: 0, used: 0 },
-    permissions: { canEditStats: false },
+    permissions: {
+      canEditStats: false,
+      canEditItems: false,
+      canEditGear: false,
+      canEditDemons: false
+    },
     invites: []
   };
   db.games.push(game);
@@ -155,8 +160,10 @@ app.put('/api/games/:id/character', requireAuth, async (req, res) => {
 
 app.post('/api/games/:id/items/custom', requireAuth, async (req, res) => {
   const db = await readDB();
-  const game = db.games.find(g => g.id === req.params.id);
-  if (!game || game.dmId !== req.session.userId) return res.status(403).json({ error: 'forbidden' });
+  const game = db.games.find(g => g.id === req.params.id && g.players.some(p => p.userId === req.session.userId));
+  if (!game) return res.status(404).json({ error: 'not found' });
+  const isDM = game.dmId === req.session.userId;
+  if (!isDM && !game.permissions.canEditItems) return res.status(403).json({ error: 'forbidden' });
   const item = { id: uuid(), ...(req.body.item || {}) };
   game.items.custom.push(item);
   await writeDB(db);
@@ -165,8 +172,10 @@ app.post('/api/games/:id/items/custom', requireAuth, async (req, res) => {
 
 app.post('/api/games/:id/gear/custom', requireAuth, async (req, res) => {
   const db = await readDB();
-  const game = db.games.find(g => g.id === req.params.id);
-  if (!game || game.dmId !== req.session.userId) return res.status(403).json({ error: 'forbidden' });
+  const game = db.games.find(g => g.id === req.params.id && g.players.some(p => p.userId === req.session.userId));
+  if (!game) return res.status(404).json({ error: 'not found' });
+  const isDM = game.dmId === req.session.userId;
+  if (!isDM && !game.permissions.canEditGear) return res.status(403).json({ error: 'forbidden' });
   const item = { id: uuid(), ...(req.body.item || {}) };
   if (!game.gear) game.gear = { custom: [] };
   game.gear.custom.push(item);
@@ -176,8 +185,10 @@ app.post('/api/games/:id/gear/custom', requireAuth, async (req, res) => {
 
 app.post('/api/games/:id/demons', requireAuth, async (req, res) => {
   const db = await readDB();
-  const game = db.games.find(g => g.id === req.params.id);
-  if (!game || game.dmId !== req.session.userId) return res.status(403).json({ error: 'forbidden' });
+  const game = db.games.find(g => g.id === req.params.id && g.players.some(p => p.userId === req.session.userId));
+  if (!game) return res.status(404).json({ error: 'not found' });
+  const isDM = game.dmId === req.session.userId;
+  if (!isDM && !game.permissions.canEditDemons) return res.status(403).json({ error: 'forbidden' });
   if (game.demons.length >= game.demonPool.max) return res.status(400).json({ error: 'demon pool full' });
   const demon = { id: uuid(), ...req.body };
   game.demons.push(demon);
@@ -188,8 +199,10 @@ app.post('/api/games/:id/demons', requireAuth, async (req, res) => {
 
 app.delete('/api/games/:id/demons/:demonId', requireAuth, async (req, res) => {
   const db = await readDB();
-  const game = db.games.find(g => g.id === req.params.id);
-  if (!game || game.dmId !== req.session.userId) return res.status(403).json({ error: 'forbidden' });
+  const game = db.games.find(g => g.id === req.params.id && g.players.some(p => p.userId === req.session.userId));
+  if (!game) return res.status(404).json({ error: 'not found' });
+  const isDM = game.dmId === req.session.userId;
+  if (!isDM && !game.permissions.canEditDemons) return res.status(403).json({ error: 'forbidden' });
   game.demons = game.demons.filter(d => d.id !== req.params.demonId);
   game.demonPool.used = game.demons.length;
   await writeDB(db);

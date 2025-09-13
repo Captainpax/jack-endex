@@ -111,6 +111,7 @@ export default function App() {
             {tab === "items" && (
                 <ItemsTab
                     game={active}
+                    me={me}
                     onUpdate={async () => {
                         const full = await Games.get(active.id);
                         setActive(full);
@@ -121,6 +122,7 @@ export default function App() {
             {tab === "gear" && (
                 <GearTab
                     game={active}
+                    me={me}
                     onUpdate={async () => {
                         const full = await Games.get(active.id);
                         setActive(full);
@@ -131,6 +133,7 @@ export default function App() {
             {tab === "demons" && (
                 <DemonTab
                     game={active}
+                    me={me}
                     onUpdate={async () => {
                         const full = await Games.get(active.id);
                         setActive(full);
@@ -489,11 +492,14 @@ function Party({ game }) {
 }
 
 // ---------- Items ----------
-function ItemsTab({ game, onUpdate }) {
+function ItemsTab({ game, me, onUpdate }) {
     const [premade, setPremade] = useState([]);
     const [form, setForm] = useState({ name: "", type: "", desc: "" });
     const [busyAdd, setBusyAdd] = useState(false);
     const gearTypes = ["weapon", "armor", "accessory"]; // types reserved for gear
+
+    const isDM = game.dmId === me.id;
+    const canEdit = isDM || game.permissions?.canEditItems;
 
     useEffect(() => {
         let mounted = true;
@@ -546,7 +552,11 @@ function ItemsTab({ game, onUpdate }) {
                         value={form.desc}
                         onChange={(e) => setForm({ ...form, desc: e.target.value })}
                     />
-                    <button className="btn" disabled={!form.name || busyAdd} onClick={() => add(form)}>
+                    <button
+                        className="btn"
+                        disabled={!form.name || busyAdd || !canEdit}
+                        onClick={() => add(form)}
+                    >
                         {busyAdd ? "…" : "Add"}
                     </button>
                 </div>
@@ -579,6 +589,7 @@ function ItemsTab({ game, onUpdate }) {
                             </div>
                             <button
                                 className="btn"
+                                disabled={!canEdit}
                                 onClick={() => add({ name: it.name, type: it.type, desc: it.desc })}
                             >
                                 Add
@@ -593,11 +604,14 @@ function ItemsTab({ game, onUpdate }) {
 }
 
 // ---------- Gear ----------
-function GearTab({ game, onUpdate }) {
+function GearTab({ game, me, onUpdate }) {
     const [premade, setPremade] = useState([]);
     const [form, setForm] = useState({ name: "", type: "", desc: "" });
     const [busyAdd, setBusyAdd] = useState(false);
     const gearTypes = ["weapon", "armor", "accessory"];
+
+    const isDM = game.dmId === me.id;
+    const canEdit = isDM || game.permissions?.canEditGear;
 
     useEffect(() => {
         let mounted = true;
@@ -652,7 +666,11 @@ function GearTab({ game, onUpdate }) {
                         value={form.desc}
                         onChange={(e) => setForm({ ...form, desc: e.target.value })}
                     />
-                    <button className="btn" disabled={!form.name || busyAdd} onClick={() => add(form)}>
+                    <button
+                        className="btn"
+                        disabled={!form.name || busyAdd || !canEdit}
+                        onClick={() => add(form)}
+                    >
                         {busyAdd ? "…" : "Add"}
                     </button>
                 </div>
@@ -685,6 +703,7 @@ function GearTab({ game, onUpdate }) {
                             </div>
                             <button
                                 className="btn"
+                                disabled={!canEdit}
                                 onClick={() => add({ name: it.name, type: it.type, desc: it.desc })}
                             >
                                 Add
@@ -699,7 +718,7 @@ function GearTab({ game, onUpdate }) {
 }
 
 // ---------- Demons ----------
-function DemonTab({ game, onUpdate }) {
+function DemonTab({ game, me, onUpdate }) {
     const [name, setName] = useState("");
     const [arcana, setArc] = useState("");
     const [align, setAlign] = useState("");
@@ -708,6 +727,9 @@ function DemonTab({ game, onUpdate }) {
     const [selected, setSelected] = useState(null);
     const [busyAdd, setBusyAdd] = useState(false);
     const [busySearch, setBusySearch] = useState(false);
+
+    const isDM = game.dmId === me.id;
+    const canEdit = isDM || game.permissions?.canEditDemons;
 
     const add = async () => {
         if (!name) return alert("Enter a demon name");
@@ -772,7 +794,7 @@ function DemonTab({ game, onUpdate }) {
                 <input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
                 <input placeholder="Arcana" value={arcana} onChange={(e) => setArc(e.target.value)} />
                 <input placeholder="Alignment" value={align} onChange={(e) => setAlign(e.target.value)} />
-                <button className="btn" onClick={add} disabled={busyAdd}>
+                <button className="btn" onClick={add} disabled={busyAdd || !canEdit}>
                     {busyAdd ? "…" : "Add Demon"}
                 </button>
             </div>
@@ -871,6 +893,7 @@ function DemonTab({ game, onUpdate }) {
                         </div>
                         <button
                             className="btn"
+                            disabled={!canEdit}
                             onClick={async () => {
                                 try {
                                     await Games.delDemon(game.id, d.id);
