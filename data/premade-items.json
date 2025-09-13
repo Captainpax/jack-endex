@@ -1,0 +1,5 @@
+[
+  { "name": "Healing Potion", "type": "Consumable", "desc": "Restore a small amount of HP" },
+  { "name": "Longsword", "type": "Weapon", "desc": "1d8 slashing damage" },
+  { "name": "Leather Armor", "type": "Armor", "desc": "Light protection" }
+]
