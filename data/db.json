@@ -30,7 +30,10 @@
         "used": 0
       },
       "permissions": {
-        "canEditStats": false
+        "canEditStats": false,
+        "canEditItems": false,
+        "canEditGear": false,
+        "canEditDemons": false
       },
       "invites": []
     }
