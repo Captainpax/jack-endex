@@ -10,21 +10,34 @@ import { Router } from 'express';
 const r = Router();
 const BASE = 'https://persona-compendium.onrender.com';
 
+// Cache the persona endpoint list so we don't hit the upstream on every search
+let cachedList = null;
+let cacheTime = 0;
+const LIST_TTL = 5 * 60 * 1000; // 5 minutes
+
+async function fetchList() {
+    if (cachedList && Date.now() - cacheTime < LIST_TTL) return cachedList;
+    const root = await fetch(BASE + '/');
+    if (!root.ok) throw new Error('upstream error');
+    const data = await root.json();
+    cachedList = data["Persona Compendium API is live! Here's a list of all possible endpoints: /personas/"] || [];
+    cacheTime = Date.now();
+    return cachedList;
+}
+
 // GET /api/personas/search?q=jack
 r.get('/search', async (req, res) => {
     try {
         const q = String(req.query.q || '').trim().toLowerCase();
         if (!q) return res.json([]);
-        const root = await fetch(BASE + '/');
-        if (!root.ok) return res.status(502).json({ error: 'upstream error' });
-        const data = await root.json();
-        const list = data["Persona Compendium API is live! Here's a list of all possible endpoints: /personas/"] || [];
+        const norm = q.replace(/\s+/g, '-');
+        const list = await fetchList();
         // list looks like ["/personas/jack-frost/", ...]
         const hits = list
             .map((p) => String(p))
             .filter((p) => p.startsWith('/personas/') && p.endsWith('/'))
             .map((p) => p.replace('/personas/', '').replace('/', ''))
-            .filter((slug) => slug.includes(q))
+            .filter((slug) => slug.includes(norm))
             .slice(0, 25)
             .map((slug) => ({
                 slug,

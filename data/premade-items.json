@@ -1,5 +1,41 @@
 [
   { "name": "Healing Potion", "type": "Consumable", "desc": "Restore a small amount of HP" },
-  { "name": "Longsword", "type": "Weapon", "desc": "1d8 slashing damage" },
-  { "name": "Leather Armor", "type": "Armor", "desc": "Light protection" }
+  { "name": "Standard Issue Laser Rifle", "type": "Magical Weapon", "desc": "Regulation beam rifle for AMZ recruits" },
+  { "name": "Leather Armor", "type": "Armor", "desc": "Light protection" },
+
+  { "name": "Life Stone", "type": "Restorative", "desc": "Restores 30% HP" },
+  { "name": "Bead", "type": "Restorative", "desc": "Restores 100% HP" },
+  { "name": "Soma", "type": "Restorative", "desc": "Restores 100% HP and MP" },
+  { "name": "Fuji Water", "type": "Restorative", "desc": "Restores 1 HP" },
+  { "name": "Croaka-Cola", "type": "Restorative", "desc": "Restores 5 HP" },
+  { "name": "Bepis", "type": "Restorative", "desc": "Restores 5 HP" },
+  { "name": "Neutrino Grain", "type": "Restorative", "desc": "Restores 5 HP" },
+  { "name": "Slice of Pizza", "type": "Restorative", "desc": "Restores 10 HP. Tasty." },
+  { "name": "9Up", "type": "Restorative", "desc": "Restores 2 MP" },
+  { "name": "Prof. Salt", "type": "Restorative", "desc": "Restores 3 MP" },
+  { "name": "Cronch Bar", "type": "Restorative", "desc": "Restores 3 MP" },
+  { "name": "Blue Bull", "type": "Consumable", "desc": "Evade +2 for 10 mins" },
+  { "name": "Snarlboro", "type": "Consumable", "desc": "Pack of Cigs" },
+  { "name": "OldPorts", "type": "Consumable", "desc": "Pack of Menthols" },
+  { "name": "Native Chiefs", "type": "Consumable", "desc": "Pack of \"Natural\" Cigs" },
+  { "name": "Vitawater", "type": "Restorative", "desc": "Restores 10 HP" },
+  { "name": "Spirit Drop", "type": "Restorative", "desc": "Restores 10 MP" },
+  { "name": "Revival Bead", "type": "Restorative", "desc": "Revives character with 25% HP" },
+  { "name": "Balm of Life", "type": "Restorative", "desc": "Revives character with Full HP" },
+
+  { "name": "Macca", "type": "Tool", "desc": "Legal tender for all debts demonic and domestic" },
+  { "name": "Lockpick", "type": "Tool", "desc": "Small hook and tensioning wrench. Not strong enough to be a weapon." },
+
+  { "name": "Hobo Knife", "type": "Weapon - Knife", "desc": "1d4, +1 Attack, 1H, Slash" },
+  { "name": "PP7", "type": "Weapon - Pistol", "desc": "1d4, +1 Accuracy" },
+  { "name": "DD44", "type": "Weapon - Pistol", "desc": "1d4, +1 Damage" },
+  { "name": "Falcon 2", "type": "Weapon - Pistol", "desc": "1d8, -1 Accuracy" },
+  { "name": "D5K", "type": "Weapon - Submachine Gun", "desc": "1d6, 3xHit, -2 Accuracy" },
+  { "name": "CMP50", "type": "Weapon - Submachine Gun", "desc": "1d4, 3xHit, -1 Damage, +1 Accuracy" },
+  { "name": "AR33", "type": "Weapon - Assault Rifle", "desc": "Standard assault rifle" },
+
+  { "name": "Lab Coat", "type": "Armor - Chest", "desc": "+1 Def, +1 Evade" },
+  { "name": "Flak Jacket", "type": "Armor - Chest", "desc": "+1 Def, +Resist Fire" },
+
+  { "name": "Prayer Beads", "type": "Accessory", "desc": "+1 M.Def, +2 M.Evade" }
 ]
