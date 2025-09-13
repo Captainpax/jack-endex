@@ -139,6 +139,32 @@ app.post('/api/games', requireAuth, async (req, res) => {
     res.json(game);
 });
 
+app.get('/api/games/:id', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const g = (db.games || []).find(g => g && g.id === id);
+    if (!g || !Array.isArray(g.players) || !g.players.some(p => p.userId === req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
+    const out = {
+        id: g.id,
+        name: g.name,
+        dmId: g.dmId,
+        players: Array.isArray(g.players) ? g.players : [],
+        items: g.items && typeof g.items === 'object' ? g.items : { custom: [] },
+        gear: g.gear && typeof g.gear === 'object' ? g.gear : { custom: [] },
+        demons: Array.isArray(g.demons) ? g.demons : [],
+        demonPool: g.demonPool && typeof g.demonPool === 'object' ? g.demonPool : { max: 0, used: 0 },
+        permissions: g.permissions && typeof g.permissions === 'object'
+            ? g.permissions
+            : { canEditStats: false, canEditItems: false, canEditGear: false, canEditDemons: false },
+        invites: Array.isArray(g.invites) ? g.invites : [],
+    };
+
+    res.json(out);
+});
+
 // (the rest of your routes unchanged, but add the same style of defensive checks on g.players, etc.)
 
 // --- Items ---
