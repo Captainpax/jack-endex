@@ -7,6 +7,38 @@
     }
   ],
   "games": [
-    {}
+    {
+      "players": []
+    },
+    {
+      "id": "e83df7ab-71e7-4223-b50d-ea8011a6ad84",
+      "name": "Best DnD Game Ever",
+      "dmId": "2dbd5fc6-817d-4904-94c9-ff9de128c87d",
+      "players": [
+        {
+          "userId": "2dbd5fc6-817d-4904-94c9-ff9de128c87d",
+          "role": "dm",
+          "character": null
+        }
+      ],
+      "items": {
+        "custom": []
+      },
+      "gear": {
+        "custom": []
+      },
+      "demons": [],
+      "demonPool": {
+        "max": 0,
+        "used": 0
+      },
+      "permissions": {
+        "canEditStats": false,
+        "canEditItems": false,
+        "canEditGear": false,
+        "canEditDemons": false
+      },
+      "invites": []
+    }
   ]
 }
