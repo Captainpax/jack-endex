@@ -33,6 +33,20 @@ export class ApiError extends Error {
 
 /** Simple TTL cache */
 const _cache = new Map();
+// Track active API requests for UI effects
+const _activityListeners = new Set();
+let _activeCount = 0;
+
+export function onApiActivity(fn) {
+    _activityListeners.add(fn);
+    fn(_activeCount > 0);
+    return () => _activityListeners.delete(fn);
+}
+
+function notifyActivity() {
+    const active = _activeCount > 0;
+    for (const fn of _activityListeners) fn(active);
+}
 /**
  * @param {string} key
  * @param {any} value
@@ -142,6 +156,9 @@ export function createApi({
      * @param {RequestOptions} [opts]
      */
     async function request(path, opts = {}) {
+        _activeCount++;
+        notifyActivity();
+        try {
         const {
             method = 'GET',
             headers = {},
@@ -274,14 +291,18 @@ export function createApi({
                 if (cacheKey && cacheTTL && typeof cacheTTL === 'number') {
                     cacheSet(cacheKey, out, cacheTTL);
                 }
-                return out;
-            } catch (err) {
+            return out;
+        } catch (err) {
                 attempt++;
                 const ae = /** @type {ApiError} */(err);
                 const retriable = (ae.status === 0 || (ae.status >= 500 && ae.status < 600));
                 if (attempt >= maxAttempts || !retriable) throw err;
                 await sleep(backoff(attempt - 1));
             }
+        }
+        } finally {
+            _activeCount--;
+            notifyActivity();
         }
     }
 
