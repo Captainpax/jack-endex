@@ -31,7 +31,7 @@ r.get('/search', async (req, res) => {
                 name: slug.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ')
             }));
         res.json(hits);
-    } catch (e) {
+    } catch {
         res.status(500).json({ error: 'search failed' });
     }
 });
@@ -44,7 +44,7 @@ r.get('/:slug', async (req, res) => {
         if (!r2.ok) return res.status(r2.status).json({ error: 'persona not found' });
         const json = await r2.json();
         res.json(json);
-    } catch (e) {
+    } catch {
         res.status(500).json({ error: 'lookup failed' });
     }
 });
