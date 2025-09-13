@@ -1,4 +1,35 @@
 {
-  "users": [],
-  "games": []
+  "users": [
+    {
+      "id": "2dbd5fc6-817d-4904-94c9-ff9de128c87d",
+      "username": "CapPax",
+      "pass": "4042d8695b02bf2d$57ffd004496417eac8c42c8e24ff4ef98f2cedc744be560bad356cec4e18e605"
+    }
+  ],
+  "games": [
+    {
+      "id": "17b0c7e8-9789-4923-94fc-8f8aea2fb55f",
+      "name": "My Campaign",
+      "dmId": "2dbd5fc6-817d-4904-94c9-ff9de128c87d",
+      "players": [
+        {
+          "userId": "2dbd5fc6-817d-4904-94c9-ff9de128c87d",
+          "role": "dm",
+          "character": null
+        }
+      ],
+      "items": {
+        "custom": []
+      },
+      "demons": [],
+      "demonPool": {
+        "max": 0,
+        "used": 0
+      },
+      "permissions": {
+        "canEditStats": false
+      },
+      "invites": []
+    }
+  ]
 }
