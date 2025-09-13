@@ -54,7 +54,7 @@ export default function App() {
                 onOpen={async (g) => {
                     const full = await Games.get(g.id);
                     setActive(full);
-                    setTab("sheet");
+                    setTab(full.dmId === me.id ? "party" : "sheet");
                 }}
                 onCreate={async (name) => {
                     await Games.create(name);
@@ -74,17 +74,25 @@ export default function App() {
                 </div>
             </header>
 
-            <div className="tabs">
-                {["sheet", "party", "items", "demons", "settings"].map((k) => (
-                    <div
-                        key={k}
-                        className={"tab" + (tab === k ? " active" : "")}
-                        onClick={() => setTab(k)}
-                    >
-                        {k.toUpperCase()}
+            {(() => {
+                const isDM = active.dmId === me.id;
+                const tabs = isDM
+                    ? ["party", "items", "gear", "demons", "settings"]
+                    : ["sheet", "party", "items", "gear", "demons", "settings"];
+                return (
+                    <div className="tabs">
+                        {tabs.map((k) => (
+                            <div
+                                key={k}
+                                className={"tab" + (tab === k ? " active" : "")}
+                                onClick={() => setTab(k)}
+                            >
+                                {k.toUpperCase()}
+                            </div>
+                        ))}
                     </div>
-                ))}
-            </div>
+                );
+            })()}
 
             {tab === "sheet" && (
                 <Sheet
@@ -102,6 +110,16 @@ export default function App() {
 
             {tab === "items" && (
                 <ItemsTab
+                    game={active}
+                    onUpdate={async () => {
+                        const full = await Games.get(active.id);
+                        setActive(full);
+                    }}
+                />
+            )}
+
+            {tab === "gear" && (
+                <GearTab
                     game={active}
                     onUpdate={async () => {
                         const full = await Games.get(active.id);
@@ -475,6 +493,7 @@ function ItemsTab({ game, onUpdate }) {
     const [premade, setPremade] = useState([]);
     const [form, setForm] = useState({ name: "", type: "", desc: "" });
     const [busyAdd, setBusyAdd] = useState(false);
+    const gearTypes = ["weapon", "armor", "accessory"]; // types reserved for gear
 
     useEffect(() => {
         let mounted = true;
@@ -502,6 +521,10 @@ function ItemsTab({ game, onUpdate }) {
             setBusyAdd(false);
         }
     };
+
+    const itemList = premade.filter(
+        (it) => !gearTypes.some((t) => it.type?.toLowerCase().startsWith(t))
+    );
 
     return (
         <div className="row" style={{ gap: 16 }}>
@@ -544,7 +567,7 @@ function ItemsTab({ game, onUpdate }) {
             <div className="card" style={{ width: 380 }}>
                 <h3>Premade Items</h3>
                 <div className="list" style={{ maxHeight: 420, overflow: "auto" }}>
-                    {premade.map((it, idx) => (
+                    {itemList.map((it, idx) => (
                         <div
                             key={idx}
                             className="row"
@@ -562,7 +585,113 @@ function ItemsTab({ game, onUpdate }) {
                             </button>
                         </div>
                     ))}
-                    {premade.length === 0 && <div style={{ opacity: 0.7 }}>No premade items.</div>}
+                    {itemList.length === 0 && <div style={{ opacity: 0.7 }}>No premade items.</div>}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ---------- Gear ----------
+function GearTab({ game, onUpdate }) {
+    const [premade, setPremade] = useState([]);
+    const [form, setForm] = useState({ name: "", type: "", desc: "" });
+    const [busyAdd, setBusyAdd] = useState(false);
+    const gearTypes = ["weapon", "armor", "accessory"];
+
+    useEffect(() => {
+        let mounted = true;
+        (async () => {
+            try {
+                const data = await Items.premade();
+                if (mounted) setPremade(Array.isArray(data) ? data : []);
+            } catch (e) {
+                console.error(e);
+            }
+        })();
+        return () => {
+            mounted = false;
+        };
+    }, []);
+
+    const add = async (item) => {
+        if (!item?.name) return alert("Item needs a name");
+        try {
+            setBusyAdd(true);
+            await Games.addCustomGear(game.id, item);
+            await onUpdate();
+            setForm({ name: "", type: "", desc: "" });
+        } catch (e) {
+            alert(e.message);
+        } finally {
+            setBusyAdd(false);
+        }
+    };
+
+    const gearList = premade.filter((it) =>
+        gearTypes.some((t) => it.type?.toLowerCase().startsWith(t))
+    );
+
+    return (
+        <div className="row" style={{ gap: 16 }}>
+            <div className="card" style={{ flex: 1 }}>
+                <h3>Custom Gear</h3>
+                <div className="row" style={{ gap: 8 }}>
+                    <input
+                        placeholder="Name"
+                        value={form.name}
+                        onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    />
+                    <input
+                        placeholder="Type"
+                        value={form.type}
+                        onChange={(e) => setForm({ ...form, type: e.target.value })}
+                    />
+                    <input
+                        placeholder="Description"
+                        value={form.desc}
+                        onChange={(e) => setForm({ ...form, desc: e.target.value })}
+                    />
+                    <button className="btn" disabled={!form.name || busyAdd} onClick={() => add(form)}>
+                        {busyAdd ? "…" : "Add"}
+                    </button>
+                </div>
+
+                <h4 style={{ marginTop: 16 }}>Game Custom Gear</h4>
+                <div className="list">
+                    {(game.gear?.custom ?? []).map((it) => (
+                        <div key={it.id} className="row" style={{ justifyContent: "space-between" }}>
+                            <div>
+                                <b>{it.name}</b> — {it.type}
+                                <div style={{ opacity: 0.85, fontSize: 12 }}>{it.desc}</div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            <div className="card" style={{ width: 380 }}>
+                <h3>Premade Gear</h3>
+                <div className="list" style={{ maxHeight: 420, overflow: "auto" }}>
+                    {gearList.map((it, idx) => (
+                        <div
+                            key={idx}
+                            className="row"
+                            style={{ justifyContent: "space-between", alignItems: "center" }}
+                        >
+                            <div>
+                                <b>{it.name}</b> <span className="pill">{it.type || "—"}</span>
+                                <div style={{ opacity: 0.8, fontSize: 12 }}>{it.desc}</div>
+                            </div>
+                            <button
+                                className="btn"
+                                onClick={() => add({ name: it.name, type: it.type, desc: it.desc })}
+                            >
+                                Add
+                            </button>
+                        </div>
+                    ))}
+                    {gearList.length === 0 && <div style={{ opacity: 0.7 }}>No premade gear.</div>}
                 </div>
             </div>
         </div>
@@ -715,6 +844,13 @@ function DemonTab({ game, onUpdate }) {
                                 <span className="pill">END {selected.endurance}</span>
                                 <span className="pill">AGI {selected.agility}</span>
                                 <span className="pill">LUC {selected.luck}</span>
+                            </div>
+                            <div style={{ marginTop: 8, fontSize: 12 }}>
+                                <div><b>Weak:</b> {selected.weak?.join(', ') || '—'}</div>
+                                <div><b>Resist:</b> {selected.resists?.join(', ') || '—'}</div>
+                                <div><b>Null:</b> {selected.nullifies?.join(', ') || '—'}</div>
+                                <div><b>Absorb:</b> {selected.absorbs?.join(', ') || '—'}</div>
+                                <div><b>Reflect:</b> {selected.reflects?.join(', ') || '—'}</div>
                             </div>
                         </div>
                     ) : (

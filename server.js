@@ -92,6 +92,7 @@ app.post('/api/games', requireAuth, async (req, res) => {
     dmId: req.session.userId,
     players: [{ userId: req.session.userId, role: 'dm', character: null }],
     items: { custom: [] },
+    gear: { custom: [] },
     demons: [],
     demonPool: { max: 0, used: 0 },
     permissions: { canEditStats: false },
@@ -158,6 +159,17 @@ app.post('/api/games/:id/items/custom', requireAuth, async (req, res) => {
   if (!game || game.dmId !== req.session.userId) return res.status(403).json({ error: 'forbidden' });
   const item = { id: uuid(), ...(req.body.item || {}) };
   game.items.custom.push(item);
+  await writeDB(db);
+  res.json(item);
+});
+
+app.post('/api/games/:id/gear/custom', requireAuth, async (req, res) => {
+  const db = await readDB();
+  const game = db.games.find(g => g.id === req.params.id);
+  if (!game || game.dmId !== req.session.userId) return res.status(403).json({ error: 'forbidden' });
+  const item = { id: uuid(), ...(req.body.item || {}) };
+  if (!game.gear) game.gear = { custom: [] };
+  game.gear.custom.push(item);
   await writeDB(db);
   res.json(item);
 });

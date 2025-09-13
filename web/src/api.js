@@ -245,7 +245,12 @@ export function createApi({
                 }
                 const err = new ApiError(shape);
                 if (err.status === 401 && typeof onUnauthorized === 'function') {
-                    try { onUnauthorized(err); } catch {}
+                    try {
+                        onUnauthorized(err);
+                    } catch (e) {
+                        // swallow secondary errors from unauthorized handler but log for debugging
+                        console.error(e);
+                    }
                 }
                 throw err;
             }
@@ -338,9 +343,9 @@ export const apiClient = createApi({
         // e.g., return localStorage.getItem('noona_token') || undefined;
         return undefined;
     },
-    onUnauthorized: (err) => {
+    onUnauthorized: () => {
         // e.g., dispatch logout, redirect, or toast
-        // console.warn('Unauthorized', err);
+        // console.warn('Unauthorized');
     },
 });
 
@@ -377,6 +382,7 @@ export const Games = {
     setPerms: (id, perms) => api(`/api/games/${encodeURIComponent(id)}/permissions`, { method: 'PUT', body: perms }),
     saveCharacter: (id, character) => api(`/api/games/${encodeURIComponent(id)}/character`, { method: 'PUT', body: { character } }),
     addCustomItem: (id, item) => api(`/api/games/${encodeURIComponent(id)}/items/custom`, { method: 'POST', body: { item } }),
+    addCustomGear: (id, item) => api(`/api/games/${encodeURIComponent(id)}/gear/custom`, { method: 'POST', body: { item } }),
     addDemon: (id, body) => api(`/api/games/${encodeURIComponent(id)}/demons`, { method: 'POST', body }),
     delDemon: (id, demonId) => api(`/api/games/${encodeURIComponent(id)}/demons/${encodeURIComponent(demonId)}`, { method: 'DELETE' }),
 

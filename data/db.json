@@ -21,6 +21,9 @@
       "items": {
         "custom": []
       },
+      "gear": {
+        "custom": []
+      },
       "demons": [],
       "demonPool": {
         "max": 0,
