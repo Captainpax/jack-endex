@@ -102,6 +102,14 @@ const PLAYER_NAV = [
 
 const RealtimeContext = createContext(null);
 
+const GEAR_TYPE_KEYWORDS = ["weapon", "armor", "accessory"];
+const GEAR_TYPE_PATTERNS = GEAR_TYPE_KEYWORDS.map((keyword) => new RegExp(`\\b${keyword}\\b`, "i"));
+
+function isGearCategory(type) {
+    if (typeof type !== "string") return false;
+    return GEAR_TYPE_PATTERNS.some((pattern) => pattern.test(type));
+}
+
 function parseAppLocation(loc) {
     if (!loc) {
         return { joinCode: null, game: null };
@@ -6684,7 +6692,6 @@ function ItemsTab({ game, me, onUpdate }) {
     const [busyRow, setBusyRow] = useState(null);
     const [selectedPlayerId, setSelectedPlayerId] = useState("");
     const [giveBusyId, setGiveBusyId] = useState(null);
-    const gearTypes = ["weapon", "armor", "accessory"]; // types reserved for gear
 
     const isDM = game.dmId === me.id;
     const canEdit = isDM || game.permissions?.canEditItems;
@@ -6743,12 +6750,8 @@ function ItemsTab({ game, me, onUpdate }) {
         }
     };
 
-    const itemList = premade.filter(
-        (it) => !gearTypes.some((t) => it.type?.toLowerCase().startsWith(t))
-    );
-    const gearList = premade.filter((it) =>
-        gearTypes.some((t) => it.type?.toLowerCase().startsWith(t))
-    );
+    const itemList = premade.filter((it) => !isGearCategory(it.type));
+    const gearList = premade.filter((it) => isGearCategory(it.type));
     const customItems = Array.isArray(game.items?.custom) ? game.items.custom : [];
     const customGear = Array.isArray(game.gear?.custom) ? game.gear.custom : [];
     const libraryItems = [...customItems, ...itemList];
@@ -8023,7 +8026,6 @@ function GearTab({ game, me, onUpdate }) {
     const [busySave, setBusySave] = useState(false);
     const [busyRow, setBusyRow] = useState(null);
     const [selectedPlayerId, setSelectedPlayerId] = useState("");
-    const gearTypes = ["weapon", "armor", "accessory"];
 
     const isDM = game.dmId === me.id;
     const canEdit = isDM || game.permissions?.canEditGear;
@@ -8084,9 +8086,7 @@ function GearTab({ game, me, onUpdate }) {
         }
     };
 
-    const gearList = premade.filter((it) =>
-        gearTypes.some((t) => it.type?.toLowerCase().startsWith(t))
-    );
+    const gearList = premade.filter((it) => isGearCategory(it.type));
     const customGear = Array.isArray(game.gear?.custom) ? game.gear.custom : [];
     const players = (game.players || []).filter(
         (p) => (p?.role || "").toLowerCase() !== "dm"
