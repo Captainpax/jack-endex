@@ -284,6 +284,7 @@ function findUser(db, userId) {
 function readStoryConfigUpdate(body, game) {
     const current = ensureStoryConfig(game);
     const pollMsRaw = Number(body?.pollIntervalMs);
+    const hasBotToken = Object.prototype.hasOwnProperty.call(body || {}, 'botToken');
     const allowedPlayers = new Set(
         Array.isArray(game.players)
             ? game.players.map((p) => (p && typeof p.userId === 'string' ? p.userId : null)).filter(Boolean)
@@ -304,6 +305,7 @@ function readStoryConfigUpdate(body, game) {
         channelId: readSnowflake(body?.channelId),
         guildId: readSnowflake(body?.guildId),
         webhookUrl: readWebhookUrl(body?.webhookUrl),
+        botToken: hasBotToken ? readBotToken(body?.botToken) : current.botToken,
         allowPlayerPosts: !!body?.allowPlayerPosts,
         pollIntervalMs: Number.isFinite(pollMsRaw)
             ? Math.min(120_000, Math.max(5_000, Math.round(pollMsRaw)))
@@ -424,6 +426,7 @@ function presentStoryConfig(story, { includeSecrets = false } = {}) {
               channelId: '',
               guildId: '',
               webhookUrl: '',
+              botToken: '',
               allowPlayerPosts: false,
               scribeIds: [],
               pollIntervalMs: 15_000,
@@ -437,9 +440,11 @@ function presentStoryConfig(story, { includeSecrets = false } = {}) {
             ? Number(normalized.pollIntervalMs)
             : 15_000,
         webhookConfigured: !!normalized.webhookUrl,
+        botTokenConfigured: !!(normalized.botToken || getDiscordBotToken()),
     };
     if (includeSecrets) {
         output.webhookUrl = normalized.webhookUrl || '';
+        output.botToken = normalized.botToken || '';
     }
     return output;
 }
@@ -469,7 +474,7 @@ function removeStoryWatcher(gameId) {
  */
 function getOrCreateStoryWatcher(game) {
     const story = ensureStoryConfig(game);
-    const token = getDiscordBotToken();
+    const token = story.botToken || getDiscordBotToken();
     if (!token || !story.channelId) {
         removeStoryWatcher(game.id);
         return null;
@@ -503,7 +508,7 @@ function getOrCreateStoryWatcher(game) {
  */
 function getStorySnapshot(game) {
     const story = ensureStoryConfig(game);
-    const token = getDiscordBotToken();
+    const token = story.botToken || getDiscordBotToken();
     if (!token) {
         removeStoryWatcher(game.id);
         return {
@@ -511,7 +516,7 @@ function getStorySnapshot(game) {
             status: {
                 enabled: false,
                 phase: 'missing_token',
-                error: 'Discord bot token missing on the server.',
+                error: 'No Discord bot token configured for this campaign.',
                 pollIntervalMs: story.pollIntervalMs,
                 channel: null,
             },
@@ -650,16 +655,31 @@ function readWebhookUrl(value) {
 }
 
 /**
+ * Normalize a Discord bot token string. Tokens are opaque, so we simply trim
+ * surrounding whitespace and clamp the length to a reasonable limit.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+function readBotToken(value) {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    if (!trimmed) return '';
+    return trimmed.slice(0, 256);
+}
+
+/**
  * Ensure the story configuration is normalized on the game object.
  *
  * @param {any} game
- * @returns {{ channelId: string, guildId: string, webhookUrl: string, allowPlayerPosts: boolean, scribeIds: string[], pollIntervalMs: number }}
+ * @returns {{ channelId: string, guildId: string, webhookUrl: string, botToken: string, allowPlayerPosts: boolean, scribeIds: string[], pollIntervalMs: number }}
  */
 function ensureStoryConfig(game) {
     const raw = game && typeof game.story === 'object' ? game.story : {};
     const channelId = readSnowflake(raw.channelId);
     const guildId = readSnowflake(raw.guildId);
     const webhookUrl = readWebhookUrl(raw.webhookUrl);
+    const botToken = readBotToken(raw.botToken);
     const allowPlayerPosts = !!raw.allowPlayerPosts;
     const pollMsRaw = Number(raw.pollIntervalMs);
     const pollIntervalMs = Number.isFinite(pollMsRaw)
@@ -684,6 +704,7 @@ function ensureStoryConfig(game) {
         channelId,
         guildId,
         webhookUrl,
+        botToken,
         allowPlayerPosts,
         scribeIds,
         pollIntervalMs,
@@ -877,6 +898,7 @@ app.post('/api/games', requireAuth, async (req, res) => {
             channelId: '',
             guildId: '',
             webhookUrl: '',
+            botToken: '',
             allowPlayerPosts: false,
             scribeIds: [],
             pollIntervalMs: 15_000,
@@ -1694,7 +1716,11 @@ app.get('/api/games/:id/story-log', requireAuth, async (req, res) => {
     });
 });
 
-app.put('/api/games/:id/story-config', requireAuth, async (req, res) => {
+const storyConfigRouter = express.Router({ mergeParams: true });
+
+storyConfigRouter.use(requireAuth);
+
+storyConfigRouter.put('/', async (req, res) => {
     const { id } = req.params || {};
     const db = await readDB();
     const game = getGame(db, id);
@@ -1718,6 +1744,8 @@ app.put('/api/games/:id/story-config', requireAuth, async (req, res) => {
         story: presentStoryConfig(game.story, { includeSecrets: true }),
     });
 });
+
+app.use('/api/games/:id/story-config', storyConfigRouter);
 
 app.post('/api/games/:id/story-log/messages', requireAuth, async (req, res) => {
     const { id } = req.params || {};
