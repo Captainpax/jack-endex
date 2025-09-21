@@ -910,7 +910,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(path.join(__dirname, 'dist')));
 
 // centralized error handler (prevents crashing the process)
-app.use((err, _req, res) => {
+app.use((err, _req, res, next) => {
+    if (res.headersSent) {
+        return next(err);
+    }
     console.error(err);
     res.status(500).json({ error: 'server_error' });
 });
