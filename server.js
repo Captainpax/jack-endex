@@ -17,6 +17,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const loadedEnvKeys = new Set();
 const storyWatchers = new Map();
 const storySubscribers = new Map();
+const gameSubscribers = new Map();
 const userSockets = new Map();
 const pendingPersonaRequests = new Map();
 const pendingTrades = new Map();
@@ -137,6 +138,7 @@ function ensureGameShape(game) {
     }
     if (!Array.isArray(game.invites)) game.invites = [];
     game.story = ensureStoryConfig(game);
+    game.worldSkills = ensureWorldSkills(game);
     return game;
 }
 
@@ -153,6 +155,90 @@ function ensureInventoryItem(item) {
 }
 
 const GEAR_SLOTS = ['weapon', 'armor', 'accessory'];
+const ABILITY_CODES = new Set(['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']);
+
+const DEFAULT_WORLD_SKILLS = [
+    { id: 'balance', key: 'balance', label: 'Balance', ability: 'DEX' },
+    { id: 'bluff', key: 'bluff', label: 'Bluff', ability: 'CHA' },
+    { id: 'climb', key: 'climb', label: 'Climb', ability: 'STR' },
+    { id: 'concentration', key: 'concentration', label: 'Concentration', ability: 'CON' },
+    { id: 'craftGeneral', key: 'craftGeneral', label: 'Craft (General)', ability: 'INT' },
+    { id: 'craftKnowledge', key: 'craftKnowledge', label: 'Craft (Knowledge)', ability: 'INT' },
+    { id: 'craftMagic', key: 'craftMagic', label: 'Craft (Magic)', ability: 'INT' },
+    { id: 'diplomacy', key: 'diplomacy', label: 'Diplomacy', ability: 'CHA' },
+    { id: 'disableDevice', key: 'disableDevice', label: 'Disable Device', ability: 'DEX' },
+    { id: 'disguise', key: 'disguise', label: 'Disguise', ability: 'CHA' },
+    { id: 'escapeArtist', key: 'escapeArtist', label: 'Escape Artist', ability: 'DEX' },
+    { id: 'gatherInformation', key: 'gatherInformation', label: 'Gather Information', ability: 'CHA' },
+    { id: 'handleAnimal', key: 'handleAnimal', label: 'Handle Animal', ability: 'CHA' },
+    { id: 'heal', key: 'heal', label: 'Heal', ability: 'WIS' },
+    { id: 'hide', key: 'hide', label: 'Hide', ability: 'DEX' },
+    { id: 'intimidate', key: 'intimidate', label: 'Intimidate', ability: 'CHA' },
+    { id: 'jump', key: 'jump', label: 'Jump', ability: 'STR' },
+    { id: 'knowledgeArcana', key: 'knowledgeArcana', label: 'Knowledge (Arcana)', ability: 'INT' },
+    { id: 'knowledgeReligion', key: 'knowledgeReligion', label: 'Knowledge (Religion)', ability: 'INT' },
+    { id: 'knowledgePlanes', key: 'knowledgePlanes', label: 'Knowledge (The Planes)', ability: 'INT' },
+    { id: 'listen', key: 'listen', label: 'Listen', ability: 'WIS' },
+    { id: 'moveSilently', key: 'moveSilently', label: 'Move Silently', ability: 'DEX' },
+    { id: 'negotiation', key: 'negotiation', label: 'Negotiation', ability: 'CHA' },
+    { id: 'perform', key: 'perform', label: 'Perform', ability: 'CHA' },
+    { id: 'ride', key: 'ride', label: 'Ride', ability: 'DEX' },
+    { id: 'senseMotive', key: 'senseMotive', label: 'Sense Motive', ability: 'WIS' },
+    { id: 'sleightOfHand', key: 'sleightOfHand', label: 'Sleight of Hand', ability: 'DEX' },
+    { id: 'spellcraft', key: 'spellcraft', label: 'Spellcraft', ability: 'INT' },
+    { id: 'spot', key: 'spot', label: 'Spot', ability: 'WIS' },
+    { id: 'survival', key: 'survival', label: 'Survival', ability: 'WIS' },
+    { id: 'swim', key: 'swim', label: 'Swim', ability: 'STR' },
+    { id: 'useRope', key: 'useRope', label: 'Use Rope', ability: 'DEX' },
+];
+
+function slugifyWorldSkillLabel(label) {
+    const base = label
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    return base || `skill-${uuid().slice(0, 8)}`;
+}
+
+function normalizeWorldSkillEntry(entry, seen) {
+    if (!entry || typeof entry !== 'object') return null;
+    const label = sanitizeText(entry.label ?? entry.name).trim();
+    if (!label) return null;
+    const abilityRaw = typeof entry.ability === 'string' ? entry.ability.trim().toUpperCase() : '';
+    const ability = ABILITY_CODES.has(abilityRaw) ? abilityRaw : 'INT';
+    let id = typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : null;
+    if (!id && typeof entry.key === 'string' && entry.key.trim()) id = entry.key.trim();
+    if (!id) id = slugifyWorldSkillLabel(label);
+    let unique = id;
+    let suffix = 1;
+    while (seen.has(unique)) {
+        suffix += 1;
+        unique = `${id}-${suffix}`;
+    }
+    seen.add(unique);
+    return { id: unique, key: unique, label, ability };
+}
+
+function ensureWorldSkills(game) {
+    if (!game || typeof game !== 'object') return [];
+    const source = Array.isArray(game.worldSkills) ? game.worldSkills : DEFAULT_WORLD_SKILLS;
+    const allowEmpty = Array.isArray(game.worldSkills);
+    const seen = new Set();
+    const normalized = [];
+    for (const entry of source) {
+        const skill = normalizeWorldSkillEntry(entry, seen);
+        if (skill) normalized.push(skill);
+    }
+    if (normalized.length === 0 && !allowEmpty) {
+        seen.clear();
+        for (const entry of DEFAULT_WORLD_SKILLS) {
+            const skill = normalizeWorldSkillEntry(entry, seen);
+            if (skill) normalized.push(skill);
+        }
+    }
+    game.worldSkills = normalized;
+    return normalized;
+}
 
 function ensureGearEntry(item) {
     if (!item || typeof item !== 'object') return null;
@@ -242,6 +328,15 @@ function saveGame(db, updated) {
     const idx = (db.games || []).findIndex((g) => g && g.id === updated.id);
     if (idx === -1) return;
     db.games[idx] = updated;
+}
+
+async function persistGame(db, game, { reason, actorId, broadcast = true } = {}) {
+    if (!db || !game) return;
+    saveGame(db, game);
+    await writeDB(db);
+    if (broadcast && game.id) {
+        broadcastGameUpdate(game.id, { reason, actorId });
+    }
 }
 
 function isDM(game, userId) {
@@ -695,6 +790,32 @@ function removeSocketForUser(userId, ws) {
     }
 }
 
+function broadcastGameMessage(gameId, payload) {
+    if (!gameId) return;
+    const sockets = gameSubscribers.get(gameId);
+    if (!sockets || sockets.size === 0) return;
+    for (const ws of sockets) {
+        sendJson(ws, payload);
+    }
+}
+
+function broadcastGameUpdate(gameId, extra = {}) {
+    if (!gameId) return;
+    const payload = {
+        type: 'game:update',
+        gameId,
+        updatedAt: new Date().toISOString(),
+    };
+    if (extra && extra.reason) payload.reason = extra.reason;
+    if (extra && extra.actorId) payload.actorId = extra.actorId;
+    broadcastGameMessage(gameId, payload);
+}
+
+function broadcastGameDeleted(gameId) {
+    if (!gameId) return;
+    broadcastGameMessage(gameId, { type: 'game:deleted', gameId });
+}
+
 function subscribeStoryChannel(ws, gameId) {
     if (!ws.storySubscriptions) ws.storySubscriptions = new Set();
     if (!gameId || ws.storySubscriptions.has(gameId)) return;
@@ -705,6 +826,15 @@ function subscribeStoryChannel(ws, gameId) {
     deliverStorySnapshot(ws, gameId).catch((err) => {
         console.warn('Failed to send initial story snapshot', err);
     });
+}
+
+function subscribeGameChannel(ws, gameId) {
+    if (!gameId) return;
+    if (!ws.gameSubscriptions) ws.gameSubscriptions = new Set();
+    if (ws.gameSubscriptions.has(gameId)) return;
+    ws.gameSubscriptions.add(gameId);
+    const set = getOrCreateSet(gameSubscribers, gameId);
+    set.add(ws);
 }
 
 function subscribeTradeChannel(ws, gameId) {
@@ -728,12 +858,28 @@ function unsubscribeStoryChannel(ws, gameId) {
     }
 }
 
+function unsubscribeGameChannel(ws, gameId) {
+    if (!ws.gameSubscriptions || !gameId) return;
+    ws.gameSubscriptions.delete(gameId);
+    const set = gameSubscribers.get(gameId);
+    if (set) {
+        set.delete(ws);
+        if (set.size === 0) gameSubscribers.delete(gameId);
+    }
+}
+
 function cleanupSocket(ws) {
     if (!ws) return;
     if (ws.storySubscriptions) {
         for (const gameId of ws.storySubscriptions) {
             unsubscribeStoryChannel(ws, gameId);
         }
+    }
+    if (ws.gameSubscriptions) {
+        for (const gameId of ws.gameSubscriptions) {
+            unsubscribeGameChannel(ws, gameId);
+        }
+        ws.gameSubscriptions.clear();
     }
     if (ws.tradeSubscriptions) {
         ws.tradeSubscriptions.clear();
@@ -1195,8 +1341,7 @@ async function finalizeTrade(trade) {
     transfer(giver, receiver, giverEntries.entries);
     transfer(receiver, giver, receiverEntries.entries);
 
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game, { reason: 'trade:completed' });
 
     if (trade.timeout) clearTimeout(trade.timeout);
     trade.status = 'completed';
@@ -1381,6 +1526,8 @@ async function handleSocketMessage(ws, data) {
                 } else if (channel === 'trade') {
                     subscribeTradeChannel(ws, gameId);
                     await sendOpenTradesToSocket(ws, gameId);
+                } else if (channel === 'game') {
+                    subscribeGameChannel(ws, gameId);
                 }
                 break;
             }
@@ -1392,6 +1539,8 @@ async function handleSocketMessage(ws, data) {
                     unsubscribeStoryChannel(ws, gameId);
                 } else if (channel === 'trade') {
                     unsubscribeTradeChannel(ws, gameId);
+                } else if (channel === 'game') {
+                    unsubscribeGameChannel(ws, gameId);
                 }
                 break;
             }
@@ -1820,8 +1969,7 @@ app.post('/api/games/:id/invites', requireAuth, async (req, res) => {
         uses: 0,
     };
     invites.push(invite);
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     res.json({ code, joinUrl: `/join/${code}` });
 });
 
@@ -1850,8 +1998,7 @@ app.post('/api/games/join/:code', requireAuth, async (req, res) => {
         : inv
     );
 
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     res.json({ ok: true, gameId: game.id });
 });
 
@@ -1875,8 +2022,7 @@ app.delete('/api/games/:id/players/:playerId', requireAuth, async (req, res) => 
     }
 
     game.players = (game.players || []).filter((p) => p && p.userId !== playerId);
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     res.json({ ok: true });
 });
 
@@ -1898,8 +2044,7 @@ app.put('/api/games/:id/permissions', requireAuth, async (req, res) => {
         canEditGear: !!perms.canEditGear,
         canEditDemons: !!perms.canEditDemons,
     };
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     res.json(game.permissions);
 });
 
@@ -1927,8 +2072,126 @@ app.put('/api/games/:id/character', requireAuth, async (req, res) => {
         slot.character = character ?? null;
     }
 
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
+    res.json({ ok: true });
+});
+
+// --- World skills ---
+app.post('/api/games/:id/world-skills', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const list = ensureWorldSkills(game);
+    const payload = req.body?.skill || req.body || {};
+    const seen = new Set(list.map((skill) => skill.id));
+    const entry = normalizeWorldSkillEntry(payload, seen);
+    if (!entry) {
+        return res.status(400).json({ error: 'invalid_skill' });
+    }
+
+    list.push(entry);
+    if (Array.isArray(game.players)) {
+        for (const player of game.players) {
+            if (!player || !player.character) continue;
+            if (!player.character.skills || typeof player.character.skills !== 'object') {
+                player.character.skills = {};
+            }
+            if (!player.character.skills[entry.id]) {
+                player.character.skills[entry.id] = { ranks: 0, misc: 0 };
+            }
+        }
+    }
+
+    await persistGame(db, game, { reason: 'worldSkill:add', actorId: req.session.userId });
+    res.json(entry);
+});
+
+app.put('/api/games/:id/world-skills/:skillId', requireAuth, async (req, res) => {
+    const { id, skillId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const list = ensureWorldSkills(game);
+    const idx = list.findIndex((skill) => skill && skill.id === skillId);
+    if (idx === -1) {
+        return res.status(404).json({ error: 'skill_not_found' });
+    }
+
+    const payload = req.body?.skill || req.body || {};
+    const target = list[idx];
+    let changed = false;
+    const hasLabelField =
+        Object.prototype.hasOwnProperty.call(payload, 'label') ||
+        Object.prototype.hasOwnProperty.call(payload, 'name');
+    if (hasLabelField) {
+        const nextLabel = sanitizeText(payload.label ?? payload.name).trim();
+        if (!nextLabel) {
+            return res.status(400).json({ error: 'invalid_label' });
+        }
+        if (nextLabel !== target.label) {
+            target.label = nextLabel;
+            changed = true;
+        }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(payload, 'ability')) {
+        const abilityRaw = typeof payload.ability === 'string' ? payload.ability.trim().toUpperCase() : '';
+        if (!ABILITY_CODES.has(abilityRaw)) {
+            return res.status(400).json({ error: 'invalid_ability' });
+        }
+        if (abilityRaw !== target.ability) {
+            target.ability = abilityRaw;
+            changed = true;
+        }
+    }
+
+    if (!changed) {
+        return res.status(400).json({ error: 'no_changes' });
+    }
+
+    await persistGame(db, game, { reason: 'worldSkill:update', actorId: req.session.userId });
+    res.json(target);
+});
+
+app.delete('/api/games/:id/world-skills/:skillId', requireAuth, async (req, res) => {
+    const { id, skillId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const list = ensureWorldSkills(game);
+    const next = list.filter((skill) => skill && skill.id !== skillId);
+    if (next.length === list.length) {
+        return res.status(404).json({ error: 'skill_not_found' });
+    }
+    game.worldSkills = next;
+
+    if (Array.isArray(game.players)) {
+        for (const player of game.players) {
+            if (!player?.character || typeof player.character.skills !== 'object') continue;
+            delete player.character.skills[skillId];
+        }
+    }
+
+    await persistGame(db, game, { reason: 'worldSkill:delete', actorId: req.session.userId });
     res.json({ ok: true });
 });
 
@@ -1947,6 +2210,7 @@ app.delete('/api/games/:id', requireAuth, async (req, res) => {
     removeStoryWatcher(gameId);
     db.games = (db.games || []).filter((g) => g && g.id !== gameId);
     await writeDB(db);
+    broadcastGameDeleted(gameId);
     res.json({ ok: true });
 });
 
@@ -1975,8 +2239,7 @@ app.post('/api/games/:id/items/custom', requireAuth, async (req, res) => {
     const list = ensureCustomList(game.items);
     const entry = { id: uuid(), ...item };
     list.push(entry);
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     res.json(entry);
 });
 
@@ -1997,8 +2260,7 @@ app.put('/api/games/:id/items/custom/:itemId', requireAuth, async (req, res) => 
 
     const item = { ...list[idx], ...validateCustomItem(req.body?.item || req.body) };
     list[idx] = item;
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     res.json(item);
 });
 
@@ -2016,8 +2278,7 @@ app.delete('/api/games/:id/items/custom/:itemId', requireAuth, async (req, res) 
     const list = ensureCustomList(game.items);
     const next = list.filter((it) => it && it.id !== itemId);
     game.items.custom = next;
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     res.json({ ok: true });
 });
 
@@ -2058,8 +2319,7 @@ app.post('/api/games/:id/players/:playerId/items', requireAuth, async (req, res)
 
     const list = ensureInventoryList(target);
     list.push(entry);
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     res.json(entry);
 });
 
@@ -2102,8 +2362,7 @@ app.put('/api/games/:id/players/:playerId/items/:itemId', requireAuth, async (re
         entry.amount = normalizeCount(payload.amount ?? payload.qty, entry.amount);
     }
 
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     res.json(entry);
 });
 
@@ -2132,8 +2391,7 @@ app.delete('/api/games/:id/players/:playerId/items/:itemId', requireAuth, async 
         return res.status(404).json({ error: 'item_not_found' });
     }
     target.inventory = next;
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     res.json({ ok: true });
 });
 
@@ -2178,8 +2436,7 @@ app.post('/api/games/:id/players/:playerId/gear/bag', requireAuth, async (req, r
         bag[existingIdx] = entry;
     }
 
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     res.json(entry);
 });
 
@@ -2221,8 +2478,7 @@ app.put('/api/games/:id/players/:playerId/gear/bag/:itemId', requireAuth, async 
         entry.desc = sanitizeText(payload.desc);
     }
 
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     res.json(entry);
 });
 
@@ -2262,8 +2518,7 @@ app.delete('/api/games/:id/players/:playerId/gear/bag/:itemId', requireAuth, asy
         }
     }
 
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     res.json({ ok: true });
 });
 
@@ -2317,8 +2572,7 @@ async function equipSlotPut(req, res) {
         const trimmed = payload.itemId.trim();
         if (!trimmed) {
             slots[slot] = null;
-            saveGame(db, game);
-            await writeDB(db);
+            await persistGame(db, game);
             res.json({ ok: true });
             return;
         }
@@ -2353,8 +2607,7 @@ async function equipSlotPut(req, res) {
 
     slots[slot] = itemId ? { itemId } : null;
 
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     const item = bag.find((it) => it && it.id === itemId) || null;
     res.json({ slot, itemId, item });
 }
@@ -2372,8 +2625,7 @@ async function equipSlotDelete(req, res) {
     }
 
     slots[slot] = null;
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     res.json({ ok: true });
 }
 
@@ -2400,8 +2652,7 @@ app.post('/api/games/:id/gear/custom', requireAuth, async (req, res) => {
     const list = ensureCustomList(game.gear);
     const entry = { id: uuid(), ...item };
     list.push(entry);
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     res.json(entry);
 });
 
@@ -2422,8 +2673,7 @@ app.put('/api/games/:id/gear/custom/:itemId', requireAuth, async (req, res) => {
 
     const item = { ...list[idx], ...validateCustomItem(req.body?.item || req.body) };
     list[idx] = item;
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     res.json(item);
 });
 
@@ -2441,8 +2691,7 @@ app.delete('/api/games/:id/gear/custom/:itemId', requireAuth, async (req, res) =
     const list = ensureCustomList(game.gear);
     const next = list.filter((it) => it && it.id !== itemId);
     game.gear.custom = next;
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     res.json({ ok: true });
 });
 
@@ -2494,8 +2743,7 @@ app.post('/api/games/:id/demons', requireAuth, async (req, res) => {
     if (!demon.name) return res.status(400).json({ error: 'missing name' });
 
     game.demons.push(demon);
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     res.json(demon);
 });
 
@@ -2540,8 +2788,7 @@ app.put('/api/games/:id/demons/:demonId', requireAuth, async (req, res) => {
     };
 
     game.demons[idx] = updated;
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     res.json(updated);
 });
 
@@ -2558,8 +2805,7 @@ app.delete('/api/games/:id/demons/:demonId', requireAuth, async (req, res) => {
 
     const next = game.demons.filter((d) => d && d.id !== demonId);
     game.demons = next;
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
     res.json({ ok: true });
 });
 
@@ -2600,8 +2846,7 @@ storyConfigRouter.put('/', async (req, res) => {
     ensureStoryConfig(game);
     removeStoryWatcher(game.id);
     getOrCreateStoryWatcher(game);
-    saveGame(db, game);
-    await writeDB(db);
+    await persistGame(db, game);
 
     res.json({
         ok: true,
@@ -2741,7 +2986,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(path.join(__dirname, 'dist')));
 
 if (SPA_INDEX) {
-    app.get('/join/:code', (_req, res) => {
+    app.get(['/join/:code', '/game/:id', '/game/:id/*'], (_req, res) => {
         res.sendFile(SPA_INDEX);
     });
 }
@@ -2781,6 +3026,7 @@ const heartbeat = setInterval(() => {
 
 wss.on('connection', (ws) => {
     ws.isAlive = true;
+    ws.gameSubscriptions = ws.gameSubscriptions || new Set();
     addSocketForUser(ws.userId, ws);
     ws.on('message', (data) => {
         handleSocketMessage(ws, data);
@@ -2816,6 +3062,7 @@ server.on('upgrade', (req, socket, head) => {
             ws.userId = req.session.userId;
             ws.storySubscriptions = ws.storySubscriptions || new Set();
             ws.tradeSubscriptions = ws.tradeSubscriptions || new Set();
+            ws.gameSubscriptions = ws.gameSubscriptions || new Set();
             wss.emit('connection', ws, req);
         });
     });

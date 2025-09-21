@@ -92,7 +92,46 @@ const PLAYER_NAV = [
 
 const RealtimeContext = createContext(null);
 
-function useRealtimeConnection({ gameId, refreshGame }) {
+function parseAppLocation(loc) {
+    if (!loc) {
+        return { joinCode: null, game: null };
+    }
+    const pathname = typeof loc.pathname === "string" ? loc.pathname : "";
+    const search = typeof loc.search === "string" ? loc.search : "";
+    const joinMatch = pathname.match(/^\/join\/([^/?#]+)/i);
+    if (joinMatch) {
+        let code = joinMatch[1];
+        try {
+            code = decodeURIComponent(code);
+        } catch {
+            // ignore malformed escape sequences
+        }
+        return { joinCode: code.toUpperCase(), game: null };
+    }
+    const gameMatch = pathname.match(/^\/game\/([^/?#]+)/i);
+    if (gameMatch) {
+        let id = gameMatch[1];
+        try {
+            id = decodeURIComponent(id);
+        } catch {
+            // ignore malformed escape sequences
+        }
+        const params = new URLSearchParams(search);
+        const tabParam = params.get("tab");
+        const playerParam = params.get("player");
+        return {
+            joinCode: null,
+            game: {
+                id,
+                tab: tabParam || null,
+                player: playerParam || null,
+            },
+        };
+    }
+    return { joinCode: null, game: null };
+}
+
+function useRealtimeConnection({ gameId, refreshGame, onGameDeleted }) {
     const [connectionState, setConnectionState] = useState("idle");
     const socketRef = useRef(null);
     const retryRef = useRef(null);
@@ -102,6 +141,47 @@ function useRealtimeConnection({ gameId, refreshGame }) {
     const [personaPrompts, setPersonaPrompts] = useState([]);
     const [personaStatuses, setPersonaStatuses] = useState({});
     const [tradeSessions, setTradeSessions] = useState({});
+    const refreshRef = useRef(refreshGame);
+    const refreshPromiseRef = useRef(null);
+    const refreshQueuedRef = useRef(false);
+    const gameDeletedRef = useRef(onGameDeleted);
+
+    useEffect(() => {
+        refreshRef.current = refreshGame;
+    }, [refreshGame]);
+
+    useEffect(() => {
+        gameDeletedRef.current = onGameDeleted;
+    }, [onGameDeleted]);
+
+    const requestGameRefresh = useCallback(() => {
+        const execute = () => {
+            const fn = refreshRef.current;
+            if (typeof fn !== "function") {
+                refreshPromiseRef.current = null;
+                refreshQueuedRef.current = false;
+                return;
+            }
+            const promise = Promise.resolve()
+                .then(() => fn())
+                .catch((err) => console.warn("Realtime refresh failed", err))
+                .finally(() => {
+                    if (refreshQueuedRef.current) {
+                        refreshQueuedRef.current = false;
+                        execute();
+                    } else {
+                        refreshPromiseRef.current = null;
+                    }
+                });
+            refreshPromiseRef.current = promise;
+        };
+
+        if (refreshPromiseRef.current) {
+            refreshQueuedRef.current = true;
+            return;
+        }
+        execute();
+    }, []);
 
     const sendMessage = useCallback((payload) => {
         const ws = socketRef.current;
@@ -223,12 +303,32 @@ function useRealtimeConnection({ gameId, refreshGame }) {
                 case "trade:completed":
                     if (msg.trade?.gameId !== gameId) return;
                     updateTradeSession(msg.trade, { lastEvent: msg.type, reason: msg.reason || null });
-                    if (msg.type === "trade:completed" && typeof refreshGame === "function") {
-                        refreshGame().catch((err) => console.warn("trade refresh failed", err));
+                    if (msg.type === "trade:completed") {
+                        const fn = refreshRef.current;
+                        if (typeof fn === "function") {
+                            fn().catch((err) => console.warn("trade refresh failed", err));
+                        }
                     }
                     break;
                 case "trade:error":
                     console.warn("Trade error", msg.error);
+                    break;
+                case "game:update":
+                    if (msg.gameId !== gameId) return;
+                    requestGameRefresh();
+                    break;
+                case "game:deleted":
+                    if (msg.gameId !== gameId) return;
+                    try {
+                        const handler = gameDeletedRef.current;
+                        if (handler) {
+                            Promise.resolve(handler(msg)).catch((err) =>
+                                console.warn("onGameDeleted handler failed", err)
+                            );
+                        }
+                    } finally {
+                        // no-op
+                    }
                     break;
                 case "error":
                     console.warn("Realtime error", msg.error);
@@ -250,13 +350,14 @@ function useRealtimeConnection({ gameId, refreshGame }) {
                 ws.onopen = () => {
                     if (cancelled) return;
                     setConnectionState("connected");
-                    try {
-                        ws.send(JSON.stringify({ type: "subscribe", channel: "story", gameId }));
-                        ws.send(JSON.stringify({ type: "subscribe", channel: "trade", gameId }));
-                    } catch (err) {
-                        console.error("subscribe failed", err);
-                    }
-                };
+                      try {
+                          ws.send(JSON.stringify({ type: "subscribe", channel: "story", gameId }));
+                          ws.send(JSON.stringify({ type: "subscribe", channel: "trade", gameId }));
+                          ws.send(JSON.stringify({ type: "subscribe", channel: "game", gameId }));
+                      } catch (err) {
+                          console.error("subscribe failed", err);
+                      }
+                  };
 
                 ws.onmessage = (event) => {
                     if (cancelled) return;
@@ -308,7 +409,7 @@ function useRealtimeConnection({ gameId, refreshGame }) {
             setPersonaStatuses({});
             setTradeSessions({});
         };
-    }, [gameId, refreshGame, updatePersonaStatus, updateTradeSession]);
+    }, [gameId, requestGameRefresh, updatePersonaStatus, updateTradeSession]);
 
     const requestPersona = useCallback(
         (targetUserId, content) =>
@@ -468,7 +569,7 @@ const ARCANA_DATA = [
     { key: "knight", label: "Knight", bonus: "+1 DEX, +1 STR", penalty: "-1 CHA, -1 CON" },
 ];
 
-const WORLD_SKILLS = [
+const DEFAULT_WORLD_SKILLS = [
     { key: "balance", label: "Balance", ability: "DEX" },
     { key: "bluff", label: "Bluff", ability: "CHA" },
     { key: "climb", label: "Climb", ability: "STR" },
@@ -502,6 +603,60 @@ const WORLD_SKILLS = [
     { key: "swim", label: "Swim", ability: "STR" },
     { key: "useRope", label: "Use Rope", ability: "DEX" },
 ];
+
+const ABILITY_KEY_SET = new Set(ABILITY_DEFS.map((ability) => ability.key));
+
+function makeWorldSkillId(label, seen) {
+    const base = label
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+    const fallback = base || `skill-${Math.random().toString(36).slice(2, 8)}`;
+    let id = fallback;
+    let attempt = 1;
+    while (seen.has(id)) {
+        attempt += 1;
+        id = `${fallback}-${attempt}`;
+    }
+    return id;
+}
+
+function normalizeWorldSkillDefs(raw) {
+    const allowEmpty = Array.isArray(raw);
+    const source = allowEmpty ? raw : DEFAULT_WORLD_SKILLS;
+    const seen = new Set();
+    const normalized = [];
+    for (const entry of source || []) {
+        if (!entry || typeof entry !== "object") continue;
+        const labelValue =
+            typeof entry.label === "string"
+                ? entry.label.trim()
+                : typeof entry.name === "string"
+                ? entry.name.trim()
+                : "";
+        if (!labelValue) continue;
+        const abilityRaw =
+            typeof entry.ability === "string" ? entry.ability.trim().toUpperCase() : "";
+        const ability = ABILITY_KEY_SET.has(abilityRaw) ? abilityRaw : "INT";
+        let id = typeof entry.id === "string" && entry.id.trim() ? entry.id.trim() : null;
+        if (!id && typeof entry.key === "string" && entry.key.trim()) id = entry.key.trim();
+        if (!id) id = makeWorldSkillId(labelValue, seen);
+        if (seen.has(id)) {
+            id = makeWorldSkillId(`${labelValue}-${Math.random().toString(36).slice(2, 4)}`, seen);
+        }
+        seen.add(id);
+        normalized.push({ id, key: id, label: labelValue, ability });
+    }
+    if (normalized.length === 0 && !allowEmpty) {
+        return DEFAULT_WORLD_SKILLS.map((skill) => ({
+            id: skill.key,
+            key: skill.key,
+            label: skill.label,
+            ability: ABILITY_KEY_SET.has(skill.ability) ? skill.ability : "INT",
+        }));
+    }
+    return normalized;
+}
 
 const SAVE_DEFS = [
     { key: "fortitude", label: "Fortitude", ability: "CON" },
@@ -573,17 +728,17 @@ function clampNonNegative(value) {
 
 // ---------- App Root ----------
 export default function App() {
+    const initialRouteRef = useRef(
+        typeof window !== "undefined" ? parseAppLocation(window.location) : { joinCode: null, game: null }
+    );
     const [me, setMe] = useState(null);
     const [loading, setLoading] = useState(true);
     const [games, setGames] = useState([]);
     const [active, setActive] = useState(null);
     const [tab, setTab] = useState("sheet");
     const [dmSheetPlayerId, setDmSheetPlayerId] = useState(null);
-    const [pendingJoinCode, setPendingJoinCode] = useState(() => {
-        if (typeof window === "undefined") return null;
-        const match = window.location.pathname.match(/^\/join\/([^/?#]+)/i);
-        return match ? match[1].toUpperCase() : null;
-    });
+    const [pendingJoinCode, setPendingJoinCode] = useState(initialRouteRef.current.joinCode);
+    const [pendingGameLink, setPendingGameLink] = useState(initialRouteRef.current.game);
     const joinInFlight = useRef(false);
 
     const meId = me?.id;
@@ -610,6 +765,21 @@ export default function App() {
     }, [active, dmSheetPlayerId, meId]);
 
     useEffect(() => {
+        if (typeof window === "undefined") return undefined;
+        const handlePopState = () => {
+            const parsed = parseAppLocation(window.location);
+            setPendingJoinCode(parsed.joinCode);
+            setPendingGameLink(parsed.game);
+            if (!parsed.game) {
+                setActive(null);
+                setDmSheetPlayerId(null);
+            }
+        };
+        window.addEventListener("popstate", handlePopState);
+        return () => window.removeEventListener("popstate", handlePopState);
+    }, [setActive, setDmSheetPlayerId, setPendingGameLink, setPendingJoinCode]);
+
+    useEffect(() => {
         let mounted = true;
         (async () => {
             try {
@@ -628,8 +798,80 @@ export default function App() {
     }, []);
 
     useEffect(() => {
+        const link = pendingGameLink;
+        if (!link) return;
+        if (!link.id) {
+            setPendingGameLink(null);
+            return;
+        }
+        if (!me) return;
+
+        const applyStateForGame = (gameData) => {
+            if (!gameData) return;
+            const isDM = gameData.dmId === me.id;
+            const nav = isDM ? DM_NAV : PLAYER_NAV;
+            const allowedTabs = new Set(nav.map((item) => item.key));
+            const fallbackTab = isDM ? "overview" : "sheet";
+            const desiredTab = link.tab && allowedTabs.has(link.tab) ? link.tab : fallbackTab;
+            setTab((prev) => (prev === desiredTab ? prev : desiredTab));
+
+            if (isDM) {
+                let targetPlayerId = null;
+                if (link.player && Array.isArray(gameData.players)) {
+                    const match = gameData.players.find((p) => p && p.userId === link.player);
+                    if (match && match.userId) targetPlayerId = match.userId;
+                }
+                if (!targetPlayerId && Array.isArray(gameData.players)) {
+                    const first = gameData.players.find(
+                        (p) => p && (p.role || "").toLowerCase() !== "dm" && p.userId
+                    );
+                    targetPlayerId = first?.userId || null;
+                }
+                setDmSheetPlayerId((prev) => (prev === targetPlayerId ? prev : targetPlayerId || null));
+            } else {
+                setDmSheetPlayerId((prev) => (prev === null ? prev : null));
+            }
+        };
+
+        if (active?.id === link.id) {
+            applyStateForGame(active);
+            setPendingGameLink(null);
+            return;
+        }
+
+        let cancelled = false;
+        (async () => {
+            try {
+                const full = await Games.get(link.id);
+                if (cancelled) return;
+                setActive(full);
+                applyStateForGame(full);
+            } catch (err) {
+                console.error(err);
+                if (!cancelled) {
+                    if (typeof window !== "undefined") {
+                        window.history.replaceState({}, "", "/");
+                    }
+                    setActive(null);
+                    setDmSheetPlayerId(null);
+                    alert(err.message || "Failed to open game");
+                }
+            } finally {
+                if (!cancelled) {
+                    setPendingGameLink(null);
+                }
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [active, me, pendingGameLink, setActive, setDmSheetPlayerId, setPendingGameLink, setTab]);
+
+    useEffect(() => {
         if (!pendingJoinCode || !me || joinInFlight.current) return;
         joinInFlight.current = true;
+        let joinSucceeded = false;
         (async () => {
             try {
                 const result = await Games.joinByCode(pendingJoinCode);
@@ -647,6 +889,7 @@ export default function App() {
                         setDmSheetPlayerId(null);
                         setTab("sheet");
                     }
+                    joinSucceeded = true;
                 }
             } catch (e) {
                 console.error(e);
@@ -655,11 +898,24 @@ export default function App() {
                 setPendingJoinCode(null);
                 joinInFlight.current = false;
                 if (typeof window !== "undefined") {
-                    window.history.replaceState({}, "", "/");
+                    if (!joinSucceeded) {
+                        window.history.replaceState({}, "", "/");
+                    }
                 }
             }
         })();
     }, [pendingJoinCode, me]);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        if (active && active.id) return;
+        if (pendingGameLink) return;
+        if (pendingJoinCode) return;
+        const current = `${window.location.pathname}${window.location.search}`;
+        if (current !== "/") {
+            window.history.replaceState({}, "", "/");
+        }
+    }, [active, pendingGameLink, pendingJoinCode]);
 
     if (loading) return <Center>Loading…</Center>;
 
@@ -1146,6 +1402,32 @@ function GameView({
         }
     }, [game?.id, refreshGameData]);
 
+    const handleGameDeleted = useCallback(async () => {
+        if (typeof window !== "undefined" && !isDM) {
+            alert("This game has been deleted. Returning to your campaigns.");
+        }
+        setActive(null);
+        setDmSheetPlayerId(null);
+        try {
+            setGames(await Games.list());
+        } catch (err) {
+            console.warn("Failed to refresh games after deletion", err);
+        }
+    }, [isDM, setActive, setDmSheetPlayerId, setGames]);
+
+    useEffect(() => {
+        if (typeof window === "undefined" || !game?.id) return;
+        const params = new URLSearchParams();
+        if (tab) params.set("tab", tab);
+        if (isDM && dmSheetPlayerId) params.set("player", dmSheetPlayerId);
+        const search = params.toString();
+        const next = `/game/${encodeURIComponent(game.id)}${search ? `?${search}` : ""}`;
+        const current = `${window.location.pathname}${window.location.search}`;
+        if (current !== next) {
+            window.history.replaceState({}, "", next);
+        }
+    }, [game?.id, tab, isDM, dmSheetPlayerId]);
+
     useEffect(() => {
         const handler = (evt) => {
             if (!(evt.ctrlKey && evt.altKey)) return;
@@ -1169,7 +1451,11 @@ function GameView({
         return () => window.removeEventListener("keydown", handler);
     }, [handleRefresh, navItems, setTab]);
 
-    const realtime = useRealtimeConnection({ gameId: game.id, refreshGame: refreshGameData });
+    const realtime = useRealtimeConnection({
+        gameId: game.id,
+        refreshGame: refreshGameData,
+        onGameDeleted: handleGameDeleted,
+    });
 
     return (
         <RealtimeContext.Provider value={realtime}>
@@ -1773,6 +2059,7 @@ function formatNumber(value) {
 // ---------- Sheet ----------
 function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     const isDM = game.dmId === me.id;
+    const worldSkills = useMemo(() => normalizeWorldSkillDefs(game.worldSkills), [game.worldSkills]);
     const selectablePlayers = useMemo(
         () => (game.players || []).filter((p) => (p?.role || "").toLowerCase() !== "dm"),
         [game.players]
@@ -1788,13 +2075,13 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
         [game.players, selectedPlayerId]
     );
     const slotCharacter = slot?.character;
-    const [ch, setCh] = useState(() => normalizeCharacter(slotCharacter));
+    const [ch, setCh] = useState(() => normalizeCharacter(slotCharacter, worldSkills));
     const [saving, setSaving] = useState(false);
     const [showWizard, setShowWizard] = useState(false);
 
     useEffect(() => {
-        setCh(normalizeCharacter(slotCharacter));
-    }, [game.id, selectedPlayerId, slotCharacter]);
+        setCh(normalizeCharacter(slotCharacter, worldSkills));
+    }, [game.id, selectedPlayerId, slotCharacter, worldSkills]);
 
     const set = useCallback((path, value) => {
         setCh((prev) => {
@@ -1809,9 +2096,9 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                 ref = ref[key];
             }
             ref[seg.at(-1)] = value;
-            return normalizeCharacter(next);
+            return normalizeCharacter(next, worldSkills);
         });
-    }, []);
+    }, [worldSkills]);
 
     const hasSelection = !isDM || (!!selectedPlayerId && slot && slot.userId);
     const noPlayers = isDM && selectablePlayers.length === 0;
@@ -1899,7 +2186,7 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
 
     const skillRows = useMemo(() => {
         const skills = ch?.skills || {};
-        return WORLD_SKILLS.map((skill) => {
+        return worldSkills.map((skill) => {
             const ranks = clampNonNegative(get(skills, `${skill.key}.ranks`));
             const miscRaw = Number(get(skills, `${skill.key}.misc`));
             const misc = Number.isFinite(miscRaw) ? miscRaw : 0;
@@ -1907,7 +2194,7 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
             const total = abilityMod + ranks + misc;
             return { ...skill, ranks, misc, abilityMod, total };
         });
-    }, [ch?.skills, getMod]);
+    }, [ch?.skills, getMod, worldSkills]);
 
     const spentSP = skillRows.reduce((sum, row) => sum + row.ranks, 0);
     const availableSP =
@@ -1934,10 +2221,10 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
 
     const handleWizardApply = useCallback(
         (payload) => {
-            setCh(normalizeCharacter(payload || {}));
+            setCh(normalizeCharacter(payload || {}, worldSkills));
             setShowWizard(false);
         },
-        []
+        [worldSkills]
     );
 
     const textField = (label, path, props = {}) => (
@@ -2354,13 +2641,14 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                     onApply={handleWizardApply}
                     baseCharacter={ch}
                     playerName={slot?.username || me.username}
+                    worldSkills={worldSkills}
                 />
             )}
         </div>
     );
 }
 
-function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName }) {
+function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName, worldSkills }) {
     const steps = useMemo(
         () => [
             {
@@ -2392,9 +2680,14 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName }
         []
     );
 
+    const normalizedWorldSkills = useMemo(
+        () => normalizeWorldSkillDefs(worldSkills),
+        [worldSkills]
+    );
+
     const initial = useMemo(
-        () => buildInitialWizardState(baseCharacter, playerName),
-        [baseCharacter, playerName]
+        () => buildInitialWizardState(baseCharacter, playerName, normalizedWorldSkills),
+        [baseCharacter, normalizedWorldSkills, playerName]
     );
 
     const [step, setStep] = useState(0);
@@ -2445,7 +2738,7 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName }
     const maxSkillRank = Math.max(4, level * 2 + 2);
 
     const wizardSkillRows = useMemo(() => {
-        return WORLD_SKILLS.map((skill) => {
+        return normalizedWorldSkills.map((skill) => {
             const entry = skills?.[skill.key] || { ranks: 0, misc: 0 };
             const ranks = clampNonNegative(entry.ranks);
             const miscRaw = Number(entry.misc);
@@ -2454,7 +2747,7 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName }
             const total = abilityMod + ranks + misc;
             return { ...skill, ranks, misc, abilityMod, total };
         });
-    }, [abilityMods, skills]);
+    }, [abilityMods, normalizedWorldSkills, skills]);
 
     const spentSP = wizardSkillRows.reduce((sum, row) => sum + row.ranks, 0);
     const availableSP =
@@ -2577,10 +2870,11 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName }
         if (!canApply) return;
         const payload = buildCharacterFromWizard(
             { concept, abilities, resources, skills },
-            baseCharacter
+            baseCharacter,
+            normalizedWorldSkills
         );
         onApply?.(payload);
-    }, [abilities, baseCharacter, canApply, concept, onApply, resources, skills]);
+    }, [abilities, baseCharacter, canApply, concept, normalizedWorldSkills, onApply, resources, skills]);
 
     const conceptField = (label, field, opts = {}) => (
         <label className="field">
@@ -3045,8 +3339,8 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName }
     );
 }
 
-function buildInitialWizardState(character, playerName) {
-    const normalized = normalizeCharacter(character);
+function buildInitialWizardState(character, playerName, worldSkills = DEFAULT_WORLD_SKILLS) {
+    const normalized = normalizeCharacter(character, worldSkills);
     const abilityDefaults = ABILITY_DEFS.reduce((acc, ability) => {
         const value = clampNonNegative(normalized.stats?.[ability.key]);
         acc[ability.key] = value || 0;
@@ -3087,12 +3381,12 @@ function buildInitialWizardState(character, playerName) {
         concept,
         abilities: abilityDefaults,
         resources,
-        skills: normalizeSkills(normalized.skills),
+        skills: normalizeSkills(normalized.skills, worldSkills),
     };
 }
 
-function buildCharacterFromWizard(state, base) {
-    const normalized = normalizeCharacter(base);
+function buildCharacterFromWizard(state, base, worldSkills = DEFAULT_WORLD_SKILLS) {
+    const normalized = normalizeCharacter(base, worldSkills);
     const merged = deepClone(normalized);
     merged.name = state.concept.name?.trim() || "";
     merged.profile = {
@@ -3132,18 +3426,18 @@ function buildCharacterFromWizard(state, base) {
         notes: state.resources.notes || normalized.resources?.notes || "",
         useTP,
     };
-    merged.skills = normalizeSkills(state.skills);
+    merged.skills = normalizeSkills(state.skills, worldSkills);
     return merged;
 }
 
-function normalizeCharacter(raw) {
+function normalizeCharacter(raw, worldSkills = DEFAULT_WORLD_SKILLS) {
     if (!raw || typeof raw !== "object") {
         return {
             name: "",
             profile: {},
             stats: {},
             resources: { useTP: false },
-            skills: normalizeSkills({}),
+            skills: normalizeSkills({}, worldSkills),
         };
     }
     const clone = deepClone(raw);
@@ -3156,11 +3450,11 @@ function normalizeCharacter(raw) {
     } else {
         clone.resources.useTP = !!clone.resources.useTP;
     }
-    clone.skills = normalizeSkills(clone.skills);
+    clone.skills = normalizeSkills(clone.skills, worldSkills);
     return clone;
 }
 
-function normalizeSkills(raw) {
+function normalizeSkills(raw, worldSkills = DEFAULT_WORLD_SKILLS) {
     const out = {};
     if (raw && typeof raw === "object" && !Array.isArray(raw)) {
         for (const [key, value] of Object.entries(raw)) {
@@ -3171,7 +3465,7 @@ function normalizeSkills(raw) {
             out[key] = { ranks, misc };
         }
     }
-    for (const skill of WORLD_SKILLS) {
+    for (const skill of worldSkills) {
         if (!out[skill.key]) out[skill.key] = { ranks: 0, misc: 0 };
     }
     return out;
@@ -4849,6 +5143,100 @@ function formatDuration(ms) {
 // ---------- Items ----------
 function WorldSkillsTab({ game, me, onUpdate }) {
     const isDM = game.dmId === me.id;
+    const abilityDefault = ABILITY_DEFS[0]?.key || "INT";
+    const worldSkills = useMemo(() => normalizeWorldSkillDefs(game.worldSkills), [game.worldSkills]);
+    const [skillForm, setSkillForm] = useState({ label: "", ability: abilityDefault });
+    const [editingSkillId, setEditingSkillId] = useState(null);
+    const editingSkill = useMemo(
+        () => worldSkills.find((skill) => skill.id === editingSkillId) || null,
+        [editingSkillId, worldSkills]
+    );
+    const [skillBusy, setSkillBusy] = useState(false);
+    const [skillRowBusy, setSkillRowBusy] = useState(null);
+
+    const resetSkillForm = useCallback(() => {
+        setEditingSkillId(null);
+        setSkillForm({ label: "", ability: abilityDefault });
+    }, [abilityDefault]);
+
+    useEffect(() => {
+        resetSkillForm();
+    }, [game.id, resetSkillForm]);
+
+    useEffect(() => {
+        if (editingSkill) {
+            setSkillForm({
+                label: editingSkill.label || "",
+                ability: ABILITY_KEY_SET.has(editingSkill.ability)
+                    ? editingSkill.ability
+                    : abilityDefault,
+            });
+        } else {
+            setSkillForm((prev) =>
+                prev.label === "" && prev.ability === abilityDefault
+                    ? prev
+                    : { label: "", ability: abilityDefault }
+            );
+        }
+    }, [editingSkill, abilityDefault]);
+
+    const startEditSkill = useCallback(
+        (skill) => {
+            if (!skill) {
+                resetSkillForm();
+                return;
+            }
+            setEditingSkillId(skill.id);
+        },
+        [resetSkillForm]
+    );
+
+    const handleSkillSubmit = useCallback(async () => {
+        if (!isDM) return;
+        const label = skillForm.label.trim();
+        if (!label) {
+            alert("Skill needs a name");
+            return;
+        }
+        const abilityValue =
+            typeof skillForm.ability === "string"
+                ? skillForm.ability.trim().toUpperCase()
+                : abilityDefault;
+        const ability = ABILITY_KEY_SET.has(abilityValue) ? abilityValue : abilityDefault;
+        try {
+            setSkillBusy(true);
+            if (editingSkillId) {
+                await Games.updateWorldSkill(game.id, editingSkillId, { label, ability });
+            } else {
+                await Games.addWorldSkill(game.id, { label, ability });
+            }
+            await onUpdate?.();
+            resetSkillForm();
+        } catch (e) {
+            alert(e.message);
+        } finally {
+            setSkillBusy(false);
+        }
+    }, [abilityDefault, editingSkillId, game.id, isDM, onUpdate, resetSkillForm, skillForm.ability, skillForm.label]);
+
+    const handleSkillDelete = useCallback(
+        async (skillId) => {
+            if (!isDM || !skillId) return;
+            if (!confirm("Remove this world skill?")) return;
+            try {
+                setSkillRowBusy(skillId);
+                await Games.deleteWorldSkill(game.id, skillId);
+                if (editingSkillId === skillId) resetSkillForm();
+                await onUpdate?.();
+            } catch (e) {
+                alert(e.message);
+            } finally {
+                setSkillRowBusy(null);
+            }
+        },
+        [editingSkillId, game.id, isDM, onUpdate, resetSkillForm]
+    );
+
     const players = useMemo(
         () =>
             (game.players || []).filter(
@@ -4897,15 +5285,15 @@ function WorldSkillsTab({ game, me, onUpdate }) {
     }, [isDM, me.id, playerOptions, selectedPlayerId]);
 
     const character = useMemo(
-        () => normalizeCharacter(activePlayer?.character),
-        [activePlayer?.character]
+        () => normalizeCharacter(activePlayer?.character, worldSkills),
+        [activePlayer?.character, worldSkills]
     );
 
-    const [skills, setSkills] = useState(() => normalizeSkills(character.skills));
+    const [skills, setSkills] = useState(() => normalizeSkills(character.skills, worldSkills));
 
     useEffect(() => {
-        setSkills(normalizeSkills(character.skills));
-    }, [character]);
+        setSkills(normalizeSkills(character.skills, worldSkills));
+    }, [character, worldSkills]);
 
     const abilityMods = useMemo(() => {
         return ABILITY_DEFS.reduce((acc, ability) => {
@@ -4972,7 +5360,7 @@ function WorldSkillsTab({ game, me, onUpdate }) {
     const maxSkillRank = Math.max(4, level * 2 + 2);
 
     const skillRows = useMemo(() => {
-        return WORLD_SKILLS.map((skill) => {
+        return worldSkills.map((skill) => {
             const entry = skills?.[skill.key] || { ranks: 0, misc: 0 };
             const ranks = clampNonNegative(entry.ranks);
             const miscRaw = Number(entry.misc);
@@ -4981,7 +5369,7 @@ function WorldSkillsTab({ game, me, onUpdate }) {
             const total = abilityMod + ranks + misc;
             return { ...skill, ranks, misc, abilityMod, total };
         });
-    }, [abilityMods, skills]);
+    }, [abilityMods, skills, worldSkills]);
 
     const spentSP = useMemo(
         () => skillRows.reduce((sum, row) => sum + row.ranks, 0),
@@ -5097,9 +5485,9 @@ function WorldSkillsTab({ game, me, onUpdate }) {
         }
         try {
             setSaving(true);
-            const base = normalizeCharacter(activePlayer.character);
+            const base = normalizeCharacter(activePlayer.character, worldSkills);
             const nextCharacter = deepClone(base);
-            nextCharacter.skills = normalizeSkills(skills);
+            nextCharacter.skills = normalizeSkills(skills, worldSkills);
             if (isDM && activePlayer.userId && activePlayer.userId !== me.id) {
                 await Games.saveCharacter(game.id, {
                     userId: activePlayer.userId,
@@ -5114,10 +5502,109 @@ function WorldSkillsTab({ game, me, onUpdate }) {
         } finally {
             setSaving(false);
         }
-    }, [activePlayer, game.id, isDM, me.id, onUpdate, saving, skills]);
+    }, [activePlayer, game.id, isDM, me.id, onUpdate, saving, skills, worldSkills]);
 
     return (
         <div className="col" style={{ display: "grid", gap: 16 }}>
+            {isDM && (
+                <div className="card" style={{ display: "grid", gap: 12 }}>
+                    <div>
+                        <h3>Manage world skills</h3>
+                        <p className="text-muted text-small">
+                            Add, rename, or remove entries the party can invest ranks into.
+                        </p>
+                    </div>
+                    <div
+                        className="row"
+                        style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}
+                    >
+                        <input
+                            placeholder="Skill name"
+                            value={skillForm.label}
+                            onChange={(e) => setSkillForm((prev) => ({
+                                ...prev,
+                                label: e.target.value,
+                            }))}
+                            style={{ flex: 2, minWidth: 200 }}
+                        />
+                        <label className="field" style={{ minWidth: 160 }}>
+                            <span className="field__label">Ability</span>
+                            <select
+                                value={skillForm.ability}
+                                onChange={(e) =>
+                                    setSkillForm((prev) => ({
+                                        ...prev,
+                                        ability: e.target.value,
+                                    }))
+                                }
+                            >
+                                {ABILITY_DEFS.map((ability) => (
+                                    <option key={ability.key} value={ability.key}>
+                                        {ability.key} · {ability.label}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                        <div className="row" style={{ gap: 8 }}>
+                            <button
+                                className="btn"
+                                onClick={handleSkillSubmit}
+                                disabled={skillBusy || !skillForm.label.trim()}
+                            >
+                                {skillBusy ? "…" : editingSkill ? "Save" : "Add"}
+                            </button>
+                            {editingSkill && (
+                                <button
+                                    className="btn"
+                                    onClick={resetSkillForm}
+                                    disabled={skillBusy}
+                                >
+                                    Cancel
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                    <div className="list" style={{ maxHeight: 240, overflow: "auto", gap: 8 }}>
+                        {worldSkills.length === 0 ? (
+                            <div className="text-muted">No world skills configured yet.</div>
+                        ) : (
+                            worldSkills.map((skill) => (
+                                <div
+                                    key={skill.id}
+                                    className="row"
+                                    style={{
+                                        justifyContent: "space-between",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        flexWrap: "wrap",
+                                    }}
+                                >
+                                    <div className="row" style={{ gap: 8, alignItems: "center" }}>
+                                        <strong>{skill.label}</strong>
+                                        <span className="pill light">{skill.ability}</span>
+                                    </div>
+                                    <div className="row" style={{ gap: 6 }}>
+                                        <button
+                                            className="btn"
+                                            onClick={() => startEditSkill(skill)}
+                                            disabled={skillBusy || skillRowBusy === skill.id}
+                                        >
+                                            Edit
+                                        </button>
+                                        <button
+                                            className="btn"
+                                            onClick={() => handleSkillDelete(skill.id)}
+                                            disabled={skillRowBusy === skill.id || skillBusy}
+                                        >
+                                            {skillRowBusy === skill.id ? "…" : "Remove"}
+                                        </button>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            )}
             <div className="card" style={{ display: "grid", gap: 16 }}>
                 <div
                     className="row"
@@ -5298,62 +5785,68 @@ function WorldSkillsTab({ game, me, onUpdate }) {
                             ))}
                         </div>
 
-                        <div className="sheet-table-wrapper">
-                            <table className="sheet-table skill-table">
-                                <thead>
-                                    <tr>
-                                        <th>Skill</th>
-                                        <th>Ability</th>
-                                        <th>Ability mod</th>
-                                        <th>Ranks</th>
-                                        <th>Misc</th>
-                                        <th>Total</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {skillRows.map((row) => (
-                                        <tr key={row.key}>
-                                            <th scope="row">
-                                                <span className="skill-name">{row.label}</span>
-                                            </th>
-                                            <td>{row.ability}</td>
-                                            <td>
-                                                <span className="pill light">
-                                                    {formatModifier(row.abilityMod)}
-                                                </span>
-                                            </td>
-                                            <td>
-                                                <MathField
-                                                    label="Ranks"
-                                                    value={row.ranks}
-                                                    onCommit={(val) =>
-                                                        updateSkill(row.key, "ranks", val)
-                                                    }
-                                                    className="math-inline"
-                                                    disabled={disableInputs}
-                                                />
-                                            </td>
-                                            <td>
-                                                <MathField
-                                                    label="Misc"
-                                                    value={row.misc}
-                                                    onCommit={(val) =>
-                                                        updateSkill(row.key, "misc", val)
-                                                    }
-                                                    className="math-inline"
-                                                    disabled={disableInputs}
-                                                />
-                                            </td>
-                                            <td>
-                                                <span className="skill-total">
-                                                    {formatModifier(row.total)}
-                                                </span>
-                                            </td>
+                        {worldSkills.length === 0 ? (
+                            <div className="text-muted">
+                                No world skills are configured. Add entries above to begin planning ranks.
+                            </div>
+                        ) : (
+                            <div className="sheet-table-wrapper">
+                                <table className="sheet-table skill-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Skill</th>
+                                            <th>Ability</th>
+                                            <th>Ability mod</th>
+                                            <th>Ranks</th>
+                                            <th>Misc</th>
+                                            <th>Total</th>
                                         </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
+                                    </thead>
+                                    <tbody>
+                                        {skillRows.map((row) => (
+                                            <tr key={row.key}>
+                                                <th scope="row">
+                                                    <span className="skill-name">{row.label}</span>
+                                                </th>
+                                                <td>{row.ability}</td>
+                                                <td>
+                                                    <span className="pill light">
+                                                        {formatModifier(row.abilityMod)}
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <MathField
+                                                        label="Ranks"
+                                                        value={row.ranks}
+                                                        onCommit={(val) =>
+                                                            updateSkill(row.key, "ranks", val)
+                                                        }
+                                                        className="math-inline"
+                                                        disabled={disableInputs}
+                                                    />
+                                                </td>
+                                                <td>
+                                                    <MathField
+                                                        label="Misc"
+                                                        value={row.misc}
+                                                        onCommit={(val) =>
+                                                            updateSkill(row.key, "misc", val)
+                                                        }
+                                                        className="math-inline"
+                                                        disabled={disableInputs}
+                                                    />
+                                                </td>
+                                                <td>
+                                                    <span className="skill-total">
+                                                        {formatModifier(row.total)}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
 
                         <div className="sheet-footer">
                             {!canEdit && (
@@ -5384,6 +5877,7 @@ function ItemsTab({ game, me, onUpdate }) {
     const [busySave, setBusySave] = useState(false);
     const [busyRow, setBusyRow] = useState(null);
     const [selectedPlayerId, setSelectedPlayerId] = useState("");
+    const [giveBusyId, setGiveBusyId] = useState(null);
     const gearTypes = ["weapon", "armor", "accessory"]; // types reserved for gear
 
     const isDM = game.dmId === me.id;
@@ -5487,13 +5981,45 @@ function ItemsTab({ game, me, onUpdate }) {
         return self ? [self] : [];
     }, [isDM, me.id, playerOptions, players, selectedPlayerId]);
 
+    const selectedPlayer = isDM ? visiblePlayers[0] : null;
+    const selectedPlayerLabel = useMemo(() => {
+        if (!selectedPlayer) return "";
+        return (
+            selectedPlayer.character?.name?.trim() ||
+            selectedPlayer.username ||
+            (selectedPlayer.userId ? `Player ${selectedPlayer.userId.slice(0, 6)}` : "Unclaimed slot")
+        );
+    }, [selectedPlayer]);
+    const canGiveToSelected = isDM && !!selectedPlayer?.userId;
+
+    const handleGiveCustom = useCallback(
+        async (item) => {
+            if (!isDM || !selectedPlayer?.userId || !item) return;
+            try {
+                setGiveBusyId(item.id);
+                await Games.addPlayerItem(game.id, selectedPlayer.userId, {
+                    name: item.name,
+                    type: item.type,
+                    desc: item.desc,
+                    amount: 1,
+                });
+                await onUpdate?.();
+            } catch (e) {
+                alert(e.message);
+            } finally {
+                setGiveBusyId(null);
+            }
+        },
+        [game.id, isDM, onUpdate, selectedPlayer?.userId]
+    );
+
     return (
         <div className="col" style={{ display: "grid", gap: 16 }}>
-            <div className="row" style={{ gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
-                <div className="card" style={{ flex: 1, minWidth: 320 }}>
-                    <h3>{editing ? "Edit Item" : "Custom Item"}</h3>
-                    <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-                        <input
+      <div className="row" style={{ gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
+          <div className="card" style={{ flex: 1, minWidth: 320 }}>
+              <h3>{editing ? "Edit Item" : "Custom Item"}</h3>
+              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                  <input
                             placeholder="Name"
                             value={form.name}
                             onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -5525,42 +6051,75 @@ function ItemsTab({ game, me, onUpdate }) {
                                 </button>
                             )}
                         </div>
-                    </div>
+              </div>
 
-                    <h4 style={{ marginTop: 16 }}>Game Custom Items</h4>
-                    <div className="list">
-                        {customItems.map((it) => (
-                            <div key={it.id} className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-                                <div>
-                                    <b>{it.name}</b> — {it.type || "—"}
-                                    <div style={{ opacity: 0.85, fontSize: 12 }}>{it.desc}</div>
-                                </div>
-                                {canEdit && (
-                                    <div className="row" style={{ gap: 6 }}>
-                                        <button
-                                            className="btn"
-                                            onClick={() => {
-                                                setEditing(it);
-                                                setForm({ name: it.name || "", type: it.type || "", desc: it.desc || "" });
-                                            }}
-                                            disabled={busySave}
-                                        >
-                                            Edit
-                                        </button>
-                                        <button
-                                            className="btn"
-                                            onClick={() => remove(it.id)}
-                                            disabled={busyRow === it.id}
-                                        >
-                                            {busyRow === it.id ? "…" : "Remove"}
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
-                        ))}
-                        {customItems.length === 0 && (
-                            <div style={{ opacity: 0.7 }}>No custom items yet.</div>
-                        )}
+              <h4 style={{ marginTop: 16 }}>Game Custom Items</h4>
+              {isDM && (
+                  <p className="text-muted text-small" style={{ marginTop: -4 }}>
+                      {canGiveToSelected
+                          ? `Give buttons target ${selectedPlayerLabel}.`
+                          : "Select a claimed player below to enable the Give button."}
+                  </p>
+              )}
+              <div className="list">
+                  {customItems.map((it) => (
+                      <div
+                          key={it.id}
+                          className="row"
+                          style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}
+                      >
+                          <div>
+                              <b>{it.name}</b> — {it.type || "—"}
+                              <div style={{ opacity: 0.85, fontSize: 12 }}>{it.desc}</div>
+                          </div>
+                          {(isDM || canEdit) && (
+                              <div className="row" style={{ gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                                  {isDM && (
+                                      <button
+                                          className="btn"
+                                          onClick={() => handleGiveCustom(it)}
+                                          disabled={!canGiveToSelected || giveBusyId === it.id}
+                                          title={
+                                              !selectedPlayer?.userId
+                                                  ? "Select a player slot linked to a user to give this item."
+                                                  : undefined
+                                          }
+                                      >
+                                          {giveBusyId === it.id
+                                              ? "Giving…"
+                                              : canGiveToSelected
+                                              ? `Give to ${selectedPlayerLabel}`
+                                              : "Give"}
+                                      </button>
+                                  )}
+                                  {canEdit && (
+                                      <>
+                                          <button
+                                              className="btn"
+                                              onClick={() => {
+                                                  setEditing(it);
+                                                  setForm({ name: it.name || "", type: it.type || "", desc: it.desc || "" });
+                                              }}
+                                              disabled={busySave}
+                                          >
+                                              Edit
+                                          </button>
+                                          <button
+                                              className="btn"
+                                              onClick={() => remove(it.id)}
+                                              disabled={busyRow === it.id}
+                                          >
+                                              {busyRow === it.id ? "…" : "Remove"}
+                                          </button>
+                                      </>
+                                  )}
+                              </div>
+                          )}
+                      </div>
+                  ))}
+                  {customItems.length === 0 && (
+                      <div style={{ opacity: 0.7 }}>No custom items yet.</div>
+                  )}
                     </div>
                 </div>
 
