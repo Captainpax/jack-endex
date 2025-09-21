@@ -5630,6 +5630,8 @@ function WorldSkillsTab({ game, me, onUpdate }) {
     const isDM = game.dmId === me.id;
     const abilityDefault = ABILITY_DEFS[0]?.key || "INT";
     const worldSkills = useMemo(() => normalizeWorldSkillDefs(game.worldSkills), [game.worldSkills]);
+    const [skillQuery, setSkillQuery] = useState("");
+    const [skillSort, setSkillSort] = useState("default");
     const [skillForm, setSkillForm] = useState({ label: "", ability: abilityDefault });
     const [editingSkillId, setEditingSkillId] = useState(null);
     const editingSkill = useMemo(() => {
@@ -5657,6 +5659,11 @@ function WorldSkillsTab({ game, me, onUpdate }) {
         resetSkillForm();
     }, [game.id, resetSkillForm]);
 
+    useEffect(() => {
+        setSkillQuery("");
+        setSkillSort("default");
+    }, [game.id]);
+
     const startCreateSkill = useCallback(() => {
         setEditingSkillId(NEW_WORLD_SKILL_ID);
         setSkillForm({ label: "", ability: abilityDefault });
@@ -5678,6 +5685,40 @@ function WorldSkillsTab({ game, me, onUpdate }) {
             );
         }
     }, [editingSkill, abilityDefault]);
+
+    const filteredSkills = useMemo(() => {
+        const query = skillQuery.trim().toLowerCase();
+        if (!query && skillSort === "default") {
+            return worldSkills;
+        }
+        let list = worldSkills.slice();
+        if (query) {
+            list = list.filter((skill) => {
+                const label = skill.label.toLowerCase();
+                const ability = skill.ability.toLowerCase();
+                return label.includes(query) || ability.includes(query);
+            });
+        }
+        if (skillSort === "label") {
+            list.sort((a, b) => a.label.localeCompare(b.label));
+        } else if (skillSort === "ability") {
+            list.sort((a, b) => {
+                if (a.ability === b.ability) return a.label.localeCompare(b.label);
+                return a.ability.localeCompare(b.ability);
+            });
+        }
+        return list;
+    }, [skillQuery, skillSort, worldSkills]);
+
+    const displaySkills = useMemo(() => {
+        if (!editingSkill) return filteredSkills;
+        if (filteredSkills.some((skill) => skill.id === editingSkill.id)) {
+            return filteredSkills;
+        }
+        return [editingSkill, ...filteredSkills];
+    }, [editingSkill, filteredSkills]);
+
+    const hasSkillFilters = skillQuery.trim().length > 0 || skillSort !== "default";
 
     const startEditSkill = useCallback(
         (skill) => {
@@ -6006,6 +6047,30 @@ function WorldSkillsTab({ game, me, onUpdate }) {
         [maxSkillRank]
     );
 
+    const handleTakeAwaySkill = useCallback(
+        (skillKey, skillLabel) => {
+            if (!isDM || !skillKey) return;
+            const entry = skills?.[skillKey];
+            if (entry && entry.ranks === 0 && entry.misc === 0) {
+                return;
+            }
+            const label = typeof skillLabel === "string" && skillLabel.trim() ? skillLabel.trim() : null;
+            const name = label ? label : "this skill";
+            const confirmed = confirm(
+                `Take away ${name}? This resets their ranks and misc bonuses.`
+            );
+            if (!confirmed) return;
+            setSkills((prev) => {
+                const current = prev?.[skillKey];
+                if (current && current.ranks === 0 && current.misc === 0) {
+                    return prev;
+                }
+                return { ...prev, [skillKey]: { ranks: 0, misc: 0 } };
+            });
+        },
+        [isDM, skills]
+    );
+
     const canEdit = !!activePlayer && (isDM || (game.permissions?.canEditStats && activePlayer.userId === me.id));
     const disableInputs = !canEdit || saving;
 
@@ -6174,13 +6239,37 @@ function WorldSkillsTab({ game, me, onUpdate }) {
                                 expertise with the plus tile.
                             </p>
                         </div>
-                        {(editingSkill || isCreatingSkill) && (
-                            <span className="world-skill-manager__status text-small">
-                                {editingSkill?.label
-                                    ? `Editing ${editingSkill.label}`
-                                    : "Creating a new world skill"}
-                            </span>
-                        )}
+                        <div className="world-skill-manager__header-actions">
+                            {(editingSkill || isCreatingSkill) && (
+                                <span className="world-skill-manager__status text-small">
+                                    {editingSkill?.label
+                                        ? `Editing ${editingSkill.label}`
+                                        : "Creating a new world skill"}
+                                </span>
+                            )}
+                            <div className="world-skill-manager__tools">
+                                <input
+                                    type="search"
+                                    className="world-skill-manager__search"
+                                    placeholder="Search skills…"
+                                    value={skillQuery}
+                                    onChange={(e) => setSkillQuery(e.target.value)}
+                                    aria-label="Search world skills"
+                                />
+                                <label className="world-skill-manager__sort text-small">
+                                    <span>Sort by</span>
+                                    <select
+                                        value={skillSort}
+                                        onChange={(e) => setSkillSort(e.target.value)}
+                                        aria-label="Sort world skills"
+                                    >
+                                        <option value="default">Creation order</option>
+                                        <option value="label">Name (A → Z)</option>
+                                        <option value="ability">Ability</option>
+                                    </select>
+                                </label>
+                            </div>
+                        </div>
                     </div>
                     <div className="world-skill-grid">
                         {worldSkills.length === 0 && !isCreatingSkill && (
@@ -6191,7 +6280,15 @@ function WorldSkillsTab({ game, me, onUpdate }) {
                                 </span>
                             </div>
                         )}
-                        {worldSkills.map((skill) => {
+                        {displaySkills.length === 0 && worldSkills.length > 0 && hasSkillFilters && (
+                            <div className="world-skill-empty">
+                                <strong>No skills match your filters</strong>
+                                <span className="text-muted text-small">
+                                    Adjust your search or sorting to see the full list.
+                                </span>
+                            </div>
+                        )}
+                        {displaySkills.map((skill) => {
                             const abilityInfo = abilityDetails[skill.ability] || null;
                             const isEditing = editingSkillId === skill.id;
                             return (
@@ -6459,6 +6556,7 @@ function WorldSkillsTab({ game, me, onUpdate }) {
                                             <th>Ranks</th>
                                             <th>Misc</th>
                                             <th>Total</th>
+                                            {isDM && <th aria-label="Actions" />}
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -6500,6 +6598,21 @@ function WorldSkillsTab({ game, me, onUpdate }) {
                                                         {formatModifier(row.total)}
                                                     </span>
                                                 </td>
+                                                {isDM && (
+                                                    <td>
+                                                        <button
+                                                            type="button"
+                                                            className="btn btn-small danger"
+                                                            onClick={() => handleTakeAwaySkill(row.key, row.label)}
+                                                            disabled={
+                                                                disableInputs ||
+                                                                (row.ranks === 0 && row.misc === 0)
+                                                            }
+                                                        >
+                                                            Take away
+                                                        </button>
+                                                    </td>
+                                                )}
                                             </tr>
                                         ))}
                                     </tbody>
