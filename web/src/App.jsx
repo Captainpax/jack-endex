@@ -1,17 +1,6 @@
 // --- FILE: web/src/App.jsx ---
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Auth, Games, Items, Personas, onApiActivity } from "./api";
-
-const ENV = import.meta.env || {};
-const readEnv = (key) => {
-    const raw = ENV?.[key];
-    return typeof raw === "string" ? raw.trim() : "";
-};
-
-const DISCORD_SERVER_ID = readEnv("VITE_DISCORD_SERVER_ID");
-const DISCORD_CHANNEL_ID = readEnv("VITE_DISCORD_CHANNEL_ID");
-const DISCORD_WIDGET_BASE = readEnv("VITE_DISCORD_WIDGET_BASE");
-const DISCORD_WIDGET_THEME = readEnv("VITE_DISCORD_WIDGET_THEME") || "dark";
+import { Auth, Games, Items, Personas, StoryLogs, onApiActivity } from "./api";
 
 const DM_NAV = [
     {
@@ -2931,31 +2920,153 @@ function Party({ game, selectedPlayerId, onSelectPlayer, mode = "player", curren
 
 // ---------- Story Logs ----------
 function StoryLogsTab() {
-    const serverId = DISCORD_SERVER_ID;
-    const channelId = DISCORD_CHANNEL_ID;
-    const widgetTheme = DISCORD_WIDGET_THEME;
-    const widgetBase = DISCORD_WIDGET_BASE || "https://e.widgetbot.io/channels";
+    const [data, setData] = useState({
+        enabled: false,
+        status: null,
+        channel: null,
+        messages: [],
+        pollIntervalMs: null,
+        fetchedAt: null,
+    });
+    const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
+    const [error, setError] = useState(null);
+    const fetchRef = useRef(false);
+    const firstLoadRef = useRef(true);
+    const pollMsRef = useRef(15_000);
 
-    const embedUrl = useMemo(() => {
-        if (!serverId || !channelId) return "";
-        const trimmedBase = widgetBase.replace(/\/+$/, "");
-        const baseUrl = `${trimmedBase}/${encodeURIComponent(serverId)}/${encodeURIComponent(
-            channelId
-        )}`;
-        const params = new URLSearchParams();
-        if (widgetTheme) params.set("theme", widgetTheme);
-        const query = params.toString();
-        return query ? `${baseUrl}?${query}` : baseUrl;
-    }, [channelId, serverId, widgetBase, widgetTheme]);
+    const dateFormatter = useMemo(
+        () => new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }),
+        []
+    );
+    const relativeFormatter = useMemo(
+        () => new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }),
+        []
+    );
 
-    const channelLink = useMemo(() => {
-        if (!serverId || !channelId) return "";
-        return `https://discord.com/channels/${encodeURIComponent(serverId)}/${encodeURIComponent(
-            channelId
-        )}`;
-    }, [channelId, serverId]);
+    const formatTimestamp = useCallback(
+        (iso) => {
+            if (!iso) return "";
+            const dt = new Date(iso);
+            if (Number.isNaN(dt.getTime())) return "";
+            return dateFormatter.format(dt);
+        },
+        [dateFormatter]
+    );
 
-    const isConfigured = Boolean(embedUrl);
+    const formatRelative = useCallback(
+        (iso) => {
+            if (!iso) return "";
+            const value = Date.parse(iso);
+            if (!Number.isFinite(value)) return "";
+            const diff = value - Date.now();
+            const abs = Math.abs(diff);
+            const units = [
+                ["day", 86_400_000],
+                ["hour", 3_600_000],
+                ["minute", 60_000],
+                ["second", 1000],
+            ];
+            for (const [unit, ms] of units) {
+                if (abs >= ms || unit === "second") {
+                    const amount = Math.round(diff / ms);
+                    return relativeFormatter.format(amount, unit);
+                }
+            }
+            return "";
+        },
+        [relativeFormatter]
+    );
+
+    const mergeData = useCallback((result) => {
+        setData({
+            enabled: !!(result?.enabled ?? result?.status?.enabled),
+            status: result?.status ?? null,
+            channel: result?.channel ?? result?.status?.channel ?? null,
+            messages: Array.isArray(result?.messages) ? result.messages : [],
+            pollIntervalMs: Number(result?.pollIntervalMs ?? result?.status?.pollIntervalMs) || null,
+            fetchedAt: result?.fetchedAt || new Date().toISOString(),
+        });
+    }, []);
+
+    const fetchLogs = useCallback(async () => {
+        if (fetchRef.current) return;
+        fetchRef.current = true;
+        const isInitial = firstLoadRef.current;
+        if (isInitial) {
+            setLoading(true);
+        } else {
+            setRefreshing(true);
+        }
+        try {
+            const result = await StoryLogs.fetch();
+            pollMsRef.current =
+                Number(result?.pollIntervalMs ?? result?.status?.pollIntervalMs) || pollMsRef.current;
+            mergeData(result);
+            const statusError = result?.status?.error;
+            setError(statusError || null);
+        } catch (err) {
+            setError(err?.message || "Failed to load story logs.");
+        } finally {
+            if (isInitial) {
+                firstLoadRef.current = false;
+                setLoading(false);
+            }
+            setRefreshing(false);
+            fetchRef.current = false;
+        }
+    }, [mergeData]);
+
+    useEffect(() => {
+        let cancelled = false;
+        let timer = null;
+
+        const tick = async () => {
+            if (cancelled) return;
+            await fetchLogs();
+            if (cancelled) return;
+            const delay = Math.max(5_000, pollMsRef.current || 15_000);
+            timer = setTimeout(tick, delay);
+        };
+
+        tick();
+
+        return () => {
+            cancelled = true;
+            if (timer) clearTimeout(timer);
+        };
+    }, [fetchLogs]);
+
+    const handleRefresh = useCallback(() => {
+        fetchLogs();
+    }, [fetchLogs]);
+
+    const status = data.status || {};
+    const phase = status.phase || (data.enabled ? "idle" : "disabled");
+    const phaseLabelMap = {
+        disabled: "Disabled",
+        idle: "Idle",
+        connecting: "Connecting",
+        ready: "Connected",
+        error: "Error",
+    };
+    const phaseToneMap = {
+        disabled: "warn",
+        idle: "light",
+        connecting: "warn",
+        ready: "success",
+        error: "danger",
+    };
+    const phaseLabel = phaseLabelMap[phase] || "Unknown";
+    const phaseTone = phaseToneMap[phase] || "light";
+    const channelName = data.channel?.name ? `#${data.channel.name}` : null;
+    const channelUrl = data.channel?.url || null;
+    const channelTopic = data.channel?.topic || "";
+    const lastSynced = status.lastSyncAt || data.fetchedAt;
+    const lastSyncedRelative = formatRelative(lastSynced);
+    const lastSyncedAbsolute = formatTimestamp(lastSynced);
+
+    const showMessages = data.enabled && data.messages.length > 0;
 
     return (
         <section className="card story-logs-card">
@@ -2963,37 +3074,119 @@ function StoryLogsTab() {
                 <div>
                     <h3>Story logs</h3>
                     <p className="text-muted text-small">
-                        Keep up with the Discord story log channel without leaving the command
-                        center.
+                        Keep up with the Discord story log channel without leaving the command center.
                     </p>
                 </div>
-                {isConfigured && channelLink && (
-                    <a
+                <div className="story-logs__actions">
+                    <button
                         className="btn ghost btn-small"
-                        href={channelLink}
-                        target="_blank"
-                        rel="noreferrer noopener"
+                        type="button"
+                        onClick={handleRefresh}
+                        disabled={loading || refreshing || !data.enabled}
                     >
-                        Open in Discord
-                    </a>
+                        {refreshing ? "Refreshing…" : "Refresh"}
+                    </button>
+                    {channelUrl && (
+                        <a
+                            className="btn ghost btn-small"
+                            href={channelUrl}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                        >
+                            Open in Discord
+                        </a>
+                    )}
+                </div>
+            </div>
+            <div className="story-logs__status">
+                <span className={`pill ${phaseTone}`}>{phaseLabel}</span>
+                {channelName && <span className="story-logs__status-name">{channelName}</span>}
+                {lastSyncedAbsolute && (
+                    <span className="text-muted text-small">
+                        Last synced {lastSyncedRelative ? `${lastSyncedRelative} (${lastSyncedAbsolute})` : lastSyncedAbsolute}
+                    </span>
                 )}
             </div>
-            {isConfigured ? (
-                <div className="story-logs__embed">
-                    <iframe
-                        title="Discord story logs"
-                        src={embedUrl}
-                        loading="lazy"
-                        allowTransparency
-                        allow="clipboard-read; clipboard-write"
-                    />
+            {error && (
+                <div className="story-logs__alert">
+                    <p>{error}</p>
+                </div>
+            )}
+            {loading ? (
+                <div className="story-logs__empty">
+                    <p className="text-muted">Loading story logs…</p>
+                </div>
+            ) : !data.enabled ? (
+                <div className="story-logs__empty">
+                    <p className="text-muted">
+                        Configure <code>DISCORD_BOT_TOKEN</code>, <code>DISCORD_CHANNEL_ID</code>, and optionally {" "}
+                        <code>DISCORD_GUILD_ID</code> on the server to enable the Discord story log sync.
+                    </p>
+                </div>
+            ) : showMessages ? (
+                <div className="story-logs__body">
+                    {channelTopic && <p className="text-muted story-logs__topic">{channelTopic}</p>}
+                    <div className="story-logs__messages">
+                        {data.messages.map((msg) => {
+                            const msgRelative = formatRelative(msg.createdAt);
+                            const msgAbsolute = formatTimestamp(msg.createdAt);
+                            return (
+                                <article key={msg.id} className="story-logs__message">
+                                    <div className="story-logs__avatar">
+                                        {msg.author?.avatarUrl ? (
+                                            <img
+                                                src={msg.author.avatarUrl}
+                                                alt={msg.author?.displayName || "Avatar"}
+                                            />
+                                        ) : (
+                                            <span>{(msg.author?.displayName || "?").slice(0, 1)}</span>
+                                        )}
+                                    </div>
+                                    <div className="story-logs__message-body">
+                                        <header className="story-logs__message-header">
+                                            <span className="story-logs__author">{msg.author?.displayName || "Unknown"}</span>
+                                            {msg.author?.bot && <span className="pill warn">BOT</span>}
+                                            {msgAbsolute && (
+                                                <time
+                                                    className="story-logs__timestamp"
+                                                    dateTime={msg.createdAt || undefined}
+                                                    title={msgAbsolute}
+                                                >
+                                                    {msgRelative || msgAbsolute}
+                                                </time>
+                                            )}
+                                        </header>
+                                        {msg.content && (
+                                            <p className="story-logs__message-text">{msg.content}</p>
+                                        )}
+                                        {msg.attachments?.length > 0 && (
+                                            <ul className="story-logs__attachments">
+                                                {msg.attachments.map((att) => (
+                                                    <li key={att.id}>
+                                                        <a href={att.url} target="_blank" rel="noreferrer noopener">
+                                                            {att.name || "Attachment"}
+                                                        </a>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        )}
+                                        {msg.jumpLink && (
+                                            <div className="story-logs__message-footer">
+                                                <a href={msg.jumpLink} target="_blank" rel="noreferrer noopener">
+                                                    View in Discord
+                                                </a>
+                                            </div>
+                                        )}
+                                    </div>
+                                </article>
+                            );
+                        })}
+                    </div>
                 </div>
             ) : (
                 <div className="story-logs__empty">
                     <p className="text-muted">
-                        Provide <code>VITE_DISCORD_SERVER_ID</code> and <code>VITE_DISCORD_CHANNEL_ID</code>
-                        {" "}
-                        in your environment configuration to embed the Discord story logs.
+                        No messages synced yet. When players post in the configured Discord channel they will appear here.
                     </p>
                 </div>
             )}

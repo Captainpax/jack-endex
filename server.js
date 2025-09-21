@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import personas from './routes/personas.routes.js';
 import { fileURLToPath } from 'url';
 import cors from 'cors';
+import { createWatcherFromEnv } from './discordWatcher.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.join(__dirname, 'data', 'db.json');
@@ -27,6 +28,14 @@ for (const candidate of INDEX_CANDIDATES) {
     } catch {
         // ignore missing candidates
     }
+}
+
+const discordWatcher = createWatcherFromEnv(process.env);
+if (discordWatcher.enabled) {
+    console.log('discord watcher: monitoring configured channel');
+    discordWatcher.start();
+} else {
+    console.log('discord watcher disabled: missing DISCORD_BOT_TOKEN or DISCORD_CHANNEL_ID');
 }
 
 // --- game helpers ---
@@ -1222,6 +1231,19 @@ app.delete('/api/games/:id/demons/:demonId', requireAuth, async (req, res) => {
     saveGame(db, game);
     await writeDB(db);
     res.json({ ok: true });
+});
+
+app.get('/api/story-log', requireAuth, (_req, res) => {
+    const status = discordWatcher.getStatus();
+    const messages = discordWatcher.getMessages();
+    res.json({
+        enabled: !!status.enabled,
+        status,
+        channel: status.channel,
+        pollIntervalMs: status.pollIntervalMs,
+        messages,
+        fetchedAt: new Date().toISOString(),
+    });
 });
 
 // (the rest of your routes unchanged, but add the same style of defensive checks on g.players, etc.)

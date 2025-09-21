@@ -11,17 +11,18 @@ Currently, two official plugins are available:
 
 If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
 
-## Discord story log embed
+## Discord story log sync
 
-The in-app **Story Logs** tab displays a live Discord channel feed. Configure the following environment variables (e.g. in a `.env` file loaded by Vite) so the widget knows which guild and channel to show:
+The in-app **Story Logs** tab now reads messages through the backend. Provide a Discord bot token with permission to view the story log channel and configure the server with the following environment variables before starting `node server.js`:
 
 ```
-VITE_DISCORD_SERVER_ID=<your discord guild/server id>
-VITE_DISCORD_CHANNEL_ID=<the story log channel id>
+DISCORD_BOT_TOKEN=<bot token with access to the channel>
+DISCORD_CHANNEL_ID=<channel id to watch>
 
-# Optional overrides
-VITE_DISCORD_WIDGET_BASE=https://e.widgetbot.io/channels
-VITE_DISCORD_WIDGET_THEME=dark
+# Optional
+DISCORD_GUILD_ID=<guild id used to sanity-check the channel>
+DISCORD_POLL_INTERVAL_MS=15000   # how often to poll the channel (default 15s)
+DISCORD_MAX_MESSAGES=50          # how many recent messages to keep in memory (max 100)
 ```
 
-Restart the Vite dev server after editing the variables so the client receives the updated values.
+Invite the bot to your server with the `Read Messages/View Channel` and `Read Message History` permissions so the sync can succeed.
