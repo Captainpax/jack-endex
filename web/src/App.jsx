@@ -1018,6 +1018,106 @@ function JoinByCode({ onJoined }) {
     );
 }
 
+function MathField({ label, value, onCommit, className }) {
+    const [draft, setDraft] = useState(formatNumber(value));
+    const [dirty, setDirty] = useState(false);
+    const [error, setError] = useState(null);
+
+    useEffect(() => {
+        if (!dirty) {
+            setDraft(formatNumber(value));
+        }
+    }, [dirty, value]);
+
+    const reset = useCallback(() => {
+        setDraft(formatNumber(value));
+        setDirty(false);
+        setError(null);
+    }, [value]);
+
+    const commit = useCallback(() => {
+        if (!dirty) return;
+        const raw = draft.trim();
+        if (!raw) {
+            onCommit?.(0);
+            setDraft("0");
+            setDirty(false);
+            setError(null);
+            return;
+        }
+        const result = evaluateMathExpression(raw);
+        if (!result.ok) {
+            setError(result.reason || "Invalid expression");
+            return;
+        }
+        onCommit?.(result.value);
+        setDraft(formatNumber(result.value));
+        setDirty(false);
+        setError(null);
+    }, [dirty, draft, onCommit]);
+
+    const containerClass = className ? `col ${className}` : "col";
+
+    return (
+        <div className={containerClass}>
+            <label>{label}</label>
+            <input
+                type="text"
+                value={draft}
+                className={error ? "input-error" : undefined}
+                onChange={(e) => {
+                    setDraft(e.target.value);
+                    setDirty(true);
+                    if (error) setError(null);
+                }}
+                onBlur={commit}
+                onKeyDown={(evt) => {
+                    if (evt.key === "Enter") {
+                        evt.preventDefault();
+                        commit();
+                    } else if (evt.key === "Escape") {
+                        evt.preventDefault();
+                        reset();
+                    }
+                }}
+                spellCheck={false}
+                autoComplete="off"
+                autoCapitalize="off"
+                title="Supports +, -, ×, ÷, and parentheses"
+                aria-invalid={error ? true : undefined}
+            />
+            {error && <span className="text-error text-small">{error}</span>}
+        </div>
+    );
+}
+
+function evaluateMathExpression(input) {
+    const sanitized = input.replace(/×/g, "*").replace(/÷/g, "/");
+    const stripped = sanitized.replace(/\s+/g, "");
+    if (!stripped) {
+        return { ok: false, reason: "Enter a value" };
+    }
+    if (!/^[0-9+\-*/().]+$/.test(stripped)) {
+        return { ok: false, reason: "Use numbers and + - × ÷ ()" };
+    }
+    try {
+        const value = Function(`"use strict";return (${stripped});`)();
+        if (typeof value !== "number" || !Number.isFinite(value)) {
+            return { ok: false, reason: "Calculation failed" };
+        }
+        return { ok: true, value };
+    } catch {
+        return { ok: false, reason: "Calculation failed" };
+    }
+}
+
+function formatNumber(value) {
+    if (value === null || value === undefined) return "";
+    const num = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(num)) return "";
+    return String(num);
+}
+
 // ---------- Sheet ----------
 function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     const isDM = game.dmId === me.id;
@@ -1056,15 +1156,22 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     }, []);
 
     const field = (label, path, type = "text") => {
+        if (type === "number") {
+            return (
+                <MathField
+                    label={label}
+                    value={get(ch, path)}
+                    onCommit={(val) => set(path, val)}
+                />
+            );
+        }
         return (
             <div className="col">
                 <label>{label}</label>
                 <input
-                    type={type}
+                    type="text"
                     value={get(ch, path) ?? ""}
-                    onChange={(e) =>
-                        set(path, type === "number" ? Number(e.target.value || 0) : e.target.value)
-                    }
+                    onChange={(e) => set(path, e.target.value)}
                 />
             </div>
         );
@@ -1145,14 +1252,12 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
 
                     <div className="row">
                         {["STR", "DEX", "CON", "INT", "WIS", "CHA"].map((s) => (
-                            <div key={s} className="col">
-                                <label>{s}</label>
-                                <input
-                                    type="number"
-                                    value={get(ch, `stats.${s}`) || 0}
-                                    onChange={(e) => set(`stats.${s}`, Number(e.target.value || 0))}
-                                />
-                            </div>
+                            <MathField
+                                key={s}
+                                label={s}
+                                value={get(ch, `stats.${s}`)}
+                                onCommit={(val) => set(`stats.${s}`, val)}
+                            />
                         ))}
                     </div>
 
@@ -2713,36 +2818,100 @@ function DemonTab({ game, me, onUpdate }) {
 }
 
 // ---------- Settings ----------
+const PERMISSION_OPTIONS = [
+    {
+        key: "canEditStats",
+        label: "Character sheets",
+        description: "Allow players to edit their own stats, HP/MP, and background details.",
+    },
+    {
+        key: "canEditItems",
+        label: "Party inventory",
+        description: "Let players add, update, or delete items from the shared inventory.",
+    },
+    {
+        key: "canEditGear",
+        label: "Equipment loadouts",
+        description: "Let players swap or edit their own weapons, armor, and gear slots.",
+    },
+    {
+        key: "canEditDemons",
+        label: "Demon roster",
+        description: "Allow players to manage demons they control, including stats and notes.",
+    },
+];
+
+const PERMISSION_DEFAULTS = PERMISSION_OPTIONS.reduce((acc, option) => {
+    acc[option.key] = false;
+    return acc;
+}, {});
+
 function SettingsTab({ game, onUpdate, me, onDelete }) {
-    const [perms, setPerms] = useState(game.permissions || {});
+    const [perms, setPerms] = useState(() => ({
+        ...PERMISSION_DEFAULTS,
+        ...(game.permissions || {}),
+    }));
     const [saving, setSaving] = useState(false);
 
-    useEffect(() => setPerms(game.permissions || {}), [game.id, game.permissions]);
+    useEffect(() => {
+        setPerms({
+            ...PERMISSION_DEFAULTS,
+            ...(game.permissions || {}),
+        });
+    }, [game.id, game.permissions]);
 
     const isDM = game.dmId === me?.id;
     const canDelete = isDM && typeof onDelete === "function";
 
+    const hasChanges = PERMISSION_OPTIONS.some(
+        ({ key }) => !!(game.permissions?.[key]) !== !!perms[key]
+    );
+
     return (
         <div className="card">
             <h3>Permissions</h3>
-            {Object.entries(perms).map(([k, v]) => (
-                <label key={k} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <input
-                        type="checkbox"
-                        checked={!!v}
-                        onChange={(e) => setPerms((p) => ({ ...p, [k]: e.target.checked }))}
-                    />
-                    {k}
-                </label>
-            ))}
-            <div className="row" style={{ justifyContent: "flex-end" }}>
+            <p className="text-muted text-small" style={{ marginTop: -4 }}>
+                Decide which parts of the campaign your players can maintain themselves.
+            </p>
+
+            <div className="stack" style={{ marginTop: 12 }}>
+                {PERMISSION_OPTIONS.map((option) => (
+                    <label
+                        key={option.key}
+                        className={`perm-toggle${!isDM ? " is-readonly" : ""}`}
+                    >
+                        <input
+                            type="checkbox"
+                            checked={!!perms[option.key]}
+                            disabled={!isDM || saving}
+                            onChange={(e) =>
+                                setPerms((prev) => ({
+                                    ...prev,
+                                    [option.key]: e.target.checked,
+                                }))
+                            }
+                        />
+                        <div className="perm-toggle__text">
+                            <span className="perm-toggle__label">{option.label}</span>
+                            <span className="text-muted text-small">{option.description}</span>
+                        </div>
+                    </label>
+                ))}
+            </div>
+
+            <div className="row" style={{ justifyContent: "flex-end", marginTop: 16 }}>
                 <button
                     className="btn"
-                    disabled={saving}
+                    disabled={saving || !hasChanges}
                     onClick={async () => {
                         try {
                             setSaving(true);
-                            await onUpdate(perms);
+                            const payload = PERMISSION_OPTIONS.reduce((acc, option) => {
+                                acc[option.key] = !!perms[option.key];
+                                return acc;
+                            }, {});
+                            await onUpdate(payload);
+                            setPerms(payload);
                         } catch (e) {
                             alert(e.message);
                         } finally {
@@ -2750,7 +2919,7 @@ function SettingsTab({ game, onUpdate, me, onDelete }) {
                         }
                     }}
                 >
-                    {saving ? "Saving…" : "Save"}
+                    {saving ? "Saving…" : hasChanges ? "Save changes" : "Saved"}
                 </button>
             </div>
 
