@@ -1,0 +1,262 @@
+Made by AntiMatter Zone, 2021-2025
+Written by Klintan Paez
+
+++----------------------------++
+|| Table of Contents (CTRL+F) ||
+++----------------------------++
+ > 1) Overview
+ > 2) Starting a game
+ > 3) Basics of non-combat
+ > 4) Allied Demons
+ > 5) Flow of Combat
+ > 6) Running out of HP
+ > 7) Alignments
+
+
+
++--------------+
+|> 1) Overview |==================================================================================================
++--------------+
+The basic idea is a Tabletop RPG that can be heavily combat and skillset focused, based on turn based JRPG video game mechanics. The original basis for Tabletop mechanics were very loosely based on D&D 3.5, and the original basis for the worldbuilding and skills/spells were loosely based on Atlus's vast library of JRPGs, notably Shin Megami Tensei and Persona.
+
+Traditional roleplay actions are always an option in any scenario, but many mechanics will be described with combat in mind. This is because the set of monsters and general worldbuilding tends to involve many demons and creatures of flippant or fickle nature, and the threat of a fight is virtually always around the corner in one way or another.
+
+Campaigns are suggested to keep a sense of danger and instability to major powers - For example, an advanced city may become overrun by magical creatures to create chaos, or perhaps a fantasy land is plunged into an eternal night to summon the damned. Yesterday's laws may be a suggestion to some, and Good is defined by the victors.
+
+Because of the volatile nature of the world, your classic "murder hobo" playstyle is valid - however, everyone else is ready for a fight, too, so mind yourself around powerful foes.
+
+
+
++--------------------+
+|> 2) Starting a Game|===========================================================================================
++--------------------+
+Refer to Character Creation txt for exactly how to roll a character.
+
+When making your characters, talk with your whole party of players and collaborate on what you think would be a fun team to work with. Think of your strengths and weaknesses, and keep in mind that demon followers may join your party as well. There are no strict classes in this game; Your role is dictacted by your stats, your skills, and your playstyle.
+
+
+Some Basic suggested archetypes:
+
+---------------------------------------
+||TANK: Absorbs damage and stays alive, draws threat and keeps dangerous enemies away from others.
+Pros: Really hard to die, fair damage
+Cons: Dumb Meatshield, not as fast as other melee combatants
+STATS: CON+++, STR++, DEX+
+---------------------------------------
+||FIGHTER: Deals physical damage and can hold their own in a fight. Versatile, squishier than a tank.
+Pros: Great with most weapons and gear
+Cons: Can die more easily if outmaneuvered, especially by magic
+STATS: STR+++, DEX++, CON+
+---------------------------------------
+||GUNNER: Deals damage from afar, preferring guns, bows and tactical positioning.
+Pros: Can stay out of harm's way or escape easily
+Cons: Extreme risk if caught out or if out of ammo
+STATS: DEX+++, STR++, CON+
+---------------------------------------
+||MAGE: Slings spells and destroys groups with potent AoEs. Physically frail, but dangerously powerful.
+Pros: Ability to delete targets, many effects
+Cons: MP reliant, dies very easily unbuffed, especially by physical
+STATS: INT+++, WIS++, CHA+
+---------------------------------------
+||HEALER: Restores health and buffs the party with supportive magic, pushing the limits of human potential.
+Pros: Amazing sustain, ability to adapt to situations
+Cons: Weaker personal damage, more MP heavy
+STATS: WIS+++, INT++, CHA+
+---------------------------------------
+||NEGOTIATOR: Specializes in demon negotiation and recruiting allies. Most able to make all sorts of deals.
+Pros: Bend NPC favor, obtain allies and unique outcomes
+Cons: Weakest damage and survibability potential when alone
+STATS: CHA+++, WIS++, INT+
+---------------------------------------
+
+Of course, being a Tabletop game, there are nearly infinite ways to balance your character. Mix and experiment! Maybe you want a Tank with magic instead of swords, or a Negotiator that keeps a gun in their back pocket. It's up to you!
+
+
+Once your party is assembled, the DM will make up the intro and get the story rolling.
+
+
+
++-------------------------+
+|> 3) Basics of Non-Combat|======================================================================================
++-------------------------+
+
+Usually the DM will explain a scene and where the party is, and the players will chime in with actions they want to take. If the DM thinks that the action a player is taking warrants a skill/stat check, roll 1d20 and add your Skill Level or Modifier to resolve it. The DM MUST say what number you need to succeed before you roll, but after you decide your action. There are no real turns until an encounter starts.
+
+Unlike some tabletop games, many small details can and will be glossed over or left up to common sense or general "good enough" calculations. For example, instead of asking the exact weight of an object someone intends to lift and assigning a direct STR threshold per pound, a DM will just evaluate the scenario reasonably.
+
+
+
+----||>> Skill Checks
+
+1d20+MOD.
+
+Remember that 10 is always considered an "average" skill check.
+"Average" means that an average person would succeed at it 50% of the time. Also remember this game involves dieties and gods, so always account for the fact that someone could unironically have +20 STR modifier (50 STR).
+
+If a player's skill is simply very high, they may not have to roll for extraordinary feats.
+
+Examples of a Strength Check:
+Trying to lift a small palm-sized rock? No roll, anyone could do that.
+Trying to lift a cinder block? Only 7, still failable, but should be fine.
+Trying to lift a body to drag it? Eh, body's kinda big, we'll say that's a 13.
+Trying to lift a literal car? I mean, if you can hit 35, sure.
+
+
+If an action is possible and the die lands on 20, it is considered a Critical Success. Something good, lucky, or extraordinary should happen.
+
+If the die lands on 9 and the check was a success, it is considered a Mid-Crit. Something small but nice should happen. Mid-Crits do not apply in combat.
+
+If the die lands on 1, it is considered a Critical Failure. Something bad, unlucky, or terrible should happen.
+
+
+
+
++------------------+
+|> 4) Allied Demons|=============================================================================================
++------------------+
+
+Note: "Demon" is a universal term to describe basically every non-player, non-human creature or entity. In the context of this game, everything from an Angel to a Pixie to an Incubus are equally considered Demons.
+
+Demons may be recruited via negotiation with them. Demons normally ask for items, macca and/or favors before they join your party; Sometimes they might question you and judge your character. Not all enemy demons need to be recruitable, but many random ones should be. A party can have up to 4 demons at a time, and 1 summoned per player. All allied Demons dissapate into another, intagible dimension when not summoned.
+
+Summoned allied Demons are assumed to follow your party around and quietly mind their own business unless specifically stated. Summoning/Unsummoning is usually costless and fairly quick. A summoned demon appears directly adjacent to the summoner, and will (mostly) obey orders from the players until they are expunged from the party somehow.
+
+Demons have no world skills and tend not to act unless prompted once under the party's control. They do still physically exist while summoned, and the world can still definitely react to them. For example, summoning a Succubus inside of a Law-based church will probably not go super well. A demon could also react to the party's actions or situation if warranted; A player committing a grave sin would definitely catch the attention of an allied Angel.
+
+Demons do not have inventories or items, nor do they have the ability to equip or use any player weapons/armor. Any weapons or armor a demon may possess naturally (e.g. Eligor's Spear) are considered a part of them, only they can use it, they refuse to take it off/give it up, and will appear/disappear with them upon summoning, unsummoning or death.
+
+TL;DR Demons don't have or use real items. If they have hands, they could hold something you own, but they most likely won't know how to use it without specific and very obvious direction, such as "THROW THIS". Human items confound them.
+
+If a Demon has a notable feature, such as wings or being very large, these things can be taken into account for actions by the player. For example, one could ask a Pixie to hold a fire bomb and fly it over an enemy. You could also ask an Oni to attempt to throw you across a gap. As always, success depends on the scenario.
+
+In battle, a Demon's turn is decided and rolled for by their Summoner.
+
+
+
++-----------------------+
+|> 5) The Flow of Combat|=========================================================================================
++-----------------------+
+
+When an encounter starts, the game becomes strictly turn based until the encounter is over.
+
+It is HIGHLY SUGGESTED every player keep track of their own buffs/debuffs, weapon and spell effects. Nobody wants to be halfway through the fight then remember their Agi Spells were supposed to be applying burn, or that their ammo was supposed to be giving them +2 attack the whole time.
+
+
+
+----||>> Turn Order
+
+Before combat starts, all combatants roll for initiative: 1d20+DEX.
+Biggest number goes first. Re-roll any ties.
+
+If a specific person gained a first strike, their attack is always the first turn and they don't have to roll for it. A First Strike may be gained in a number of ways, such as sneaking or otherwise catching the enemy unaware.
+
+Assuming the rest of the attacker's party is posed to attack as well, their remaining members add +15 to their initiative rolls. This means the first striking party SHOULD go first, but against a target with exceptionally high DEX, this may not always be the case.
+
+
+
+----||>> Taking a Turn
+
+On your turn you can move, attack with a weapon and/or skill, use an item, negotiate with demons, or anything really since it's a tabletop game. Unique actions need DM approval.
+
+
+||>>Attack Range/Accuracy
+
+A player can walk roughly 5-10 feet per turn. Moving counts as an action unless you are very close to a target.
+Melee range is within ~4 feet. AoEs are 10yds or so (Reasonably hits everyone around target).
+A Gun's range is long (25yd+) and generally common sense (Shotgun < Pistol < Rifle < Sniper).
+Magic and bows can be cast/shot at about Shotgun/Pistol range. Again, DM judgement.
+AoEs only hit targets/enemies and don't turn an entire 10 yd circle into a flaming nuke. Aggro not required.
+
+Rolling for Accuracy on a skill/attack will take into account the positioning and range of the player to their target, as well as anything of note such as having the high ground, being concealed, etc. DM has to call what number you need to hit, but doesn't have to give an exact answer until the action is confirmed.
+
+
+If under the effect of an ailment that causes loss of control, such as Confusion, roll a seperate d20 AFTER your action is chosen. The amount required to pass the check and the consequences of failure depends on ailment; refer to Battle Math txt for details.
+
+
+
+||>>Attack Damage
+
+Basic Attacks apply modifier exactly once, after crits. Skills apply modifier per-hit, before crits.
+Guns use bullets on skills AND basic attacks. Guns require line of sight.
+
+If under the effect of a DoT, such as Poison, roll for damage after your action is complete.
+
+At the end of your turn, review your current buffs/effects to determine if the effect should fall off (-1 turn left), or strengthen (+1 turns elapsed), depending on the effect.
+
+
+
+
+With any luck, the encounter will be resolved without any of your party members dying. EXP and Macca are most directly rewarded via killing or recruiting the enemy, and running generally gives you nothing but a chance to continue living. Roleplaying/world actions in unique and notable ways are also worth good EXP.
+
+
++----------------------+
+|> 6) Running out of HP|==========================================================================================
++----------------------+
+
+If your character is brought to/below 0 HP, several things can happen. By default, if the character in question is in combat, they enter they DYING state. All ailments are lost if a character is DYING.
+
+Your character's HP continues to count into the negatives while you are DYING. If you have less than -50% of your Max HP, you automatically enter the DEAD state. This means, for example, if your character has 100 Max HP, they will be DEAD after being at or below -50 HP.
+
+Every turn a player is DYING, they cannot act and must simply roll a Fortitude check to see if they stay alive. The required number to stay alive is 8 the first turn, 10 the second, 12 the third, and so on. Failing this check will automatically place your character in the DEAD state.
+
+While in the DYING state, a character WILL continue to take damage if targeted/hit with AoEs, and will automatically become DEAD if they cross the -50% HP threshold. However, (most) enemies (should) lose direct aggro on a DYING target, DM willing.
+
+A character may be revived while DYING via the following methods:
+
+Casting Recarm or Samerecarm
+Using a Revival Bead or Balm of Life item
+Casting healing magic to bring a character's HP above 0 again.
+ >Healing magic is -50% effective while DYING, and you are capped at 1HP until the turn after you hit 1HP and are revived.
+ >Diarahan / 100% heals will bring your character to 1HP automatically while DYING
+
+Food items and physical first aid such as bandages do NOT work to heal a DYING target.
+
+DEMONS DIE WHEN THEY ARE KILLED. Allied demons must be revived before combat/encounter is decleared over, and otherwise completely disappear without leaving a body. Be careful!
+
+If your character is DEAD, they're either gone forever, or the DM is going to apply heavy amounts of plot armor to see how things go from there.
+
+
+
+
++---------------+
+|> 7) Alignments|==========================================================================================
++---------------+
+
+Alignments are your character's relationship with the forces of Law vs Chaos, as well as Good vs Evil:
+
+      |----------------------------
+      |GOOD  <-----------> EVIL
+______|============================
+| LAW ||Lawful ' Lawful  ' Lawful
+|  ^  ||Good   ' Neutral ' Evil
+|  |  ||-------+---------+---------
+|  |  ||Neutral' True    ' Neutral
+|  |  ||Good   ' Neutral ' Evil
+|  |  ||-------+---------+---------
+|  v  ||Chaotic' Chaotic ' Chaotic
+|CHAOS||Good   ' Neutral ' Evil
+       --------+---------+---------
+
+This game will assume a party's Alignment is at True Neutral at the beginning of the game, and will be influenced by their actions. Things that can cause a party's alignment to shift include:
+
+Having a cool backstory
+Killing a Law or Chaos aligned Character/Demon
+Recruiting a Law or Chaos aligned Demon
+Helping or refusing to help certain characters/demons
+Praying to or accepting help from Dieities or Gods
+Making contracts or agreements with Devils or Spirits
+Basically anything the DM wants lmao
+
+
+
+Some demons will outright refuse recruitment attempts if their alignment is extremely opposite to the party's.
+
+Allied Demons may unsummon themselves or refuse to be summoned if their alignment is extremely opposite to the party's. An Allied Demon may not break their contract willingly and always stay in your stock. They will be awaiting the day they are manually dismissed, used as fusion material, or the party decides to shift their alignment closer to Neutral.
+
+
+Law and Chaos are a lot more solid than the idea of Good and Evil, especially for parties with a lot of CHA. In general, however, the following usually apply:
+
+Lawful characters follow codes and traditions, and abhor those who disobey order and cause disarray
+Chaotic characters believe in freedom and free agency, and are disgusted by those who would limit and stifle growth
+Good characters tend to value life and seek to preserve that which they hold dear
+Evil characters tend to value power and the destruction of that which they despise

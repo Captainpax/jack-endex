@@ -1,0 +1,197 @@
+Made by AntiMatter Zone, 2021-2025
+
+Glossary of all known items and their effects. All prices are suggestions/base cost to buy from a shop.
+Refer to Battle Math for basic terms, all prices listed in Macca.
+
+Table of Contents (CTRL+F):
+
+Consumables:
+ - Restoratives
+ - Buffs, Attacks, Debuffs
+
+Reusables:
+ - Tools
+ - Objects
+
+Weapons:
+ - Strike Weapons
+    > Axes
+    > Hammers
+    > Clubs/Maces
+ - Slash Weapons
+    > Swords
+    > Knives
+    > Whips
+ - Pierce Weapons
+    > Bows/Arrows
+    > Spears
+    > Thrown [Darts,Needles,Shuriken,Kunai]
+ - Guns/Ammo
+    > Pistols, Submachine Guns (9mm)
+    > Magnums, Machine Guns (.45cal)
+    > Carbines, Assault Rifles (.556mm)
+    > Shotguns (00Buck, Birdshot, Slug)
+ - Magical Weapons
+    > Wands
+    > Staves
+    > Tomes
+
+Armor:
+  - Helmets
+  - Chests
+  - Legs
+  - Gloves
+  - Capes
+  - Accessories
+
+
+
++---------------------------------+
+|           Consumables           |
++---------------------------------+
+
+Consumables are usually one time use unless specified and tend to be the most common items in the game
+
+
+
+------------->=-Restoratives-=<------------
+
+Usually Restores HP/MP or Revives
+
+     NAME      |  PRICE | DESCRIPTION
+---------------|--------|---------
+Life Stone     |   900  | Restores 30% HP
+Bead           |  5000  | Restores 100% HP
+Soma           | 20000  | Restores 100% HP and MP
+
+Fuji Water     |   150  | Restores 1HP
+Croaka-Cola    |   200  | Restores 5HP
+Bepis          |   200  | Restores 5HP
+Neutrino Grain |   150  | Restores 5HP
+Slice of Pizza |   450  | Restores 10HP. Tasty.
+
+9Up            |   250  | Restores 2MP
+Prof. Salt     |   300  | Restores 3MP
+Cronch Bar     |   300  | Restores 3MP
+
+Blue Bull      |   600  | Evade +2 for 10 mins
+Snarlboro      |  1000  | Pack of Cigs
+OldPorts       |  1100  | Pack of Menthols
+Native Chiefs  |   900  | Pack of "Natural" Cigs
+
+Vitawater      |   300  | Restores 10HP
+Spirit Drop    |   400  | Restores 10MP
+
+Revival Bead   |  5000  | Revives character with 25% HP
+Balm of Life   | 30000  | Revives character with Full HP
+
+
+
+------------->=-Buffs, Attacks, Debuffs-=<------------
+
+Usable items that replicate spells and physical skills a single time.
+Usually can put [SPELL] Stone as an item and it works, e.g. ZIO STONE casts Zio once
+
+
+
+
++---------------------------------+
+|            Reusables            |
++---------------------------------+
+
+Items that aren't destroyed on use and can be freely used multiple times
+
+     NAME      |  PRICE | DESCRIPTION
+---------------|--------|---------
+Macca          |   N/A  | Legal tender for all debts demonic and domestic
+Lockpick       |   100  | Small hook and tensioning wrench. Not strong enough to be a weapon.
+
+
+
+
++---------------------------------+
+|            Weapons              |
++---------------------------------+
+>Things that say (Dual Wield) followed by +'s or -'s indicate you CAN, + is easier and - is harder
+>Need higher DEX rating to handle Dual Wielded weapons, refer to Battle Math
+
+
+-------KNIVES (Slash, STR) (Dual Wield++)---------------------
+
+     NAME      |  PRICE | DESCRIPTION
+---------------|--------|---------
+Hobo Knife     |        | 1d4, +1 Attack, 1H, Slash
+
+
+
+-------GUNS (Pierce, DEX)-----------------------
+>Bullets can give further modifiers to specific guns (Fire Bullets, AP Rounds, etc)
+
+
+==Pistols (9mm, 1H) (Dual Wield+)
+     NAME      |  PRICE | DESCRIPTION
+---------------|--------|---------
+PP7            |        | 1d4, +1 Accuracy
+DD44           |        | 1d4, +1 Damage
+Falcon 2       |        | 1d8, -1 Accuracy
+
+
+==Submachine Guns (9mm, 2H, 3 Round Burst) (Dual Wield---)
+     NAME      |  PRICE | DESCRIPTION
+---------------|--------|---------
+D5K            |        | 1d6, 3xHit, -2 Accuracy
+CMP50          |        | 1d4, 3xHit, -1 Damage, +1 Accuracy
+
+////////////
+
+==Magnums (.45cal, 1H) (Dual Wield--)
+     NAME      |  PRICE | DESCRIPTION
+---------------|--------|---------
+
+
+==Machine Guns (.45cal, 2H, STR Req to fire standing)
+     NAME      |  PRICE | DESCRIPTION
+---------------|--------|---------
+
+
+////////////
+
+==Carbines/Snipers (.556mm, 2H)
+     NAME      |  PRICE | DESCRIPTION
+---------------|--------|---------
+
+
+==Assault Rifles (.556mm, 2H, 3 Round Burst)
+     NAME      |  PRICE | DESCRIPTION
+---------------|--------|---------
+AR33
+
+/////////////
+
+==Shotguns (Versatile [00Buck, Birdshot, Slug], 2H)
+     NAME      |  PRICE | DESCRIPTION
+---------------|--------|---------
+
+
++---------------------------------+
+|        Armor/Accessories        |
++---------------------------------+
+
+
+------------->=-Chest/Coat-=<------------
+>Most likely to give Elemental Weakeness or Resist, often both
+
+     NAME      |  PRICE | DESCRIPTION
+---------------|--------|---------
+Lab Coat       |    500 | +1 Def, +1 Evade
+Flak Jacket    |        | +1 Def, +Resist Fire
+
+
+
+
+------------->=-Accessory/Misc-=<------------
+>Most likely to give specific supplemental stats or resistances, unique passives
+
+     NAME      |  PRICE | DESCRIPTION
+---------------|--------|---------
+Prayer Beads   |    300 | +1 M.Def, +2 M.Evade

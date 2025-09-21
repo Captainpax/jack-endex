@@ -1,0 +1,224 @@
+Made by AntiMatter Zone, 2021-2025
+Written by Klintan Paez
+
+++----------------------------++
+|| Table of Contents (CTRL+F) ||
+++----------------------------++
+ > 1) Roll/Assign AP
+ > 2) Pick an Arcana
+ > 3) Assign HP, MP/TP and SP
+ > 4) EXP Curve and Leveling Up
+ > 5) Scaling a new High Level Character/Demon
+
+
++--------------------+
+|> 1) Roll/Assign AP |===========================================================================================
++--------------------+
+
+Roll 6d20 Ability Points (AP)
+Optional: Roll multiple sets of 6d20, pick your favorite set to use
+ALTERNATE: 6d12 + 4 instead of 6d20 (Stat range is 5-16 instead of 1-20)
+
+Once you have a set of 6 numbers, place them into STR, DEX, INT, WIS, CON and CHA wherever you want.
+Players get +1 Ability Point on levelup. Even numbers increase modifier, Odd numbers are for gear requirements.
+
++--------------+
+|WHAT STATS DO:|  + means a little, ++ means a lot
++--------------+-------------------------------------
+| STR | HP+         Melee, Phys Skills
+| DEX | TP++,       Guns/Ranged, Gun Skills, Turn Priority
+| INT | MP++, SP++  Attack Spells
+| WIS | MP+         Heal/Support Spells
+| CON | HP++, TP+   Ailment Resistance
+| CHA | SP+         Negotiation
+-----------------------------------------------------
+
+Every stat is also associated with a "World Skill"; refer to character sheet for list (PINK BOXES)
+
++-----------+
+| Modifiers | (STAT-10)/2, round down.
++-----------+--------------------
+ 0 > -5  |   22 > 6   |   44 > 17
+ 2 > -4  |   24 > 7   |   46 > 18
+ 4 > -3  |   26 > 8   |   48 > 19
+ 6 > -2  |   28 > 9   |   50 > 20
+ 8 > -1  |   30 > 10  |   52 > 21
+10 >  0  |   32 > 11  |   54 > 22
+12 >  1  |   34 > 12  |   56 > 23
+14 >  2  |   36 > 13  |   58 > 24
+16 >  3  |   38 > 14  |   60 > 25
+18 >  4  |   40 > 15  |
+20 >  5  |   42 > 16  |
+
+
+This is +1 Modifier every +2 ability, on the even numbers.
+10 is the universal "average" skill level for an adult human, and therefore +0 modifier.
+
+Basically every formula refers to a stat's MODIFIER unless stated.
+
+
+
++--------------------+
+|> 2) Pick an Arcana |============================================================================================
++--------------------+
+Starting Arcana ("Race") will apply permanent bonues and penalties.
+These permanently edit your base stats one time on character creation.
+Since they're added/subtracted directly from your stats, this will affect initial HP/MP/TP/SP and all world skills.
+
+
+
+ARCANA     |      BONUS     |  PENALTY 
+-----------|----------------|------------
+Fool       | +1 SP on level | No bonus stats on creation
+Magician   | +2 INT         | -2 STR
+Emperor    | +1 CHA, +1 STR | -2 DEX
+Empress    | +1 CHA, +1 DEX | -2 STR
+Chariot    | +2 CON         | -1 DEX, -1 WIS
+Hermit     | +2 WIS         | -2 CON
+Fortune    | +1 CHA, +1 DEX | -2 WIS
+Strength   | +2 STR         | -2 INT
+Temperance | +2 CHA         | -1 INT, -1 WIS
+Tower      | +2 WIS         | -1 STR, -1 DEX
+Star       | +2 DEX         | -1 INT, -1 CHA
+Moon       | +1 STR, +1 WIS | -2 DEX
+Sun        | +2 INT         | -2 WIS
+
+Extra Arcana:
+-----------|----------------|---------------
+Knight     | +1 DEX, +1 STR | -1 CHA, -1 CON
+
+
+Feel free to make up more/use SMT "races" instead
+The actual names of the arcana are more or less just a title
+If making up a new one, try and keep the buffs/debuffs balanced, and up to 4 points total (pls no +/- 10)
+
+
+
++-----------------------------+
+|> 3) Assign HP, MP/TP and SP |===================================================================================+-----------------------------+
+
+Any reference to a stat for this and further sections, such as STR, will mean its MODIFIER, not the actual stat.
+
+First, calculate Health (HP). Next, Magic (MP) or Tech Points(TP). Then, calculate your Skill Points (SP).
+Your character must pick between MP or TP to have as a resource. You can't have both.
+
+|===================================================================
+|STAT |      FORMULA     |  WHAT IT DOES
+|-----|------------------|------------------------------------------
+| HP  | 17+CON+(STR/2)   | Keeps you alive. Hit 0 and you begin DYING. Sometimes spent on Physical Skills.
+|-----|------------------|------------------------------------------
+| MP  | 17+INT+(WIS/2)   | Allows you to use skills and magical spells. Difficult to replenish without sleep.
+| TP  | 7+DEX+(CON/2)    | Allows you to use Physical/Gun skills only. Regenerates over time/per turn**.
+|-----|------------------|------------------------------------------
+| SP  | ((5+INT)*2)+CHA  | Used to increase world skills. Must be used immediately when gained.
+|===================================================================
+
+**TP regains +1 per Turn, or 1 every ~10 seconds out of combat.
+
+
+
+
+Apply all of your SP into any world skill in the upper section of the pink boxes on the character sheet.
+Skills in the lower section must be specially trained in-game or given by DM and are usually more OP.
+
+
+The Max Rank for any world skill, and therefore amount of SP you may spend at Character Level 1, is 4.
+The max rank increases by 2 every level, so it'll be 6 at LV2, 8 at LV3, etc.
+
+|========|---|---|---|----|----|----|----|----|----|----|-----
+| LEVEL  | 1 | 2 | 3 |  4 |  5 |  6 |  7 |  8 |  9 | 10 | ...
+|--------|---|---|---|----|----|----|----|----|----|----|-----
+|MAX RANK| 4 | 6 | 8 | 10 | 12 | 14 | 16 | 18 | 20 | 22 | ...
+|========|---|---|---|----|----|----|----|----|----|----|-----
+
+FORMULA: (LVL*2)+2
+
+
+
+====---------Optional, alternate playstyles FOR THE BRAVE:
+
+Reduced HP (For Cats, Small Creatures):
+HP = 9+(CON)+(STR/2)
+
+Increased MP (For Psychic Babies):
+MP = 33+(INT)+(WIS/2)
+
+
+
+The Following buffs/debuffs are +/- 2 unless stated or not applicable:
+
+Cat Buffs:
+Uses TP, Jump, Climb, Listen, Hide, Move Silently, Balance, Evade, Reflex, Speaks Cat
+
+Cat Debuffs:
+HP(HUGE), Intimidate, Bluff, Ride, Swim, Use Rope, Forgery, Craft, Fortitude, Can't speak Human, easily defeated by Cat Tropes
+
+
+
+Baby Buffs: (Brent never made up any lmao)
+Baby Debuffs:
+
+
+
+
++----------------------------------+
+|> 4) EXP Curve and Leveling Up    |=============================================================================
++----------------------------------+
+
+A character needs (LEVEL)x1000 EXP to reach the next level. This means 1000 at level 1, 2000 at level 2, etc.
+
+If you need to adjust the EXP curve for your campaign, just make things give more or less EXP. A good baseline value for level 1 enemies is roughly 100-200 EXP each, but factors may vary.
+
+DONT FORGET TO GIVE OUT EXP FOR GOOD USE OF OVERWORLD SKILLS / BRAIN; NOT JUST COMBAT. Negotiation is a good one.
+
+
+
+To Level Up:
+
+1) Gain 1 AP.
+Place it into any base ability stat you would like. This will influence the following steps.
+
+2) Max HP gains 1d4+CON+(STR/2)
+
+3) Max MP gains 1d4+INT+(WIS/2)
+  >3b) TP gains 1d4+[(DEX+CON)/2]
+
+4) Gain (INT+CHA)/2 SP.
+Distribute them ALL into skills. If all your skills are capped, the SP is wasted.
+
+All Resources gain at least 1, and always round up after calculation.
+You always heal/gain the same amount you grow on levelup, e.g. if you gain 1 Max HP, you also gain 1 current HP
+
+
+Any extra EXP rolls over to the progress toward the next level.
+
+
+
++----------------------------------------------+
+|> 5) Scaling a new High Level Character/Demon |==================================================================
++----------------------------------------------+
+
+If you have a new LV2+ demon or character that needs coherent AP, HP, MP, etc.
+
+1) Roll 6 AP numbers like normal, apply to stats
+2) HP = 17+CON+(STR/2)
+3) MP = 17+INT+(WIS/2)
+ >3b) TP = 7+DEX+(CON/2)
+
+Demons get no SP, but if you need SP for a new character sheet:
+4) SP = ((5+INT)*2)+CHA
+
+5) Apply X AP into stats. Suggested X value: 3-5
+
+6) Add scaling Stats:
+   HP gets ( 1d4+CON+(STR/2) ) * X
+   MP gets ( 1d4+INT+(WIS/2) ) * X
+   TP gets ( 1d4+ (DEX+CON)/2) * X
+   SP gets ( (INT+CHA)/2 ) * X
+
+
+Repeat (LVL-1)/X times, using the remainder for the last cycle.
+
+Example: If LV18, do *5 the first three times, *2 the 4th time. 17 levelups, as you don't level up from 0 to 1.
+
+Use smaller X values for more precise RNG, larger for faster scaling/less cycles.

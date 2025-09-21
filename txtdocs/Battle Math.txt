@@ -1,0 +1,385 @@
+Made by AntiMatter Zone, 2021-2025
+Written by Klintan Paez
+
+++----------------------------++
+|| Table of Contents (CTRL+F) ||
+++----------------------------++
+ > 1) TL;DR How to Attack
+ > 2) Attack Rolls
+ > 3) Elements and Affinities
+ > 4) Ailments
+ > 5) Spell Quick-guide
+
+
++------------------------+
+|> 1) TL;DR How to Attack|==========================================================================================
++------------------------+
+
+Roll Accuracy -> Roll Attack -> Add Weapon Attack/Subtract Enemy Armor -> Multiply by Affinity+Buffs
+
+
+0) If the player has an ailment that causes loss of control, such as confusion, roll 1d20 first.
+If the player loses their turn, select their actual action with 1d20. Refer to ailments section for details.
+
+
+
+----||>> 1) Roll Accuracy: 1d20 + ACC - EVA
+
+ACC = Attacker's Weapon Accuracy 
+EVA = Target's Equipment Evasion
+
+Physical Attacks use Accuracy and roll against Evasion
+Magical Attacks use Magic Accuracy and roll against Magic Evasion
+Ailments roll against CON Modifier instead of Evasion
+
+
+DM Judgement on what you need to hit. DM MUST CALL IT; 10 is considered "Average" skill level.
+
+Rolling a 20 is considered a critical. Criticals deal +75% damage:
+  > For a basic attack, multiply crit on each hit seperately, BEFORE stat modifier
+  > For a skill or spell, add crit as if it were any other buff and multiply the total AFTER stat modifier
+
+If an attack cannot miss but does damage, still roll for crit.
+Rolling a 1 is considered a critical miss. Something funny/bad is going to happen. Pray to the DM.
+
+If the skill in question has a secondary effect, such as most elemental spells, roll 1d20 for it here.
+
+
+
+----||>> 2) Roll Attack: Damage = ( Roll + ATK - DEF ) * Buff%
+
+ATK = Attacker's Weapon Attack Bonus
+DEF = Defender's Equipment Defense
+Buff% = Sum of all affinities, buffs and debuffs (Default 1). See Affinities section for details.
+
+Physical Attacks use Attack and roll against Defense
+Magical Attacks use Magic Attack and roll against Magic Defense
+
+
+Unarmed attacks are 1d4+STR, strike damage. Weapons should have their basic attack listed on them.
+Skills override the basic attack of a weapon, but still apply the bonus attack and accuracy.
+Gun skills cost 1 bullet per hit as well as MP/TP.
+
+See Attack Rolls section for detailed maths.
+
+
+
++------------------+
+|> 2) Attack Rolls:|================================================================================================
++------------------+
+
+Note: Reference to a stat, such as INT for attack magic, means the stat's modifier.
+For every formula, always round up AS THE LAST STEP.
+
+| MOD |  WHEN TO USE
+|-----|---------------------------------------
+| STR | Melee Slash/Pierce/Strike attacks
+| DEX | Ranged Gun/Bow attacks
+| INT | Attack Spells
+| WIS | Heals/Buffs/Ailment/Support Spells
+| CON | Defending against Ailments
+
+
+Many skills will universally reference Weak, Medium, Heavy and Severe attacks.
+All of these rolls count as a single hit. Examples will use the Zio line of spells.
+
+|  TIER  |  EXAMPLE  |     FORMULA    |  Damage Range
+|--------|-----------|----------------|---------------------------------
+| Weak   | Zio       | 1d6 + MOD      |  1-6 + MOD
+| Medium | Zionga    | 2d8 + (MOD*2)  |  2-16 + MOD*2
+| Heavy  | Ziodyne   | 3d12 + (MOD*3) |  3-36 + MOD*3
+| Severe | Ziobarion | 4d20 + (MOD*4) |  4-80 + MOD*4
+
+Criticals deal +75% damage.
+
+
+
+
+---||>> Using Weapon Basic Attacks:
+
+Even if a basic attack involves multiple hits for damage, MODIFIER bonus is ONLY APPLIED ONCE (before buffs).
+Extra hits on all attacks must be rolled for independently and can miss / crit / apply effects seperately.
+
+A crit on a multi-hit basic attack would be added to that attack only, before adding all attacks+Modifier.
+
+Example: 3d6+DEX SMG with Poison Bullets, roll miss/crit/hit on 6/6/6 damage. 
+0+(6*1.75)+6 = 10.5+6 = 16.5, then add DEX and multiply by buffs, round up. Roll for poison chance twice.
+
+DO NOT GO OVERBOARD WITH THE EXTRA HITS WHEN MAKING WEAPONS.
+
+
+=======Melee/Weapons - Use STR bonus
+Physical Weapons tend to have higher bonus damages and base auto attacks.
+Physical weapons also cannot scale as easily due to lack of upgradable ammo.
+
+Random Examples:
+
+|    WEAPON    |    ATTACK AND BONUS  |  HOW TO HANDLE
+|--------------|----------------------|-------------------------------------------------
+| Basic Knife  | 1d4, +1 ATK          | A 1d4 hit with +1 ATT. +STR on result.
+| Quick Dagger | 1d4, 2xHit, -1 ACC   | Two 1d4 hits; -1 ACC each. +STR on result.
+| Ninja Katana | 2d6, 4xHit, +2 ATK   | Four 2d6 hits; +2 ATT each. +STR on result.     <This is REALLY strong
+
+
+
+=======Guns/Ranged Weapons - Use DEX Bonus
+Gun basic attacks use ammo. May involve higher accuracy bonuses, and applies effects on ammo.
+Gun basic attack damage is generally slightly lower than melee due to ease of scaling with ammo.
+
+Random Examples:
+
+|    WEAPON    |       ATTACK AND BONUS      |  HOW TO HANDLE
+|--------------|-----------------------------|-------------------------------------------------
+| Pistol       | 1d4, +1 ACC                 | A 1d4 hit with +1 ACC. +DEX on total. Uses 1 bullet.
+| SMG          | 1d6, 3xHit, -1 ATT, -1 ACC  | Three 1d6 hits; -1 ATT, -1 ACC each. +DEX on total. Uses 3 bullets.
+| Sniper       | 2d12, +2 ACC                | A 2d12 hit with +2 ACC. +DEX on total. Uses 1 bullet.
+
+
+
+
+
+---||>> Using a skill with a weapon:
+
+Replaces the Auto Attack with the described effect. Multiple hit skills DO use the stat modifier on every hit.
+Number of attacks on basic attack is ignored; Do what the skill says, but bonus damage/accuracy apply.
+
+Using a Gun Skill costs 1 bullet per hit as well as MP/TP.
+
+
+Random Examples, using weapons above:
+
+|    WEAPON    |   SKILL USED   |  HOW TO HANDLE
+|--------------|----------------|-------------------------------------------------
+| Ninja Katana | Cleave         | One Weak Attack, +2 ATT    (NOT 1d6+STR+2 four times)
+| Basic Knife  | Bouncing Claw  | Two Weak Attacks, +1 ATT each
+| Pistol       | Triple Down    | Three Weak Attacks, +1 ACC each. Uses 3 bullets.
+| SMG          | Muzzle Flash   | One Weak Attack, -1 ATT, -1 ACC, 20% Blind. Uses 1 bullet.
+
+This intentionally outscales some early skills from being useful if a weapon's auto is cracked.
+
+
+
+
+
+Base Damage Ranges compared to the Stat it uses:
+
+         Trash      Avg        Super         Ultra         Boss          DemiGod     Main Character
+               Bad       Great         Mega         Elite         Fiend         Godly
+|STAT> ||  1  | 5  | 10 | 15  | 20   | 25   | 30   | 35   | 40   | 45   | 50   | 55   | 60  
+|======||=====|====|====|=====|======|======|======|======|======|======|======|======|=======|
+|Weak  || 0   |0-3 |1-6 |3-8  |6-11  |8-13  |11-16 |13-18 |16-21 |18-23 |21-26 |23-28 |26-31  |
+|------||-----|----|----|-----|------|------|------|------|------|------|------|------|-------|
+|Medium|| 0-6 |0-10|2-16|6-20 |12-26 |16-30 |22-36 |26-40 |32-46 |36-50 |42-56 |46-60 |52-66  |
+|------||-----|----|----|-----|------|------|------|------|------|------|------|------|-------|
+|Heavy || 0-21|0-27|3-36|9-42 |18-51 |24-57 |33-66 |39-72 |48-81 |54-87 |63-96 |69-102|78-111 |
+|------||-----|----|----|-----|------|------|------|------|------|------|------|------|-------|
+|Severe|| 0-60|0-72|4-80|12-88|24-100|32-108|44-120|52-128|64-140|72-148|84-160|92-168|104-180|
+|======||=====|====|====|=====|======|======|======|======|======|======|======|======|=======|
+
+Game is designed to cap out somewhere around Level 50; 60 in AP.
+
+
+Theoretical Max Hits:
+
+STACKING CONDITION            |                 Effective
+                              |Damage| Bonus% | multiplier
+------------------------------|------|-----------------------------------
+Max Roll Kougabarion at 60 INT|  180 |   +0%  | x1.00
+              Critical or Weak|  315 |  +75%  | x1.75
+                     Crit+Weak|  450 | +150%  | x2.50
+                ...+Tarkuaja*3|  558 | +210%  | x3.10
+                 ...+Rakunda*3|  666 | +270%  | x3.70   <True Pain
+           ...+vs Chaos target|  711 | +295%  | x3.95
+               ...+Light Boost|  756 | +320%  | x4.20
+        ...Light Amp, no boost|  801 | +345%  | x4.45
+                  ...Amp+Boost|  846 | +370%  | x4.70
+              ... +Concentrate| 1116 | +520%  | x6.20   <Limit Break
+                       
+
+
+
+
++----------------------------+
+|> 3) Elements and Affinities|=====================================================================================
++----------------------------+
+
+Combatants all have affinities for the different elements; there is no strict relationship/triangle
+
+Elemental Affinities, from most to least protective:
+
+| AFFINITY | DESCRIPTION
+|----------|-----------------------------------------------------------------------------------
+| Reflect  | Attacks redirected to attacker, using their defense. Cannot evade. Cannot reflect again; block instead.
+| Drain    | Attacks heal the target. Ailments/Light/Dark cannot be drained.
+| Block    | Attacks deal zero damage. Ailments/Light/Dark fail.
+| Resist   | Attacks deal -50% damage. Ailments/Light/Dark have -30% accuracy instead.
+| Neutral  | Attack is calculated normally.
+| Weak     | Attacks deal +75% damage. Ailments/Light/Dark have +50% accuracy instead.
+
+Players should start with neutral affinity in all elements. Affinities change with equipment (Armor specifically), skill passives, or story-based reasons.
+
+Almighty is always neutral affinity.
+
+
+
+---||>>Currently supported elements:
+
+Physical: Strike, Slash, Pierce, Gun
+
+Magical: Fire, Ice, Electricity, Wind,
+         Psychic, Nuclear, Earth, Gravity, Force,
+         Dark, Light, Curse*, Bless*
+
+Neutral: All ailments, Almighty
+
+
+
+*Curse and Bless are just Dark and Light without being instant kill spells
+
+
+
+
++--------------+
+|> 4) Ailments |====================================================================================================
++--------------+
+
+Poison:     1d6 damage per turn. Can be boosted with passive skills.
+Bleed:      1d4+CON damage per turn. Deals 1 less damage per turn. Always lasts CON turns.
+Charm:      50% chance to pick a random beneficial action for the enemy (e.g. heal enemy)
+Confusion:  50% chance to pick a random detrimental action for the party (e.g. attack ally)
+Berserk:    Forcibly attempts to attack nearest target with currently equipped weapon. ATT +2, ACC -2.
+
+Burn:       1d4 damage, +1 damage every other turn, stacking. Max 10 Stacks. Refreshing duration keeps stacks.
+Shock:      50% chance to not act on your turn
+Chill:      Cannot use physical skills.
+Winded:     Cannot use magical spells.
+Enervation: -25% to all base ability scores (STR/DEX/CON/INT/WIS/CHA)
+Exhaustion: +50% to all HP/MP/TP costs
+
+Sealed:     Cannot use spells or skills. (Silenced)
+Blind:      -50% to all accuracy checks
+Sleep:      Unaware and unable to act. Heals 1d4 HP per turn. Effect ends early when attacked. Doesn't restore MP.
+Snare:      Unable to move/reposition. Can still freely use items, skills and attacks.
+Stun:       Unable to act.
+
+
+
+
+Whether or not an ailment subsides after battle is ultimately up to the DM.
+Ailments that cause loss of control, such as Confusion, have their chances rolled for AFTER an action is confirmed.
+
+Example: Player Confused, tries to cast Patra. They fail 1d20 confusion roll; DM rolls for which ally to target for an attack instead. Attack chosen via another random roll out of available attacks.
+
+
+
+
++-----------------------+
+|> 5) Spell Quick-Guide |==========================================================================================
++-----------------------+
+
+Because magic is a vast and oddly named subject.
+Refer to Skill List txt for every skill, costs and better descriptions.
+
+
+---||>> Elemental Spells
+
+Note: Add "Ma(r)" before an attack to make it an Aoe.
+Examples: Maragidyne = AoE Heavy Fire
+          Mapsi = AoE Weak Psychic
+
+An AoE has roughly a 10 yard radius / hits targets reasonably within range
+Use DM Judgement always
+
+Some elemental spells apply an associated ailment on a 20 roll (18 if WEAK).
+Roll for effect is seperate from accuracy and unaffected by stats unless stated.
+
+Effects last 2+(WIS/2) turns.
+
+
+Element||   Fire    |    Ice     |    Elec   |    Wind    |  Earth    | Gravity
+-------||-----------|------------|-----------|------------|-----------|----------
+Weak   || Agi       | Bufu       | Zio       | Garu       | Magna     | Gry
+Medium || Agilao    | Bufula     | Zionga    | Garula     | Magnara   | Gryva
+Heavy  || Agidyne   | Bufudyne   | Ziodyne   | Garudyne   | Magnadyne | Grydyne
+Severe || Agibarion | Bufubarion | Ziobarion | Garubarion | Magnarion | Grybarion
+-------||-----------|------------|-----------|------------|-----------|------------
+Ailment|| Burn      | Chill      | Shock     | Winded     | Exhaustion| Enervation
+==================================================================================
+
+Element||   Force   | Psychic** | Nuclear**  |  Curse**   |  Bless**
+-------||-----------|-----------|------------|------------|-----------
+Weak   || Zan       | Psi       | Frei       | Eiha       | Kouha
+Medium || Zanma     | Psio      | Freila     | Eiga       | Kouga
+Heavy  || Zandyne   | Psiodyne  | Freidyne   | Eigaon     | Kougaon
+Severe || Zanbarion | Psibarion | Freibarion | Eigarion   | Kougarion
+-------||-----------|-----------|------------|------------|-----------
+
+**The following effects do not require an accuracy roll, and always apply:
+------------------------------------------------------------------------------------------------------
+Psychic| +25% Attack to targets that are Charmed, Confused, Enervated, Exhausted, Sealed, or Berserk.
+Nuclear| +25% Attack to tagets that are Poisoned, Burned, Shocked, Chilled, Winded, or Blind.
+Curse  | +25% Attack to LAW aligned targets.
+Bless  | +25% Attack to CHAOS aligned targets.
+------------------------------------------------------------------------------------------------------
+
+
+
+Light and Dark are instant death attacks, with higher chances based on tier.
+
+Light: (Ma)Hama(20%), (Ma)Hamaon(40%)
+Dark:  (Ma)Mudo(20%), (Ma)Mudoon(40%)
+
+Light and dark attacks simply require an accuracy roll and do not scale with damage at all.
+Light and dark attacks cannot be drained. Drain becomes block instead if it somehow would be applied.
+Many bosses and important enemies block/reflect light and dark.
+
+
+Almighty Spells:
+-----------------------------
+Megido:     AoE Medium Damage
+Megidola:   AoE Heavy Damage
+Megidolaon: AoE Severe Damage
+--------
+Life Drain:   1d8+MOD HP steal from target
+Spirit Drain: 1d8+MOD MP steal from target
+Energy Drain: 1d12+MOD HP/MP steal from target
+
+Nothing can resist or be weak to Almighty, and Almighty spells tend to cost more than normal spells.
+
+
+Healing Spells:
+----------------------------------
+Target  |   Single  |    Party   |
+--------|-----------|------------|
+Weak    | Dia       | Media      |
+Medium  | Diarama   | Mediarama  | 
+Heavy   | Diabaryne | Mediabaryne|
+100%    | Diarahan  | Mediarahan |
+
+Note that there is no "Severe" heal, only a 100% HP heal.
+
+
+
+---||>> Buffs/Debuffs
+
+All buffs/debuffs +/- by 20%.
+They stack up to 3 times (+/- 60%), and cannot bring damages below zero.
+
+Buffs last for 2+(WIS/2) turns.
+
+Buffs affect both physical and magical stats.
+
+
+
+| PREFIX | MEANING |+| SUFFIX | MEANING |
+|--------|---------|+|--------|---------|
+| Taru-  | Attack  |+| -kaja  |  Buff   |
+| Raku-  | Defense |+| -nda   |  Debuff |
+| Suku-  | ACC/EVA |+|________|_________|
+|--------|---------/  *Add MA to make it an AoE.
+
+
+Luster Candy: ATT/DEF/ACC/EVA +20%
+Debilitate:   ATT/DEF/ACC/EVA -20%
+Dekunda:   Allied stat debuffs nullified (removes -nda effects)
+Dekaja:    Enemy stat buffs nullified (removes -kaja effects)

@@ -18,8 +18,8 @@
   ],
   "games": [
     {
-      "id": "d2161b75-3f81-4361-a490-ab9413bf5140",
-      "name": "Test Campaign",
+      "id": "99cea24e-34bc-4656-8f48-1f8b1b504fb0",
+      "name": "This is a test story",
       "dmId": "2dbd5fc6-817d-4904-94c9-ff9de128c87d",
       "players": [
         {
@@ -32,53 +32,20 @@
             "armor": null,
             "accessory": null
           }
-        },
-        {
-          "userId": "62ec96f2-f4af-4cf7-9ecf-7aca6eea0baf",
-          "role": "player",
-          "character": {
-            "name": "Bob",
-            "profile": {
-              "class": "God"
-            },
-            "resources": {
-              "level": 99,
-              "exp": 99000,
-              "hp": 9999,
-              "maxHP": 99999,
-              "useTP": true,
-              "tp": 999
-            },
-            "stats": {
-              "STR": 99,
-              "DEX": 99,
-              "CON": 99,
-              "INT": 99,
-              "WIS": 99,
-              "CHA": 99
-            }
-          },
-          "inventory": [
-            {
-              "id": "318f1dea-3c9f-43d6-929c-94251fca74f7",
-              "name": "Bead",
-              "type": "Restorative",
-              "desc": "Restores 100% HP",
-              "amount": 5
-            }
-          ],
-          "gear": {
-            "weapon": null,
-            "armor": null,
-            "accessory": null
-          }
         }
       ],
       "items": {
         "custom": []
       },
       "gear": {
-        "custom": []
+        "custom": [
+          {
+            "id": "228bf78b-ed4b-44cc-b8ae-1421fa71cd0c",
+            "name": "God Chestplate",
+            "type": "Body Gear",
+            "desc": "Can't die "
+          }
+        ]
       },
       "demons": [],
       "demonPool": {
@@ -93,11 +60,17 @@
       },
       "invites": [
         {
-          "code": "JX2JUN",
+          "code": "FXMEWM",
           "createdBy": "2dbd5fc6-817d-4904-94c9-ff9de128c87d",
-          "createdAt": "2025-09-21T04:33:28.542Z",
+          "createdAt": "2025-09-21T14:04:02.760Z",
+          "uses": 0
+        },
+        {
+          "code": "GCMRV5",
+          "createdBy": "2dbd5fc6-817d-4904-94c9-ff9de128c87d",
+          "createdAt": "2025-09-21T14:04:24.455Z",
           "uses": 2,
-          "lastUsedAt": "2025-09-21T04:46:26.661Z"
+          "lastUsedAt": "2025-09-21T14:07:39.368Z"
         }
       ]
     }
