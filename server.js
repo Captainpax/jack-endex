@@ -25,6 +25,123 @@ const storyBroadcastQueue = new Map();
 const DISCORD_API_BASE = 'https://discord.com/api/v10';
 const PERSONA_REQUEST_TIMEOUT_MS = 120_000;
 const TRADE_TIMEOUT_MS = 180_000;
+const YOUTUBE_ID_REGEX = /^[A-Za-z0-9_-]{11}$/;
+const MAX_ALERT_LENGTH = 500;
+
+function parseYouTubeTimecode(raw) {
+    if (typeof raw !== 'string') return 0;
+    const trimmed = raw.trim();
+    if (!trimmed) return 0;
+    if (/^\d+$/.test(trimmed)) {
+        const num = Number(trimmed);
+        return Number.isFinite(num) && num >= 0 ? num : 0;
+    }
+    let total = 0;
+    let matched = false;
+    const pattern = /(\d+)(h|m|s)/gi;
+    let match;
+    while ((match = pattern.exec(trimmed)) !== null) {
+        matched = true;
+        const value = Number(match[1]);
+        if (!Number.isFinite(value)) continue;
+        const unit = match[2].toLowerCase();
+        if (unit === 'h') total += value * 3600;
+        else if (unit === 'm') total += value * 60;
+        else if (unit === 's') total += value;
+    }
+    if (matched) return total;
+    return 0;
+}
+
+function parseYouTubeInput(value) {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (YOUTUBE_ID_REGEX.test(trimmed)) {
+        return {
+            videoId: trimmed,
+            startSeconds: 0,
+            url: `https://youtu.be/${trimmed}`,
+        };
+    }
+    try {
+        const url = new URL(trimmed, 'https://youtube.com');
+        const host = url.hostname.toLowerCase();
+        let videoId = '';
+        if (host.endsWith('youtu.be')) {
+            const parts = url.pathname.split('/').filter(Boolean);
+            videoId = parts[0] || '';
+        } else if (host.includes('youtube.')) {
+            if (url.pathname.startsWith('/watch')) {
+                videoId = url.searchParams.get('v') || '';
+            } else {
+                const segments = url.pathname.split('/').filter(Boolean);
+                if (segments[0] === 'embed' || segments[0] === 'shorts') {
+                    videoId = segments[1] || '';
+                }
+            }
+        }
+        if (!YOUTUBE_ID_REGEX.test(videoId)) return null;
+        let startSeconds = 0;
+        const timeParam = url.searchParams.get('t') || url.searchParams.get('start');
+        if (timeParam) {
+            startSeconds = parseYouTubeTimecode(timeParam);
+        }
+        if (url.hash) {
+            const hash = url.hash.replace(/^#/, '');
+            if (hash.startsWith('t=')) {
+                startSeconds = parseYouTubeTimecode(hash.slice(2));
+            }
+        }
+        return {
+            videoId,
+            startSeconds,
+            url: url.toString(),
+        };
+    } catch {
+        return null;
+    }
+}
+
+function ensureMediaState(game) {
+    const raw = game && typeof game.media === 'object' ? game.media : {};
+    const url = typeof raw.url === 'string' ? raw.url.trim() : '';
+    const videoId = typeof raw.videoId === 'string' ? raw.videoId.trim() : '';
+    const startRaw = Number(raw.startSeconds);
+    const startSeconds = Number.isFinite(startRaw) && startRaw >= 0 ? Math.floor(startRaw) : 0;
+    const playing = !!raw.playing && YOUTUBE_ID_REGEX.test(videoId);
+    const updatedAt = typeof raw.updatedAt === 'string' ? raw.updatedAt : new Date().toISOString();
+    const normalized = {
+        url: playing ? url.slice(0, 500) : '',
+        videoId: playing ? videoId : '',
+        startSeconds: playing ? startSeconds : 0,
+        playing,
+        updatedAt,
+    };
+    game.media = normalized;
+    return normalized;
+}
+
+function presentMediaState(media) {
+    if (!media || typeof media !== 'object') {
+        return { playing: false, videoId: '', url: '', startSeconds: 0, updatedAt: null };
+    }
+    const videoId = typeof media.videoId === 'string' ? media.videoId : '';
+    const playing = !!media.playing && YOUTUBE_ID_REGEX.test(videoId);
+    const startRaw = Number(media.startSeconds);
+    const startSeconds = Number.isFinite(startRaw) && startRaw >= 0 ? Math.floor(startRaw) : 0;
+    const url = typeof media.url === 'string' ? media.url : '';
+    const updatedAt = typeof media.updatedAt === 'string' ? media.updatedAt : new Date().toISOString();
+    if (!playing) {
+        return { playing: false, videoId: '', url: '', startSeconds: 0, updatedAt };
+    }
+    return { playing, videoId, url, startSeconds, updatedAt };
+}
+
+function sanitizeAlertMessage(value) {
+    if (typeof value !== 'string') return '';
+    return value.trim().slice(0, MAX_ALERT_LENGTH);
+}
 
 /**
  * Read the bot token configured for Discord synchronization.
@@ -140,6 +257,7 @@ function ensureGameShape(game) {
     if (!Array.isArray(game.invites)) game.invites = [];
     game.story = ensureStoryConfig(game);
     game.worldSkills = ensureWorldSkills(game);
+    game.media = ensureMediaState(game);
     return game;
 }
 
@@ -161,6 +279,7 @@ function presentGame(game, { includeSecrets = false } = {}) {
         invites: normalized.invites,
         story: presentStoryConfig(story, { includeSecrets }),
         worldSkills,
+        media: presentMediaState(normalized.media),
     };
 }
 
@@ -890,6 +1009,15 @@ function broadcastGameUpdate(gameId, extra = {}) {
     if (extra && extra.reason) payload.reason = extra.reason;
     if (extra && extra.actorId) payload.actorId = extra.actorId;
     broadcastGameMessage(gameId, payload);
+}
+
+function broadcastMediaState(game) {
+    if (!game || !game.id) return;
+    broadcastGameMessage(game.id, {
+        type: 'media:state',
+        gameId: game.id,
+        media: presentMediaState(game.media),
+    });
 }
 
 function broadcastGameDeleted(gameId) {
@@ -1649,6 +1777,89 @@ async function handleSocketMessage(ws, data) {
             case 'trade.cancel':
                 await handleTradeCancel(ws, message);
                 break;
+            case 'media.play': {
+                const gameId = parseUUID(message.gameId);
+                const rawUrl = typeof message.url === 'string' ? message.url : '';
+                if (!gameId || !rawUrl) {
+                    sendJson(ws, { type: 'media:error', error: 'invalid_request', gameId: gameId || null });
+                    break;
+                }
+                const parsed = parseYouTubeInput(rawUrl);
+                if (!parsed) {
+                    sendJson(ws, { type: 'media:error', error: 'invalid_url', gameId });
+                    break;
+                }
+                const db = await readDB();
+                const game = getGame(db, gameId);
+                if (!game || !isMember(game, ws.userId)) {
+                    sendJson(ws, { type: 'media:error', error: 'not_found', gameId });
+                    break;
+                }
+                if (!isDM(game, ws.userId)) {
+                    sendJson(ws, { type: 'media:error', error: 'forbidden', gameId });
+                    break;
+                }
+                const media = ensureMediaState(game);
+                media.url = parsed.url;
+                media.videoId = parsed.videoId;
+                media.startSeconds = parsed.startSeconds;
+                media.playing = true;
+                media.updatedAt = new Date().toISOString();
+                await persistGame(db, game, { broadcast: false });
+                broadcastMediaState(game);
+                break;
+            }
+            case 'media.stop': {
+                const gameId = parseUUID(message.gameId);
+                if (!gameId) break;
+                const db = await readDB();
+                const game = getGame(db, gameId);
+                if (!game || !isMember(game, ws.userId)) {
+                    sendJson(ws, { type: 'media:error', error: 'not_found', gameId: gameId || null });
+                    break;
+                }
+                if (!isDM(game, ws.userId)) {
+                    sendJson(ws, { type: 'media:error', error: 'forbidden', gameId });
+                    break;
+                }
+                const media = ensureMediaState(game);
+                media.url = '';
+                media.videoId = '';
+                media.startSeconds = 0;
+                media.playing = false;
+                media.updatedAt = new Date().toISOString();
+                await persistGame(db, game, { broadcast: false });
+                broadcastMediaState(game);
+                break;
+            }
+            case 'alert.broadcast': {
+                const gameId = parseUUID(message.gameId);
+                const text = sanitizeAlertMessage(message.message);
+                if (!gameId || !text) {
+                    sendJson(ws, { type: 'alert:error', error: 'invalid_message', gameId: gameId || null });
+                    break;
+                }
+                const db = await readDB();
+                const game = getGame(db, gameId);
+                if (!game || !isMember(game, ws.userId)) {
+                    sendJson(ws, { type: 'alert:error', error: 'not_found', gameId });
+                    break;
+                }
+                if (!isDM(game, ws.userId)) {
+                    sendJson(ws, { type: 'alert:error', error: 'forbidden', gameId });
+                    break;
+                }
+                const user = findUser(db, ws.userId);
+                const alert = {
+                    id: uuid(),
+                    message: text,
+                    issuedAt: new Date().toISOString(),
+                    senderId: ws.userId,
+                    senderName: user?.username || 'DM',
+                };
+                broadcastGameMessage(gameId, { type: 'alert:show', gameId, alert });
+                break;
+            }
             default:
                 sendJson(ws, { type: 'error', error: 'unknown_type', originalType: type });
         }

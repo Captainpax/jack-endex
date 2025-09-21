@@ -4,6 +4,30 @@ import { Auth, Games, Help, Items, Personas, StoryLogs, onApiActivity } from "./
 
 const EMPTY_ARRAY = Object.freeze([]);
 
+function normalizeMediaSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== "object") return null;
+    const videoId = typeof snapshot.videoId === "string" ? snapshot.videoId.trim() : "";
+    const playing = !!snapshot.playing && videoId.length > 0;
+    if (!playing) return null;
+    const startRaw = Number(snapshot.startSeconds);
+    const startSeconds = Number.isFinite(startRaw) && startRaw >= 0 ? Math.floor(startRaw) : 0;
+    const url = typeof snapshot.url === "string" ? snapshot.url : "";
+    const updatedAt = typeof snapshot.updatedAt === "string" ? snapshot.updatedAt : new Date().toISOString();
+    return { videoId, startSeconds, url, updatedAt };
+}
+
+function normalizeAlertEntry(entry) {
+    if (!entry || typeof entry !== "object") return null;
+    const id = typeof entry.id === "string" ? entry.id : null;
+    const message = typeof entry.message === "string" ? entry.message.trim() : "";
+    if (!id || !message) return null;
+    const senderName = typeof entry.senderName === "string" && entry.senderName.trim()
+        ? entry.senderName.trim()
+        : "Dungeon Master";
+    const issuedAt = typeof entry.issuedAt === "string" ? entry.issuedAt : new Date().toISOString();
+    return { id, message, senderName, issuedAt, senderId: entry.senderId || null };
+}
+
 const DM_NAV = [
     {
         key: "overview",
@@ -151,10 +175,15 @@ function useRealtimeConnection({ gameId, refreshGame, onGameDeleted }) {
     const [personaPrompts, setPersonaPrompts] = useState([]);
     const [personaStatuses, setPersonaStatuses] = useState({});
     const [tradeSessions, setTradeSessions] = useState({});
+    const [mediaState, setMediaState] = useState(null);
+    const [mediaError, setMediaError] = useState(null);
+    const [alerts, setAlerts] = useState([]);
+    const [alertError, setAlertError] = useState(null);
     const refreshRef = useRef(refreshGame);
     const refreshPromiseRef = useRef(null);
     const refreshQueuedRef = useRef(false);
     const gameDeletedRef = useRef(onGameDeleted);
+    const alertTimersRef = useRef(new Map());
 
     useEffect(() => {
         refreshRef.current = refreshGame;
@@ -323,6 +352,44 @@ function useRealtimeConnection({ gameId, refreshGame, onGameDeleted }) {
                 case "trade:error":
                     console.warn("Trade error", msg.error);
                     break;
+                case "media:state": {
+                    if (msg.gameId !== gameId) return;
+                    const snapshot = normalizeMediaSnapshot(msg.media);
+                    setMediaState(snapshot);
+                    setMediaError(null);
+                    break;
+                }
+                case "media:error":
+                    if (msg.gameId !== gameId) return;
+                    setMediaError(typeof msg.error === "string" ? msg.error : "Media command failed");
+                    break;
+                case "alert:show": {
+                    if (msg.gameId !== gameId) return;
+                    const entry = normalizeAlertEntry(msg.alert);
+                    if (!entry) return;
+                    setAlerts((prev) => {
+                        const next = prev.filter((item) => item.id !== entry.id);
+                        next.push(entry);
+                        return next.slice(-5);
+                    });
+                    if (typeof window !== "undefined") {
+                        const existing = alertTimersRef.current.get(entry.id);
+                        if (existing) {
+                            clearTimeout(existing);
+                        }
+                        const timer = window.setTimeout(() => {
+                            setAlerts((prev) => prev.filter((item) => item.id !== entry.id));
+                            alertTimersRef.current.delete(entry.id);
+                        }, 20_000);
+                        alertTimersRef.current.set(entry.id, timer);
+                    }
+                    setAlertError(null);
+                    break;
+                }
+                case "alert:error":
+                    if (msg.gameId !== gameId) return;
+                    setAlertError(typeof msg.error === "string" ? msg.error : "Alert failed");
+                    break;
                 case "game:update":
                     if (msg.gameId !== gameId) return;
                     requestGameRefresh();
@@ -402,6 +469,7 @@ function useRealtimeConnection({ gameId, refreshGame, onGameDeleted }) {
         latestStoryRef.current = null;
         connect();
 
+        const timers = alertTimersRef.current;
         return () => {
             cancelled = true;
             if (retryRef.current) {
@@ -418,6 +486,16 @@ function useRealtimeConnection({ gameId, refreshGame, onGameDeleted }) {
             setPersonaPrompts([]);
             setPersonaStatuses({});
             setTradeSessions({});
+            setMediaState(null);
+            setMediaError(null);
+            setAlerts([]);
+            setAlertError(null);
+            if (typeof window !== "undefined") {
+                for (const timer of timers.values()) {
+                    clearTimeout(timer);
+                }
+            }
+            timers.clear();
         };
     }, [gameId, requestGameRefresh, updatePersonaStatus, updateTradeSession]);
 
@@ -516,6 +594,51 @@ function useRealtimeConnection({ gameId, refreshGame, onGameDeleted }) {
 
     const tradeList = useMemo(() => Object.values(tradeSessions), [tradeSessions]);
 
+    const syncMedia = useCallback((snapshot) => {
+        setMediaState(normalizeMediaSnapshot(snapshot));
+        setMediaError(null);
+    }, []);
+
+    const playMedia = useCallback(
+        (url) => {
+            if (!gameId) throw new Error("missing_game");
+            const trimmed = typeof url === "string" ? url.trim() : "";
+            if (!trimmed) throw new Error("missing_url");
+            setMediaError(null);
+            sendMessage({ type: "media.play", gameId, url: trimmed });
+        },
+        [gameId, sendMessage]
+    );
+
+    const stopMedia = useCallback(() => {
+        if (!gameId) return;
+        setMediaError(null);
+        sendMessage({ type: "media.stop", gameId });
+    }, [gameId, sendMessage]);
+
+    const sendAlertMessage = useCallback(
+        (message) => {
+            if (!gameId) throw new Error("missing_game");
+            const trimmed = typeof message === "string" ? message.trim() : "";
+            if (!trimmed) throw new Error("missing_message");
+            setAlertError(null);
+            sendMessage({ type: "alert.broadcast", gameId, message: trimmed });
+        },
+        [gameId, sendMessage]
+    );
+
+    const dismissAlert = useCallback((alertId) => {
+        if (!alertId) return;
+        setAlerts((prev) => prev.filter((entry) => entry.id !== alertId));
+        if (typeof window !== "undefined") {
+            const timer = alertTimersRef.current.get(alertId);
+            if (timer) {
+                clearTimeout(timer);
+                alertTimersRef.current.delete(alertId);
+            }
+        }
+    }, []);
+
     return {
         status: connectionState,
         connected: connectionState === "connected",
@@ -526,6 +649,15 @@ function useRealtimeConnection({ gameId, refreshGame, onGameDeleted }) {
         personaStatuses,
         tradeSessions: tradeList,
         tradeActions,
+        mediaState,
+        mediaError,
+        syncMedia,
+        playMedia,
+        stopMedia,
+        alerts,
+        alertError,
+        sendAlert: sendAlertMessage,
+        dismissAlert,
     };
 }
 
@@ -1596,12 +1728,22 @@ function GameView({
         onGameDeleted: handleGameDeleted,
     });
 
+    const syncMedia = realtime.syncMedia;
+
+    useEffect(() => {
+        if (typeof syncMedia === "function") {
+            syncMedia(game.media);
+        }
+    }, [game.media, syncMedia]);
+
     return (
         <RealtimeContext.Provider value={realtime}>
             <div className="app-root">
                 <div className={`app-activity${apiBusy ? " is-active" : ""}`}>
                     <div className="app-activity__bar" />
                 </div>
+                <SharedMediaDisplay isDM={isDM} />
+                <AlertOverlay />
                 <div className="app-shell">
             <aside className="app-sidebar">
                 <div className="sidebar__header">
@@ -1843,6 +1985,46 @@ function GameView({
 
 // ---------- DM Overview ----------
 function DMOverview({ game, onInspectPlayer }) {
+    const realtime = useContext(RealtimeContext);
+    const [mediaDraft, setMediaDraft] = useState("");
+    const [alertDraft, setAlertDraft] = useState("");
+    const [mediaFormError, setMediaFormError] = useState(null);
+    const [alertFormError, setAlertFormError] = useState(null);
+    const currentMedia = realtime?.mediaState || null;
+    const serverMediaError = realtime?.mediaError || null;
+    const friendlyMediaError = useMemo(() => {
+        if (!serverMediaError) return null;
+        switch (serverMediaError) {
+            case "invalid_url":
+                return "Unable to parse that YouTube link. Try a different URL.";
+            case "invalid_request":
+                return "Provide a YouTube link before pressing play.";
+            case "forbidden":
+                return "Only the DM can control playback.";
+            case "not_found":
+                return "Campaign not found. Refresh and try again.";
+            default:
+                return serverMediaError;
+        }
+    }, [serverMediaError]);
+    const displayMediaError = mediaFormError || friendlyMediaError;
+    const serverAlertError = realtime?.alertError || null;
+    const friendlyAlertError = useMemo(() => {
+        if (!serverAlertError) return null;
+        switch (serverAlertError) {
+            case "invalid_message":
+                return "Enter a message before sending.";
+            case "forbidden":
+                return "Only the DM can send alerts.";
+            case "not_found":
+                return "Campaign not found. Refresh and try again.";
+            default:
+                return serverAlertError;
+        }
+    }, [serverAlertError]);
+    const displayAlertError = alertFormError || friendlyAlertError;
+    const isRealtimeConnected = !!realtime?.connected;
+
     const players = useMemo(
         () =>
             (game.players || []).filter(
@@ -1937,8 +2119,140 @@ function DMOverview({ game, onInspectPlayer }) {
 
     const canInspect = typeof onInspectPlayer === "function";
 
+    const handleMediaSubmit = (evt) => {
+        evt.preventDefault();
+        if (!realtime?.playMedia) return;
+        const trimmed = mediaDraft.trim();
+        if (!trimmed) {
+            setMediaFormError("Enter a YouTube link or video ID");
+            return;
+        }
+        try {
+            realtime.playMedia(trimmed);
+            setMediaDraft("");
+            setMediaFormError(null);
+        } catch (err) {
+            const message = err?.message === "not_connected"
+                ? "Waiting for the realtime connection…"
+                : err?.message || "Failed to share video";
+            setMediaFormError(message);
+        }
+    };
+
+    const handleMediaStop = () => {
+        if (!realtime?.stopMedia) return;
+        try {
+            realtime.stopMedia();
+            setMediaFormError(null);
+        } catch (err) {
+            const message = err?.message === "not_connected"
+                ? "Waiting for the realtime connection…"
+                : err?.message || "Failed to stop video";
+            setMediaFormError(message);
+        }
+    };
+
+    const handleAlertSubmit = (evt) => {
+        evt.preventDefault();
+        if (!realtime?.sendAlert) return;
+        const trimmed = alertDraft.trim();
+        if (!trimmed) {
+            setAlertFormError("Enter a message to send");
+            return;
+        }
+        try {
+            realtime.sendAlert(trimmed);
+            setAlertDraft("");
+            setAlertFormError(null);
+        } catch (err) {
+            const message = err?.message === "not_connected"
+                ? "Waiting for the realtime connection…"
+                : err?.message || "Failed to send alert";
+            setAlertFormError(message);
+        }
+    };
+
     return (
         <div className="stack-lg dm-overview">
+            <section className="card dm-broadcast">
+                <div className="header">
+                    <div>
+                        <h3>Table broadcast</h3>
+                        <p className="text-muted text-small">
+                            Share ambience videos or send urgent alerts to everyone currently online.
+                        </p>
+                    </div>
+                    {!isRealtimeConnected && (
+                        <span className="text-muted text-small">Connecting…</span>
+                    )}
+                </div>
+                <div className="stack">
+                    <form className="dm-broadcast__form" onSubmit={handleMediaSubmit}>
+                        <label htmlFor="dm-broadcast-url">YouTube link</label>
+                        <div className="row wrap">
+                            <input
+                                id="dm-broadcast-url"
+                                type="text"
+                                placeholder="https://youtu.be/ambient-track"
+                                value={mediaDraft}
+                                onChange={(e) => setMediaDraft(e.target.value)}
+                                disabled={!isRealtimeConnected}
+                                autoComplete="off"
+                                spellCheck={false}
+                            />
+                            <button type="submit" className="btn" disabled={!isRealtimeConnected}>
+                                Play for party
+                            </button>
+                            <button
+                                type="button"
+                                className="btn ghost"
+                                onClick={handleMediaStop}
+                                disabled={!isRealtimeConnected || !currentMedia}
+                            >
+                                Stop playback
+                            </button>
+                        </div>
+                        <p className="text-muted text-small">
+                            Players receive a floating player and can mute it locally.
+                        </p>
+                        {currentMedia && (
+                            <p className="text-small dm-broadcast__now-playing">
+                                Now playing:{" "}
+                                <a
+                                    href={currentMedia.url || `https://youtu.be/${currentMedia.videoId}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                >
+                                    {currentMedia.url ? currentMedia.url : `youtu.be/${currentMedia.videoId}`}
+                                </a>
+                            </p>
+                        )}
+                        {displayMediaError && (
+                            <span className="text-error text-small">{displayMediaError}</span>
+                        )}
+                    </form>
+                    <form className="dm-broadcast__form" onSubmit={handleAlertSubmit}>
+                        <label htmlFor="dm-broadcast-alert">Party alert</label>
+                        <div className="row wrap">
+                            <input
+                                id="dm-broadcast-alert"
+                                type="text"
+                                placeholder="Heads up! Boss fight in 1 minute."
+                                value={alertDraft}
+                                onChange={(e) => setAlertDraft(e.target.value)}
+                                disabled={!isRealtimeConnected}
+                                maxLength={300}
+                                autoComplete="off"
+                            />
+                            <button type="submit" className="btn secondary" disabled={!isRealtimeConnected}>
+                                Send alert
+                            </button>
+                        </div>
+                        <p className="text-muted text-small">Creates an on-screen popup for everyone in the session.</p>
+                        {displayAlertError && <span className="text-error text-small">{displayAlertError}</span>}
+                    </form>
+                </div>
+            </section>
             <section className="overview-metrics">
                 {metrics.map((metric) => (
                     <div key={metric.label} className="metric-card">
@@ -2195,6 +2509,140 @@ function formatNumber(value) {
     const num = typeof value === "number" ? value : Number(value);
     if (!Number.isFinite(num)) return "";
     return String(num);
+}
+
+function SharedMediaDisplay({ isDM }) {
+    const realtime = useContext(RealtimeContext);
+    const media = realtime?.mediaState;
+    const [collapsed, setCollapsed] = useState(false);
+    const [muted, setMuted] = useState(false);
+    const iframeRef = useRef(null);
+
+    useEffect(() => {
+        setCollapsed(false);
+        setMuted(false);
+    }, [media?.videoId, media?.updatedAt]);
+
+    if (!media) return null;
+
+    const params = new URLSearchParams({
+        autoplay: '1',
+        start: media.startSeconds ? String(media.startSeconds) : '0',
+        enablejsapi: '1',
+        controls: '1',
+        modestbranding: '1',
+        rel: '0',
+        playsinline: '1',
+    });
+    const embedSrc = `https://www.youtube.com/embed/${media.videoId}?${params.toString()}`;
+
+    const toggleMute = () => {
+        const frame = iframeRef.current;
+        if (!frame || !frame.contentWindow) return;
+        const next = !muted;
+        try {
+            frame.contentWindow.postMessage(
+                JSON.stringify({ event: 'command', func: next ? 'mute' : 'unMute', args: [] }),
+                '*'
+            );
+            setMuted(next);
+        } catch (err) {
+            console.warn('mute toggle failed', err);
+        }
+    };
+
+    const description = isDM ? 'Shared with the party' : 'Broadcast from your DM';
+
+    return (
+        <div className={`shared-media${collapsed ? ' is-collapsed' : ''}`}>
+            <div className="shared-media__header">
+                <strong>DM Broadcast</strong>
+                <div className="shared-media__actions">
+                    <button
+                        type="button"
+                        className="btn ghost btn-small"
+                        onClick={toggleMute}
+                    >
+                        {muted ? 'Unmute' : 'Mute'}
+                    </button>
+                    <button
+                        type="button"
+                        className="btn ghost btn-small"
+                        onClick={() => setCollapsed((prev) => !prev)}
+                    >
+                        {collapsed ? 'Expand' : 'Collapse'}
+                    </button>
+                </div>
+            </div>
+            <div className="shared-media__body">
+                <div className="shared-media__player">
+                    <iframe
+                        ref={iframeRef}
+                        src={embedSrc}
+                        title="DM shared media"
+                        allow="autoplay; encrypted-media; picture-in-picture"
+                        allowFullScreen
+                    />
+                </div>
+                <div className="shared-media__footer">
+                    <span className="text-muted text-small">{description}</span>
+                    <div className="shared-media__links">
+                        {media.url && (
+                            <a href={media.url} target="_blank" rel="noreferrer">
+                                Open on YouTube
+                            </a>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function AlertOverlay() {
+    const realtime = useContext(RealtimeContext);
+    const alerts = realtime?.alerts || EMPTY_ARRAY;
+    const dismiss = realtime?.dismissAlert;
+
+    const timeFormatter = useMemo(
+        () => new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }),
+        []
+    );
+
+    if (!alerts || alerts.length === 0) return null;
+
+    return (
+        <div className="alert-overlay">
+            {alerts.map((alert) => {
+                let timeLabel = '';
+                if (alert?.issuedAt) {
+                    const date = new Date(alert.issuedAt);
+                    if (!Number.isNaN(date.getTime())) {
+                        timeLabel = timeFormatter.format(date);
+                    }
+                }
+                return (
+                    <div key={alert.id} className="alert-toast">
+                        <div className="alert-toast__header">
+                            <strong>DM Alert</strong>
+                            <button
+                                type="button"
+                                className="btn ghost btn-small"
+                                onClick={() => dismiss?.(alert.id)}
+                            >
+                                Dismiss
+                            </button>
+                        </div>
+                        <p>{alert.message}</p>
+                        <span className="text-muted text-small">
+                            {alert.senderName}
+                            {timeLabel ? ` · ${timeLabel}` : ''}
+                        </span>
+                    </div>
+                );
+            })}
+        </div>
+    );
 }
 
 // ---------- Sheet ----------
