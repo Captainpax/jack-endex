@@ -1,3 +1,5 @@
+/* eslint-env node */
+import process from 'process';
 import { spawn } from 'child_process';
 
 const server = spawn('node', ['server.js'], { stdio: 'inherit' });
