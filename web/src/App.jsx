@@ -9,6 +9,30 @@ export default function App() {
     const [games, setGames] = useState([]);
     const [active, setActive] = useState(null);
     const [tab, setTab] = useState("sheet");
+    const [dmSheetPlayerId, setDmSheetPlayerId] = useState(null);
+
+    const meId = me?.id;
+
+    useEffect(() => {
+        if (!active || active.dmId !== meId) {
+            if (dmSheetPlayerId !== null) setDmSheetPlayerId(null);
+            return;
+        }
+
+        const players = (active.players || []).filter(
+            (p) => (p?.role || "").toLowerCase() !== "dm"
+        );
+        if (players.length === 0) {
+            if (dmSheetPlayerId !== null) setDmSheetPlayerId(null);
+            return;
+        }
+
+        if (dmSheetPlayerId && players.some((p) => p.userId === dmSheetPlayerId)) {
+            return;
+        }
+
+        setDmSheetPlayerId(players[0].userId);
+    }, [active, dmSheetPlayerId, meId]);
 
     useEffect(() => {
         let mounted = true;
@@ -54,15 +78,35 @@ export default function App() {
                 onOpen={async (g) => {
                     const full = await Games.get(g.id);
                     setActive(full);
+                    if (full.dmId === me.id) {
+                        const firstPlayer = (full.players || []).find(
+                            (p) => (p?.role || "").toLowerCase() !== "dm"
+                        );
+                        setDmSheetPlayerId(firstPlayer ? firstPlayer.userId : null);
+                    } else {
+                        setDmSheetPlayerId(null);
+                    }
                     setTab(full.dmId === me.id ? "party" : "sheet");
                 }}
                 onCreate={async (name) => {
                     await Games.create(name);
                     setGames(await Games.list());
                 }}
+                onDelete={async (game) => {
+                    if (!confirm(`Delete the game "${game.name}"? This cannot be undone.`)) return;
+                    try {
+                        await Games.delete(game.id);
+                        setGames(await Games.list());
+                        alert("Game deleted");
+                    } catch (e) {
+                        alert(e.message);
+                    }
+                }}
             />
         );
     }
+
+    const isDM = active.dmId === me.id;
 
     return (
         <div style={{ padding: 20, display: "grid", gap: 16 }}>
@@ -70,14 +114,21 @@ export default function App() {
                 <h2>{active.name}</h2>
                 <div className="row" style={{ gap: 8 }}>
                     <InviteButton gameId={active.id} />
-                    <button className="btn" onClick={() => setActive(null)}>Back</button>
+                    <button
+                        className="btn"
+                        onClick={() => {
+                            setActive(null);
+                            setDmSheetPlayerId(null);
+                        }}
+                    >
+                        Back
+                    </button>
                 </div>
             </header>
 
             {(() => {
-                const isDM = active.dmId === me.id;
                 const tabs = isDM
-                    ? ["party", "items", "gear", "demons", "settings"]
+                    ? ["party", "sheet", "items", "gear", "demons", "settings"]
                     : ["sheet", "party", "items", "gear", "demons", "settings"];
                 return (
                     <div className="tabs">
@@ -98,6 +149,8 @@ export default function App() {
                 <Sheet
                     me={me}
                     game={active}
+                    targetUserId={active.dmId === me.id ? dmSheetPlayerId : undefined}
+                    onChangePlayer={active.dmId === me.id ? setDmSheetPlayerId : undefined}
                     onSave={async (ch) => {
                         await Games.saveCharacter(active.id, ch);
                         const full = await Games.get(active.id);
@@ -106,7 +159,21 @@ export default function App() {
                 />
             )}
 
-            {tab === "party" && <Party game={active} />}
+            {tab === "party" && (
+                <Party
+                    game={active}
+                    selectedPlayerId={isDM ? dmSheetPlayerId : null}
+                    onSelectPlayer={
+                        isDM
+                            ? (player) => {
+                                  if (!player?.userId) return;
+                                  setDmSheetPlayerId(player.userId);
+                                  setTab("sheet");
+                              }
+                            : undefined
+                    }
+                />
+            )}
 
             {tab === "items" && (
                 <ItemsTab
@@ -144,11 +211,34 @@ export default function App() {
             {tab === "settings" && (
                 <SettingsTab
                     game={active}
+                    me={me}
                     onUpdate={async (per) => {
                         await Games.setPerms(active.id, per);
                         const full = await Games.get(active.id);
                         setActive(full);
                     }}
+                    onDelete={
+                        isDM
+                            ? async () => {
+                                  if (
+                                      !confirm(
+                                          `Delete the game "${active.name}"? This cannot be undone.`
+                                      )
+                                  ) {
+                                      return;
+                                  }
+                                  try {
+                                      await Games.delete(active.id);
+                                      setActive(null);
+                                      setDmSheetPlayerId(null);
+                                      setGames(await Games.list());
+                                      alert("Game deleted");
+                                  } catch (e) {
+                                      alert(e.message);
+                                  }
+                              }
+                            : undefined
+                    }
                 />
             )}
         </div>
@@ -314,7 +404,7 @@ function AuthView({ onAuthed }) {
 }
 
 // ---------- Home ----------
-function Home({ me, games, onOpen, onCreate }) {
+function Home({ me, games, onOpen, onCreate, onDelete }) {
     const [name, setName] = useState("My Campaign");
     const [busy, setBusy] = useState(false);
 
@@ -341,15 +431,32 @@ function Home({ me, games, onOpen, onCreate }) {
                 <h3>Your Games</h3>
                 <div className="list">
                     {games.length === 0 && <div>No games yet.</div>}
-                    {games.map((g) => (
-                        <div key={g.id} className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-                            <div>
-                                <b>{g.name}</b>{" "}
-                                <span className="pill">{(g.players?.length ?? 0)} members</span>
+                    {games.map((g) => {
+                        const isOwner = g.dmId === me.id;
+                        return (
+                            <div
+                                key={g.id}
+                                className="row"
+                                style={{ justifyContent: "space-between", alignItems: "center", gap: 12 }}
+                            >
+                                <div>
+                                    <b>{g.name}</b>{" "}
+                                    <span className="pill">{(g.players?.length ?? 0)} members</span>
+                                </div>
+                                <div className="row" style={{ gap: 8 }}>
+                                    <button className="btn" onClick={() => onOpen(g)}>Open</button>
+                                    {isOwner && (
+                                        <button
+                                            className="btn danger"
+                                            onClick={() => onDelete?.(g)}
+                                        >
+                                            Delete
+                                        </button>
+                                    )}
+                                </div>
                             </div>
-                            <button className="btn" onClick={() => onOpen(g)}>Open</button>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             </div>
 
@@ -421,18 +528,27 @@ function JoinByCode({ onJoined }) {
 }
 
 // ---------- Sheet ----------
-function Sheet({ me, game, onSave }) {
-    const slot = useMemo(
-        () => game.players.find((p) => p.userId === me.id) || {},
-        [game.players, me.id]
-    );
+function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     const isDM = game.dmId === me.id;
-    const [ch, setCh] = useState(slot.character || {});
+    const selectablePlayers = useMemo(
+        () => (game.players || []).filter((p) => (p?.role || "").toLowerCase() !== "dm"),
+        [game.players]
+    );
+    const selectedPlayerId = isDM ? targetUserId : me.id;
+    const slot = useMemo(
+        () =>
+            (selectedPlayerId
+                ? (game.players || []).find((p) => p.userId === selectedPlayerId)
+                : null) || {},
+        [game.players, selectedPlayerId]
+    );
+    const slotCharacter = slot?.character;
+    const [ch, setCh] = useState(slotCharacter || {});
     const [saving, setSaving] = useState(false);
 
     useEffect(() => {
-        setCh(slot.character || {});
-    }, [game.id, slot.character]);
+        setCh(slotCharacter || {});
+    }, [game.id, selectedPlayerId, slotCharacter]);
 
     const set = useCallback((path, value) => {
         setCh((prev) => {
@@ -463,78 +579,122 @@ function Sheet({ me, game, onSave }) {
         );
     };
 
+    const hasSelection = !isDM || (!!selectedPlayerId && slot && slot.userId);
+    const noPlayers = isDM && selectablePlayers.length === 0;
+    const isEditingOther = isDM && selectedPlayerId && selectedPlayerId !== me.id;
+    const disableSave =
+        saving || (!isDM && !game.permissions?.canEditStats) || (isDM && !hasSelection);
+
     return (
         <div className="card">
             <h3>Character Sheet</h3>
 
-            <div className="row">
-                {field("Name", "name")}
-                {field("Class", "profile.class")}
-                {field("Level", "resources.level", "number")}
-                {field("EXP", "resources.exp", "number")}
-            </div>
-
-            <div className="row">
-                {field("HP", "resources.hp", "number")}
-                {field("Max HP", "resources.maxHP", "number")}
-                <div className="col">
-                    <label>Resource</label>
+            {isDM && (
+                <div className="col" style={{ gap: 8, marginBottom: 12 }}>
+                    <label>Player</label>
                     <select
-                        value={get(ch, "resources.useTP") ? "TP" : "MP"}
-                        onChange={(e) => set("resources.useTP", e.target.value === "TP")}
+                        value={selectedPlayerId ?? ""}
+                        onChange={(e) => onChangePlayer?.(e.target.value || null)}
+                        disabled={selectablePlayers.length === 0}
                     >
-                        <option>MP</option>
-                        <option>TP</option>
+                        <option value="">Select a player…</option>
+                        {selectablePlayers.map((p) => (
+                            <option key={p.userId} value={p.userId}>
+                                {p.character?.name || "Unnamed Player"}
+                            </option>
+                        ))}
                     </select>
                 </div>
-                {get(ch, "resources.useTP")
-                    ? field("TP", "resources.tp", "number")
-                    : (
-                        <>
-                            {field("MP", "resources.mp", "number")}
-                            {field("Max MP", "resources.maxMP", "number")}
-                        </>
-                    )
-                }
-            </div>
+            )}
 
-            <div className="row">
-                {["STR", "DEX", "CON", "INT", "WIS", "CHA"].map((s) => (
-                    <div key={s} className="col">
-                        <label>{s}</label>
-                        <input
-                            type="number"
-                            value={get(ch, `stats.${s}`) || 0}
-                            onChange={(e) => set(`stats.${s}`, Number(e.target.value || 0))}
-                        />
+            {noPlayers && (
+                <p style={{ color: "var(--muted)", marginTop: 0 }}>
+                    Invite players to your campaign to view their character sheets.
+                </p>
+            )}
+
+            {!hasSelection ? (
+                !noPlayers && (
+                    <p style={{ color: "var(--muted)", marginTop: 0 }}>
+                        Select a player to review and edit their sheet.
+                    </p>
+                )
+            ) : (
+                <>
+                    <div className="row">
+                        {field("Name", "name")}
+                        {field("Class", "profile.class")}
+                        {field("Level", "resources.level", "number")}
+                        {field("EXP", "resources.exp", "number")}
                     </div>
-                ))}
-            </div>
 
-            <div className="row" style={{ justifyContent: "flex-end" }}>
-                <button
-                    className="btn"
-                    disabled={saving || (!isDM && !game.permissions?.canEditStats)}
-                    onClick={async () => {
-                        try {
-                            setSaving(true);
-                            await onSave(ch);
-                        } catch (e) {
-                            alert(e.message);
-                        } finally {
-                            setSaving(false);
+                    <div className="row">
+                        {field("HP", "resources.hp", "number")}
+                        {field("Max HP", "resources.maxHP", "number")}
+                        <div className="col">
+                            <label>Resource</label>
+                            <select
+                                value={get(ch, "resources.useTP") ? "TP" : "MP"}
+                                onChange={(e) => set("resources.useTP", e.target.value === "TP")}
+                            >
+                                <option>MP</option>
+                                <option>TP</option>
+                            </select>
+                        </div>
+                        {get(ch, "resources.useTP")
+                            ? field("TP", "resources.tp", "number")
+                            : (
+                                <>
+                                    {field("MP", "resources.mp", "number")}
+                                    {field("Max MP", "resources.maxMP", "number")}
+                                </>
+                            )
                         }
-                    }}
-                >
-                    {saving ? "Saving…" : "Save"}
-                </button>
-            </div>
+                    </div>
+
+                    <div className="row">
+                        {["STR", "DEX", "CON", "INT", "WIS", "CHA"].map((s) => (
+                            <div key={s} className="col">
+                                <label>{s}</label>
+                                <input
+                                    type="number"
+                                    value={get(ch, `stats.${s}`) || 0}
+                                    onChange={(e) => set(`stats.${s}`, Number(e.target.value || 0))}
+                                />
+                            </div>
+                        ))}
+                    </div>
+
+                    <div className="row" style={{ justifyContent: "flex-end" }}>
+                        <button
+                            className="btn"
+                            disabled={disableSave}
+                            onClick={async () => {
+                                if (!hasSelection) return;
+                                try {
+                                    setSaving(true);
+                                    const payload = isEditingOther
+                                        ? { userId: selectedPlayerId, character: ch }
+                                        : ch;
+                                    await onSave(payload);
+                                } catch (e) {
+                                    alert(e.message);
+                                } finally {
+                                    setSaving(false);
+                                }
+                            }}
+                        >
+                            {saving ? "Saving…" : "Save"}
+                        </button>
+                    </div>
+                </>
+            )}
         </div>
     );
 }
 
 // ---------- Party ----------
-function Party({ game }) {
+function Party({ game, selectedPlayerId, onSelectPlayer }) {
     return (
         <div className="card">
             <h3>Party</h3>
@@ -543,8 +703,29 @@ function Party({ game }) {
                     const lvl = p.character?.resources?.level ?? 1;
                     const hp = p.character?.resources?.hp ?? 0;
                     const maxHP = p.character?.resources?.maxHP ?? 0;
+                    const role = (p.role || "").toLowerCase();
+                    const isDMEntry = role === "dm";
+                    const isSelected = selectedPlayerId && p.userId === selectedPlayerId;
+                    const clickable = typeof onSelectPlayer === "function" && !isDMEntry;
                     return (
-                        <div key={p.userId} className="row" style={{ justifyContent: "space-between" }}>
+                        <div
+                            key={p.userId}
+                            className="row"
+                            style={{
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                padding: "8px",
+                                borderRadius: "var(--radius-sm)",
+                                border: isSelected ? `1px solid var(--border)` : "1px solid transparent",
+                                background: isSelected ? "var(--surface-2)" : undefined,
+                                cursor: clickable ? "pointer" : "default",
+                                transition: "background var(--trans-fast), border var(--trans-fast)",
+                            }}
+                            onClick={() => {
+                                if (!clickable) return;
+                                onSelectPlayer(p);
+                            }}
+                        >
                             <div>
                                 <b>{p.role?.toUpperCase()}</b> · {p.character?.name ?? "—"}
                             </div>
@@ -1984,11 +2165,14 @@ function DemonTab({ game, me, onUpdate }) {
 }
 
 // ---------- Settings ----------
-function SettingsTab({ game, onUpdate }) {
+function SettingsTab({ game, onUpdate, me, onDelete }) {
     const [perms, setPerms] = useState(game.permissions || {});
     const [saving, setSaving] = useState(false);
 
     useEffect(() => setPerms(game.permissions || {}), [game.id, game.permissions]);
+
+    const isDM = game.dmId === me?.id;
+    const canDelete = isDM && typeof onDelete === "function";
 
     return (
         <div className="card">
@@ -2021,6 +2205,22 @@ function SettingsTab({ game, onUpdate }) {
                     {saving ? "Saving…" : "Save"}
                 </button>
             </div>
+
+            {canDelete && (
+                <>
+                    <div className="divider" />
+                    <div className="col" style={{ gap: 12 }}>
+                        <h4>Danger Zone</h4>
+                        <p style={{ color: "var(--muted)", marginTop: 0 }}>
+                            Deleting this game will remove all characters, inventory, and invites
+                            for every player.
+                        </p>
+                        <button className="btn danger" onClick={onDelete}>
+                            Delete Game
+                        </button>
+                    </div>
+                </>
+            )}
         </div>
     );
 }

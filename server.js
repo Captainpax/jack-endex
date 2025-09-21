@@ -280,7 +280,7 @@ app.get('/api/games', requireAuth, async (req, res) => {
     const db = await readDB();
     const games = (db.games || [])
         .filter(g => g && Array.isArray(g.players) && g.players.some(p => p.userId === req.session.userId))
-        .map(g => ({ id: g.id, name: g.name, players: g.players || [] }));
+        .map(g => ({ id: g.id, name: g.name, dmId: g.dmId, players: g.players || [] }));
     res.json(games);
 });
 
@@ -439,6 +439,22 @@ app.put('/api/games/:id/character', requireAuth, async (req, res) => {
     }
 
     saveGame(db, game);
+    await writeDB(db);
+    res.json({ ok: true });
+});
+
+app.delete('/api/games/:id', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    db.games = (db.games || []).filter((g) => g && g.id !== id);
     await writeDB(db);
     res.json({ ok: true });
 });

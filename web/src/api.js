@@ -399,6 +399,7 @@ export const Games = {
     create: (name) => api('/api/games', { method: 'POST', body: { name } }),
     get: (id) => api(`/api/games/${encodeURIComponent(id)}`, { cache: 2000 }),
     invite: (id) => api(`/api/games/${encodeURIComponent(id)}/invites`, { method: 'POST' }),
+    delete: (id) => api(`/api/games/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     joinByCode: (code) => api(`/api/games/join/${encodeURIComponent(code)}`, { method: 'POST' }),
     setPerms: (id, perms) => api(`/api/games/${encodeURIComponent(id)}/permissions`, { method: 'PUT', body: perms }),
     saveCharacter: (id, character) => api(`/api/games/${encodeURIComponent(id)}/character`, { method: 'PUT', body: { character } }),
