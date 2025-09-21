@@ -1716,7 +1716,11 @@ app.get('/api/games/:id/story-log', requireAuth, async (req, res) => {
     });
 });
 
-app.put('/api/games/:id/story-config', requireAuth, async (req, res) => {
+const storyConfigRouter = express.Router({ mergeParams: true });
+
+storyConfigRouter.use(requireAuth);
+
+storyConfigRouter.put('/', async (req, res) => {
     const { id } = req.params || {};
     const db = await readDB();
     const game = getGame(db, id);
@@ -1740,6 +1744,8 @@ app.put('/api/games/:id/story-config', requireAuth, async (req, res) => {
         story: presentStoryConfig(game.story, { includeSecrets: true }),
     });
 });
+
+app.use('/api/games/:id/story-config', storyConfigRouter);
 
 app.post('/api/games/:id/story-log/messages', requireAuth, async (req, res) => {
     const { id } = req.params || {};
