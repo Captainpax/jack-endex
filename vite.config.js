@@ -10,7 +10,7 @@ export default defineConfig({
         proxy: {
             // Frontend calls `/api/...` and Vite forwards to your Node API
             '/api': {
-                target: 'http://192.168.50.181:3000', // <- your API port
+                target: 'http://127.0.0.1:3000', // <- your API port
                 changeOrigin: true,
                 secure: false,
                 ws: true,
