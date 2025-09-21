@@ -12,6 +12,59 @@ import cors from 'cors';
 import { createWatcherFromEnv } from './discordWatcher.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const loadedEnvKeys = new Set();
+
+function parseEnvFile(content) {
+    const entries = new Map();
+    for (const rawLine of content.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith('#')) continue;
+        const withoutExport = line.startsWith('export ') ? line.slice(7).trim() : line;
+        const eqIndex = withoutExport.indexOf('=');
+        if (eqIndex === -1) continue;
+        const key = withoutExport.slice(0, eqIndex).trim();
+        if (!key) continue;
+        let value = withoutExport.slice(eqIndex + 1).trim();
+        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+            value = value.slice(1, -1);
+        } else {
+            const commentIndex = value.indexOf(' #');
+            if (commentIndex !== -1) {
+                value = value.slice(0, commentIndex).trimEnd();
+            }
+        }
+        entries.set(key, value);
+    }
+    return entries;
+}
+
+function applyEnv(entries, { overrideLoaded = false } = {}) {
+    for (const [key, value] of entries) {
+        const hasExisting = Object.prototype.hasOwnProperty.call(process.env, key);
+        if (!hasExisting || (overrideLoaded && loadedEnvKeys.has(key))) {
+            process.env[key] = value;
+            loadedEnvKeys.add(key);
+        }
+    }
+}
+
+async function loadEnvFiles() {
+    const files = ['.env', '.env.local'];
+    for (const file of files) {
+        const filepath = path.join(__dirname, file);
+        try {
+            const content = await fs.readFile(filepath, 'utf8');
+            const entries = parseEnvFile(content.replace(/^\uFEFF/, ''));
+            applyEnv(entries, { overrideLoaded: file.endsWith('.local') });
+        } catch (err) {
+            if (err && err.code !== 'ENOENT') {
+                console.warn(`Failed to read ${file}:`, err);
+            }
+        }
+    }
+}
+
+await loadEnvFiles();
 const DB_PATH = path.join(__dirname, 'data', 'db.json');
 const ITEMS_PATH = path.join(__dirname, 'data', 'premade-items.json');
 const INDEX_CANDIDATES = [
