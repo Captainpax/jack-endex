@@ -14,12 +14,88 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.join(__dirname, 'data', 'db.json');
 const ITEMS_PATH = path.join(__dirname, 'data', 'premade-items.json');
 
+// --- game helpers ---
+function ensureGameShape(game) {
+    if (!game || typeof game !== 'object') return null;
+    game.players = Array.isArray(game.players) ? game.players : [];
+    if (!game.name) game.name = 'Untitled Game';
+    if (!game.items || typeof game.items !== 'object') game.items = { custom: [] };
+    if (!Array.isArray(game.items.custom)) game.items.custom = [];
+    if (!game.gear || typeof game.gear !== 'object') game.gear = { custom: [] };
+    if (!Array.isArray(game.gear.custom)) game.gear.custom = [];
+    if (!Array.isArray(game.demons)) game.demons = [];
+    if (!game.demonPool || typeof game.demonPool !== 'object') game.demonPool = { max: 0, used: 0 };
+    game.demonPool.max = Number(game.demonPool.max) || 0;
+    game.demonPool.used = Number(game.demonPool.used) || 0;
+    if (!game.permissions || typeof game.permissions !== 'object') {
+        game.permissions = { canEditStats: false, canEditItems: false, canEditGear: false, canEditDemons: false };
+    } else {
+        game.permissions = {
+            canEditStats: !!game.permissions.canEditStats,
+            canEditItems: !!game.permissions.canEditItems,
+            canEditGear: !!game.permissions.canEditGear,
+            canEditDemons: !!game.permissions.canEditDemons,
+        };
+    }
+    if (!Array.isArray(game.invites)) game.invites = [];
+    return game;
+}
+
+function getGame(db, id) {
+    const game = (db.games || []).find((g) => g && g.id === id);
+    return ensureGameShape(game);
+}
+
+function saveGame(db, updated) {
+    const idx = (db.games || []).findIndex((g) => g && g.id === updated.id);
+    if (idx === -1) return;
+    db.games[idx] = updated;
+}
+
+function isMember(game, userId) {
+    return Array.isArray(game.players) && game.players.some((p) => p && p.userId === userId);
+}
+
+function isDM(game, userId) {
+    return game.dmId === userId;
+}
+
+function ensureInviteList(game) {
+    if (!Array.isArray(game.invites)) game.invites = [];
+    return game.invites;
+}
+
+function ensureCustomList(obj) {
+    if (!obj || typeof obj !== 'object') return [];
+    if (!Array.isArray(obj.custom)) obj.custom = [];
+    return obj.custom;
+}
+
+function generateInviteCode(existing) {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    const existingSet = new Set(existing || []);
+    do {
+        code = Array.from({ length: 6 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join('');
+    } while (existingSet.has(code));
+    return code;
+}
+
+function sanitizeText(value) {
+    if (value == null) return '';
+    return String(value).slice(0, 500);
+}
+
 // --- helpers ---
 function normalizeDB(raw) {
     const db = raw && typeof raw === 'object' ? raw : {};
     return {
         users: Array.isArray(db.users) ? db.users : [],
-        games: Array.isArray(db.games) ? db.games : [],
+        games: Array.isArray(db.games)
+            ? db.games
+                .map((g) => ensureGameShape({ ...g }))
+                .filter(Boolean)
+            : [],
     };
 }
 
@@ -142,8 +218,8 @@ app.post('/api/games', requireAuth, async (req, res) => {
 app.get('/api/games/:id', requireAuth, async (req, res) => {
     const { id } = req.params || {};
     const db = await readDB();
-    const g = (db.games || []).find(g => g && g.id === id);
-    if (!g || !Array.isArray(g.players) || !g.players.some(p => p.userId === req.session.userId)) {
+    const g = getGame(db, id);
+    if (!g || !isMember(g, req.session.userId)) {
         return res.status(404).json({ error: 'not_found' });
     }
 
@@ -151,18 +227,368 @@ app.get('/api/games/:id', requireAuth, async (req, res) => {
         id: g.id,
         name: g.name,
         dmId: g.dmId,
-        players: Array.isArray(g.players) ? g.players : [],
-        items: g.items && typeof g.items === 'object' ? g.items : { custom: [] },
-        gear: g.gear && typeof g.gear === 'object' ? g.gear : { custom: [] },
-        demons: Array.isArray(g.demons) ? g.demons : [],
-        demonPool: g.demonPool && typeof g.demonPool === 'object' ? g.demonPool : { max: 0, used: 0 },
-        permissions: g.permissions && typeof g.permissions === 'object'
-            ? g.permissions
-            : { canEditStats: false, canEditItems: false, canEditGear: false, canEditDemons: false },
-        invites: Array.isArray(g.invites) ? g.invites : [],
+        players: g.players,
+        items: g.items,
+        gear: g.gear,
+        demons: g.demons,
+        demonPool: g.demonPool,
+        permissions: g.permissions,
+        invites: g.invites,
     };
 
     res.json(out);
+});
+
+app.post('/api/games/:id/invites', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const invites = ensureInviteList(game);
+    const code = generateInviteCode(invites.map((i) => i.code));
+    const invite = {
+        code,
+        createdBy: req.session.userId,
+        createdAt: new Date().toISOString(),
+        uses: 0,
+    };
+    invites.push(invite);
+    saveGame(db, game);
+    await writeDB(db);
+    res.json({ code, joinUrl: `/join/${code}` });
+});
+
+app.post('/api/games/join/:code', requireAuth, async (req, res) => {
+    const { code } = req.params || {};
+    if (!code) return res.status(400).json({ error: 'invalid_code' });
+
+    const db = await readDB();
+    const game = (db.games || []).map((g) => ensureGameShape(g)).find((g) =>
+        Array.isArray(g?.invites) && g.invites.some((inv) => inv && inv.code === code)
+    );
+    if (!game) return res.status(404).json({ error: 'not_found' });
+
+    if (!isMember(game, req.session.userId)) {
+        game.players.push({ userId: req.session.userId, role: 'player', character: null });
+    }
+
+    game.invites = game.invites.map((inv) => inv && inv.code === code
+        ? { ...inv, uses: (inv.uses || 0) + 1, lastUsedAt: new Date().toISOString() }
+        : inv
+    );
+
+    saveGame(db, game);
+    await writeDB(db);
+    res.json({ ok: true, gameId: game.id });
+});
+
+app.put('/api/games/:id/permissions', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const perms = req.body || {};
+    game.permissions = {
+        canEditStats: !!perms.canEditStats,
+        canEditItems: !!perms.canEditItems,
+        canEditGear: !!perms.canEditGear,
+        canEditDemons: !!perms.canEditDemons,
+    };
+    saveGame(db, game);
+    await writeDB(db);
+    res.json(game.permissions);
+});
+
+app.put('/api/games/:id/character', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
+    const { character } = req.body || {};
+    const userId = req.session.userId;
+    const slot = game.players.find((p) => p && p.userId === userId);
+    const canEdit = isDM(game, userId) || !!game.permissions.canEditStats;
+    if (!isDM(game, userId) && !canEdit) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    if (isDM(game, userId) && character?.userId && character.userId !== userId) {
+        // DM can update another player's sheet if userId provided
+        const target = game.players.find((p) => p && p.userId === character.userId);
+        if (target) target.character = character.character ?? character;
+    } else if (slot) {
+        slot.character = character ?? null;
+    }
+
+    saveGame(db, game);
+    await writeDB(db);
+    res.json({ ok: true });
+});
+
+function validateCustomItem(item) {
+    return {
+        name: sanitizeText(item?.name),
+        type: sanitizeText(item?.type),
+        desc: sanitizeText(item?.desc),
+    };
+}
+
+app.post('/api/games/:id/items/custom', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId) && !game.permissions.canEditItems) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const item = validateCustomItem(req.body?.item || req.body);
+    if (!item.name) return res.status(400).json({ error: 'missing name' });
+
+    const list = ensureCustomList(game.items);
+    const entry = { id: uuid(), ...item };
+    list.push(entry);
+    saveGame(db, game);
+    await writeDB(db);
+    res.json(entry);
+});
+
+app.put('/api/games/:id/items/custom/:itemId', requireAuth, async (req, res) => {
+    const { id, itemId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId) && !game.permissions.canEditItems) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const list = ensureCustomList(game.items);
+    const idx = list.findIndex((it) => it && it.id === itemId);
+    if (idx === -1) return res.status(404).json({ error: 'item_not_found' });
+
+    const item = { ...list[idx], ...validateCustomItem(req.body?.item || req.body) };
+    list[idx] = item;
+    saveGame(db, game);
+    await writeDB(db);
+    res.json(item);
+});
+
+app.delete('/api/games/:id/items/custom/:itemId', requireAuth, async (req, res) => {
+    const { id, itemId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId) && !game.permissions.canEditItems) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const list = ensureCustomList(game.items);
+    const next = list.filter((it) => it && it.id !== itemId);
+    game.items.custom = next;
+    saveGame(db, game);
+    await writeDB(db);
+    res.json({ ok: true });
+});
+
+app.post('/api/games/:id/gear/custom', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId) && !game.permissions.canEditGear) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const item = validateCustomItem(req.body?.item || req.body);
+    if (!item.name) return res.status(400).json({ error: 'missing name' });
+
+    const list = ensureCustomList(game.gear);
+    const entry = { id: uuid(), ...item };
+    list.push(entry);
+    saveGame(db, game);
+    await writeDB(db);
+    res.json(entry);
+});
+
+app.put('/api/games/:id/gear/custom/:itemId', requireAuth, async (req, res) => {
+    const { id, itemId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId) && !game.permissions.canEditGear) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const list = ensureCustomList(game.gear);
+    const idx = list.findIndex((it) => it && it.id === itemId);
+    if (idx === -1) return res.status(404).json({ error: 'item_not_found' });
+
+    const item = { ...list[idx], ...validateCustomItem(req.body?.item || req.body) };
+    list[idx] = item;
+    saveGame(db, game);
+    await writeDB(db);
+    res.json(item);
+});
+
+app.delete('/api/games/:id/gear/custom/:itemId', requireAuth, async (req, res) => {
+    const { id, itemId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId) && !game.permissions.canEditGear) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const list = ensureCustomList(game.gear);
+    const next = list.filter((it) => it && it.id !== itemId);
+    game.gear.custom = next;
+    saveGame(db, game);
+    await writeDB(db);
+    res.json({ ok: true });
+});
+
+function normalizeArray(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) return value.map((v) => sanitizeText(v)).filter(Boolean);
+    return String(value)
+        .split(/[,\n]/)
+        .map((v) => sanitizeText(v.trim()))
+        .filter(Boolean);
+}
+
+app.post('/api/games/:id/demons', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId) && !game.permissions.canEditDemons) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const body = req.body || {};
+    const demon = {
+        id: uuid(),
+        name: sanitizeText(body.name),
+        arcana: sanitizeText(body.arcana),
+        alignment: sanitizeText(body.alignment),
+        level: Number(body.level) || 0,
+        stats: {
+            strength: Number(body.stats?.strength) || 0,
+            magic: Number(body.stats?.magic) || 0,
+            endurance: Number(body.stats?.endurance) || 0,
+            agility: Number(body.stats?.agility) || 0,
+            luck: Number(body.stats?.luck) || 0,
+        },
+        resistances: {
+            weak: normalizeArray(body.resistances?.weak),
+            resist: normalizeArray(body.resistances?.resist),
+            null: normalizeArray(body.resistances?.null),
+            absorb: normalizeArray(body.resistances?.absorb),
+            reflect: normalizeArray(body.resistances?.reflect),
+        },
+        skills: normalizeArray(body.skills),
+        notes: sanitizeText(body.notes || ''),
+    };
+
+    if (!demon.name) return res.status(400).json({ error: 'missing name' });
+
+    game.demons.push(demon);
+    saveGame(db, game);
+    await writeDB(db);
+    res.json(demon);
+});
+
+app.put('/api/games/:id/demons/:demonId', requireAuth, async (req, res) => {
+    const { id, demonId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId) && !game.permissions.canEditDemons) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const idx = game.demons.findIndex((d) => d && d.id === demonId);
+    if (idx === -1) return res.status(404).json({ error: 'demon_not_found' });
+
+    const body = req.body || {};
+    const current = game.demons[idx] || {};
+    const updated = {
+        ...current,
+        name: sanitizeText(body.name ?? current.name),
+        arcana: sanitizeText(body.arcana ?? current.arcana),
+        alignment: sanitizeText(body.alignment ?? current.alignment),
+        level: Number(body.level ?? current.level) || 0,
+        stats: {
+            strength: Number(body.stats?.strength ?? current.stats?.strength) || 0,
+            magic: Number(body.stats?.magic ?? current.stats?.magic) || 0,
+            endurance: Number(body.stats?.endurance ?? current.stats?.endurance) || 0,
+            agility: Number(body.stats?.agility ?? current.stats?.agility) || 0,
+            luck: Number(body.stats?.luck ?? current.stats?.luck) || 0,
+        },
+        resistances: {
+            weak: body.resistances?.weak !== undefined ? normalizeArray(body.resistances?.weak) : (current.resistances?.weak || []),
+            resist: body.resistances?.resist !== undefined ? normalizeArray(body.resistances?.resist) : (current.resistances?.resist || []),
+            null: body.resistances?.null !== undefined ? normalizeArray(body.resistances?.null) : (current.resistances?.null || []),
+            absorb: body.resistances?.absorb !== undefined ? normalizeArray(body.resistances?.absorb) : (current.resistances?.absorb || []),
+            reflect: body.resistances?.reflect !== undefined ? normalizeArray(body.resistances?.reflect) : (current.resistances?.reflect || []),
+        },
+        skills: body.skills !== undefined ? normalizeArray(body.skills) : (current.skills || []),
+        notes: sanitizeText(body.notes ?? current.notes ?? ''),
+    };
+
+    game.demons[idx] = updated;
+    saveGame(db, game);
+    await writeDB(db);
+    res.json(updated);
+});
+
+app.delete('/api/games/:id/demons/:demonId', requireAuth, async (req, res) => {
+    const { id, demonId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId) && !game.permissions.canEditDemons) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const next = game.demons.filter((d) => d && d.id !== demonId);
+    game.demons = next;
+    saveGame(db, game);
+    await writeDB(db);
+    res.json({ ok: true });
 });
 
 // (the rest of your routes unchanged, but add the same style of defensive checks on g.players, etc.)
@@ -185,7 +611,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(path.join(__dirname, 'dist')));
 
 // centralized error handler (prevents crashing the process)
-app.use((err, _req, res, _next) => {
+app.use((err, _req, res) => {
     console.error(err);
     res.status(500).json({ error: 'server_error' });
 });

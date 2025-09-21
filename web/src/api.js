@@ -403,8 +403,13 @@ export const Games = {
     setPerms: (id, perms) => api(`/api/games/${encodeURIComponent(id)}/permissions`, { method: 'PUT', body: perms }),
     saveCharacter: (id, character) => api(`/api/games/${encodeURIComponent(id)}/character`, { method: 'PUT', body: { character } }),
     addCustomItem: (id, item) => api(`/api/games/${encodeURIComponent(id)}/items/custom`, { method: 'POST', body: { item } }),
+    updateCustomItem: (id, itemId, item) => api(`/api/games/${encodeURIComponent(id)}/items/custom/${encodeURIComponent(itemId)}`, { method: 'PUT', body: { item } }),
+    deleteCustomItem: (id, itemId) => api(`/api/games/${encodeURIComponent(id)}/items/custom/${encodeURIComponent(itemId)}`, { method: 'DELETE' }),
     addCustomGear: (id, item) => api(`/api/games/${encodeURIComponent(id)}/gear/custom`, { method: 'POST', body: { item } }),
+    updateCustomGear: (id, itemId, item) => api(`/api/games/${encodeURIComponent(id)}/gear/custom/${encodeURIComponent(itemId)}`, { method: 'PUT', body: { item } }),
+    deleteCustomGear: (id, itemId) => api(`/api/games/${encodeURIComponent(id)}/gear/custom/${encodeURIComponent(itemId)}`, { method: 'DELETE' }),
     addDemon: (id, body) => api(`/api/games/${encodeURIComponent(id)}/demons`, { method: 'POST', body }),
+    updateDemon: (id, demonId, body) => api(`/api/games/${encodeURIComponent(id)}/demons/${encodeURIComponent(demonId)}`, { method: 'PUT', body }),
     delDemon: (id, demonId) => api(`/api/games/${encodeURIComponent(id)}/demons/${encodeURIComponent(demonId)}`, { method: 'DELETE' }),
 
     // Optional: full pagination helper example if the backend supports it

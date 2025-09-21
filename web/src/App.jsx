@@ -495,11 +495,18 @@ function Party({ game }) {
 function ItemsTab({ game, me, onUpdate }) {
     const [premade, setPremade] = useState([]);
     const [form, setForm] = useState({ name: "", type: "", desc: "" });
-    const [busyAdd, setBusyAdd] = useState(false);
+    const [editing, setEditing] = useState(null);
+    const [busySave, setBusySave] = useState(false);
+    const [busyRow, setBusyRow] = useState(null);
     const gearTypes = ["weapon", "armor", "accessory"]; // types reserved for gear
 
     const isDM = game.dmId === me.id;
     const canEdit = isDM || game.permissions?.canEditItems;
+
+    const resetForm = useCallback(() => {
+        setEditing(null);
+        setForm({ name: "", type: "", desc: "" });
+    }, []);
 
     useEffect(() => {
         let mounted = true;
@@ -514,17 +521,39 @@ function ItemsTab({ game, me, onUpdate }) {
         return () => { mounted = false; };
     }, []);
 
-    const add = async (item) => {
+    useEffect(() => {
+        resetForm();
+    }, [game.id, resetForm]);
+
+    const save = async (item) => {
         if (!item?.name) return alert("Item needs a name");
         try {
-            setBusyAdd(true);
-            await Games.addCustomItem(game.id, item);
+            setBusySave(true);
+            if (editing) {
+                await Games.updateCustomItem(game.id, editing.id, item);
+            } else {
+                await Games.addCustomItem(game.id, item);
+            }
             await onUpdate();
-            setForm({ name: "", type: "", desc: "" });
+            resetForm();
         } catch (e) {
             alert(e.message);
         } finally {
-            setBusyAdd(false);
+            setBusySave(false);
+        }
+    };
+
+    const remove = async (itemId) => {
+        if (!confirm("Remove this item?")) return;
+        try {
+            setBusyRow(itemId);
+            await Games.deleteCustomItem(game.id, itemId);
+            if (editing?.id === itemId) resetForm();
+            await onUpdate();
+        } catch (e) {
+            alert(e.message);
+        } finally {
+            setBusyRow(null);
         }
     };
 
@@ -535,42 +564,76 @@ function ItemsTab({ game, me, onUpdate }) {
     return (
         <div className="row" style={{ gap: 16 }}>
             <div className="card" style={{ flex: 1 }}>
-                <h3>Custom Item</h3>
-                <div className="row" style={{ gap: 8 }}>
+                <h3>{editing ? "Edit Item" : "Custom Item"}</h3>
+                <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
                     <input
                         placeholder="Name"
                         value={form.name}
                         onChange={(e) => setForm({ ...form, name: e.target.value })}
+                        style={{ flex: 1, minWidth: 180 }}
                     />
                     <input
                         placeholder="Type"
                         value={form.type}
                         onChange={(e) => setForm({ ...form, type: e.target.value })}
+                        style={{ flex: 1, minWidth: 160 }}
                     />
                     <input
                         placeholder="Description"
                         value={form.desc}
                         onChange={(e) => setForm({ ...form, desc: e.target.value })}
+                        style={{ flex: 2, minWidth: 220 }}
                     />
-                    <button
-                        className="btn"
-                        disabled={!form.name || busyAdd || !canEdit}
-                        onClick={() => add(form)}
-                    >
-                        {busyAdd ? "…" : "Add"}
-                    </button>
+                    <div className="row" style={{ gap: 8 }}>
+                        <button
+                            className="btn"
+                            disabled={!form.name || busySave || !canEdit}
+                            onClick={() => save(form)}
+                        >
+                            {busySave ? "…" : editing ? "Save" : "Add"}
+                        </button>
+                        {editing && (
+                            <button className="btn" onClick={resetForm} disabled={busySave}>
+                                Cancel
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 <h4 style={{ marginTop: 16 }}>Game Custom Items</h4>
                 <div className="list">
                     {(game.items?.custom ?? []).map((it) => (
-                        <div key={it.id} className="row" style={{ justifyContent: "space-between" }}>
+                        <div key={it.id} className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                             <div>
-                                <b>{it.name}</b> — {it.type}
+                                <b>{it.name}</b> — {it.type || "—"}
                                 <div style={{ opacity: 0.85, fontSize: 12 }}>{it.desc}</div>
                             </div>
+                            {canEdit && (
+                                <div className="row" style={{ gap: 6 }}>
+                                    <button
+                                        className="btn"
+                                        onClick={() => {
+                                            setEditing(it);
+                                            setForm({ name: it.name || "", type: it.type || "", desc: it.desc || "" });
+                                        }}
+                                        disabled={busySave}
+                                    >
+                                        Edit
+                                    </button>
+                                    <button
+                                        className="btn"
+                                        onClick={() => remove(it.id)}
+                                        disabled={busyRow === it.id}
+                                    >
+                                        {busyRow === it.id ? "…" : "Remove"}
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     ))}
+                    {(game.items?.custom ?? []).length === 0 && (
+                        <div style={{ opacity: 0.7 }}>No custom items yet.</div>
+                    )}
                 </div>
             </div>
 
@@ -589,8 +652,8 @@ function ItemsTab({ game, me, onUpdate }) {
                             </div>
                             <button
                                 className="btn"
-                                disabled={!canEdit}
-                                onClick={() => add({ name: it.name, type: it.type, desc: it.desc })}
+                                disabled={!canEdit || busySave}
+                                onClick={() => save({ name: it.name, type: it.type, desc: it.desc })}
                             >
                                 Add
                             </button>
@@ -607,11 +670,18 @@ function ItemsTab({ game, me, onUpdate }) {
 function GearTab({ game, me, onUpdate }) {
     const [premade, setPremade] = useState([]);
     const [form, setForm] = useState({ name: "", type: "", desc: "" });
-    const [busyAdd, setBusyAdd] = useState(false);
+    const [editing, setEditing] = useState(null);
+    const [busySave, setBusySave] = useState(false);
+    const [busyRow, setBusyRow] = useState(null);
     const gearTypes = ["weapon", "armor", "accessory"];
 
     const isDM = game.dmId === me.id;
     const canEdit = isDM || game.permissions?.canEditGear;
+
+    const resetForm = useCallback(() => {
+        setEditing(null);
+        setForm({ name: "", type: "", desc: "" });
+    }, []);
 
     useEffect(() => {
         let mounted = true;
@@ -628,17 +698,39 @@ function GearTab({ game, me, onUpdate }) {
         };
     }, []);
 
-    const add = async (item) => {
+    useEffect(() => {
+        resetForm();
+    }, [game.id, resetForm]);
+
+    const save = async (item) => {
         if (!item?.name) return alert("Item needs a name");
         try {
-            setBusyAdd(true);
-            await Games.addCustomGear(game.id, item);
+            setBusySave(true);
+            if (editing) {
+                await Games.updateCustomGear(game.id, editing.id, item);
+            } else {
+                await Games.addCustomGear(game.id, item);
+            }
             await onUpdate();
-            setForm({ name: "", type: "", desc: "" });
+            resetForm();
         } catch (e) {
             alert(e.message);
         } finally {
-            setBusyAdd(false);
+            setBusySave(false);
+        }
+    };
+
+    const remove = async (itemId) => {
+        if (!confirm("Remove this gear?")) return;
+        try {
+            setBusyRow(itemId);
+            await Games.deleteCustomGear(game.id, itemId);
+            if (editing?.id === itemId) resetForm();
+            await onUpdate();
+        } catch (e) {
+            alert(e.message);
+        } finally {
+            setBusyRow(null);
         }
     };
 
@@ -649,42 +741,76 @@ function GearTab({ game, me, onUpdate }) {
     return (
         <div className="row" style={{ gap: 16 }}>
             <div className="card" style={{ flex: 1 }}>
-                <h3>Custom Gear</h3>
-                <div className="row" style={{ gap: 8 }}>
+                <h3>{editing ? "Edit Gear" : "Custom Gear"}</h3>
+                <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
                     <input
                         placeholder="Name"
                         value={form.name}
                         onChange={(e) => setForm({ ...form, name: e.target.value })}
+                        style={{ flex: 1, minWidth: 180 }}
                     />
                     <input
                         placeholder="Type"
                         value={form.type}
                         onChange={(e) => setForm({ ...form, type: e.target.value })}
+                        style={{ flex: 1, minWidth: 160 }}
                     />
                     <input
                         placeholder="Description"
                         value={form.desc}
                         onChange={(e) => setForm({ ...form, desc: e.target.value })}
+                        style={{ flex: 2, minWidth: 220 }}
                     />
-                    <button
-                        className="btn"
-                        disabled={!form.name || busyAdd || !canEdit}
-                        onClick={() => add(form)}
-                    >
-                        {busyAdd ? "…" : "Add"}
-                    </button>
+                    <div className="row" style={{ gap: 8 }}>
+                        <button
+                            className="btn"
+                            disabled={!form.name || busySave || !canEdit}
+                            onClick={() => save(form)}
+                        >
+                            {busySave ? "…" : editing ? "Save" : "Add"}
+                        </button>
+                        {editing && (
+                            <button className="btn" onClick={resetForm} disabled={busySave}>
+                                Cancel
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 <h4 style={{ marginTop: 16 }}>Game Custom Gear</h4>
                 <div className="list">
                     {(game.gear?.custom ?? []).map((it) => (
-                        <div key={it.id} className="row" style={{ justifyContent: "space-between" }}>
+                        <div key={it.id} className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                             <div>
-                                <b>{it.name}</b> — {it.type}
+                                <b>{it.name}</b> — {it.type || "—"}
                                 <div style={{ opacity: 0.85, fontSize: 12 }}>{it.desc}</div>
                             </div>
+                            {canEdit && (
+                                <div className="row" style={{ gap: 6 }}>
+                                    <button
+                                        className="btn"
+                                        onClick={() => {
+                                            setEditing(it);
+                                            setForm({ name: it.name || "", type: it.type || "", desc: it.desc || "" });
+                                        }}
+                                        disabled={busySave}
+                                    >
+                                        Edit
+                                    </button>
+                                    <button
+                                        className="btn"
+                                        onClick={() => remove(it.id)}
+                                        disabled={busyRow === it.id}
+                                    >
+                                        {busyRow === it.id ? "…" : "Remove"}
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     ))}
+                    {(game.gear?.custom ?? []).length === 0 && (
+                        <div style={{ opacity: 0.7 }}>No custom gear yet.</div>
+                    )}
                 </div>
             </div>
 
@@ -703,8 +829,8 @@ function GearTab({ game, me, onUpdate }) {
                             </div>
                             <button
                                 className="btn"
-                                disabled={!canEdit}
-                                onClick={() => add({ name: it.name, type: it.type, desc: it.desc })}
+                                disabled={!canEdit || busySave}
+                                onClick={() => save({ name: it.name, type: it.type, desc: it.desc })}
                             >
                                 Add
                             </button>
@@ -722,28 +848,80 @@ function DemonTab({ game, me, onUpdate }) {
     const [name, setName] = useState("");
     const [arcana, setArc] = useState("");
     const [align, setAlign] = useState("");
+    const [level, setLevel] = useState(1);
+    const [stats, setStats] = useState({ strength: 0, magic: 0, endurance: 0, agility: 0, luck: 0 });
+    const [resist, setResist] = useState({ weak: "", resist: "", null: "", absorb: "", reflect: "" });
+    const [skills, setSkills] = useState("");
+    const [notes, setNotes] = useState("");
     const [q, setQ] = useState("");
     const [results, setResults] = useState([]);
     const [selected, setSelected] = useState(null);
-    const [busyAdd, setBusyAdd] = useState(false);
+    const [editing, setEditing] = useState(null);
+    const [busySave, setBusySave] = useState(false);
     const [busySearch, setBusySearch] = useState(false);
+    const [busyDelete, setBusyDelete] = useState(null);
 
     const isDM = game.dmId === me.id;
     const canEdit = isDM || game.permissions?.canEditDemons;
 
-    const add = async () => {
-        if (!name) return alert("Enter a demon name");
+    const resetForm = useCallback(() => {
+        setName("");
+        setArc("");
+        setAlign("");
+        setLevel(1);
+        setStats({ strength: 0, magic: 0, endurance: 0, agility: 0, luck: 0 });
+        setResist({ weak: "", resist: "", null: "", absorb: "", reflect: "" });
+        setSkills("");
+        setNotes("");
+        setSelected(null);
+        setEditing(null);
+    }, []);
+
+    useEffect(() => {
+        resetForm();
+    }, [game.id, resetForm]);
+
+    const save = async () => {
+        if (!canEdit) return;
+        if (!name.trim()) return alert("Enter a demon name");
+        const payload = {
+            name,
+            arcana,
+            alignment: align,
+            level,
+            stats,
+            resistances: resist,
+            skills,
+            notes,
+        };
         try {
-            setBusyAdd(true);
-            await Games.addDemon(game.id, { name, arcana, alignment: align });
+            setBusySave(true);
+            if (editing) {
+                await Games.updateDemon(game.id, editing.id, payload);
+            } else {
+                await Games.addDemon(game.id, payload);
+            }
             await onUpdate();
-            setName("");
-            setArc("");
-            setAlign("");
+            resetForm();
         } catch (e) {
             alert(e.message);
         } finally {
-            setBusyAdd(false);
+            setBusySave(false);
+        }
+    };
+
+    const remove = async (id) => {
+        if (!canEdit) return;
+        if (!confirm("Remove this demon from the pool?")) return;
+        try {
+            setBusyDelete(id);
+            await Games.delDemon(game.id, id);
+            if (editing?.id === id) resetForm();
+            await onUpdate();
+        } catch (e) {
+            alert(e.message);
+        } finally {
+            setBusyDelete(null);
         }
     };
 
@@ -760,7 +938,6 @@ function DemonTab({ game, me, onUpdate }) {
         try {
             setBusySearch(true);
             const r = await Personas.search(term);
-            // only set if latest
             if (debounceRef.current === ticket) setResults(r || []);
         } catch (e) {
             alert(e.message);
@@ -773,11 +950,54 @@ function DemonTab({ game, me, onUpdate }) {
         try {
             const p = await Personas.get(slug);
             setSelected(p);
-            setName(p.name);
-            setArc(p.arcana);
+            setName(p.name || "");
+            setArc(p.arcana || "");
+            setAlign(p.alignment || "");
+            setLevel(p.level || 1);
+            setStats({
+                strength: p.strength ?? 0,
+                magic: p.magic ?? 0,
+                endurance: p.endurance ?? 0,
+                agility: p.agility ?? 0,
+                luck: p.luck ?? 0,
+            });
+            setResist({
+                weak: (p.weak || []).join(', '),
+                resist: (p.resists || []).join(', '),
+                null: (p.nullifies || []).join(', '),
+                absorb: (p.absorbs || []).join(', '),
+                reflect: (p.reflects || []).join(', '),
+            });
+            setSkills(Array.isArray(p.skills) ? p.skills.join('\n') : "");
+            setNotes(p.description || "");
         } catch (e) {
             alert(e.message);
         }
+    };
+
+    const startEdit = (demon) => {
+        setEditing(demon);
+        setName(demon.name || "");
+        setArc(demon.arcana || "");
+        setAlign(demon.alignment || "");
+        setLevel(demon.level ?? 0);
+        setStats({
+            strength: demon.stats?.strength ?? 0,
+            magic: demon.stats?.magic ?? 0,
+            endurance: demon.stats?.endurance ?? 0,
+            agility: demon.stats?.agility ?? 0,
+            luck: demon.stats?.luck ?? 0,
+        });
+        setResist({
+            weak: (demon.resistances?.weak || []).join(', '),
+            resist: (demon.resistances?.resist || []).join(', '),
+            null: (demon.resistances?.null || []).join(', '),
+            absorb: (demon.resistances?.absorb || []).join(', '),
+            reflect: (demon.resistances?.reflect || []).join(', '),
+        });
+        setSkills(Array.isArray(demon.skills) ? demon.skills.join('\n') : "");
+        setNotes(demon.notes || "");
+        setSelected(null);
     };
 
     return (
@@ -785,21 +1005,86 @@ function DemonTab({ game, me, onUpdate }) {
             <h3>Shared Demon Pool</h3>
 
             <div className="row" style={{ marginBottom: 10 }}>
-        <span className="pill">
-          {game.demonPool?.used ?? 0}/{game.demonPool?.max ?? 0} used
-        </span>
+                <span className="pill">
+                    {game.demonPool?.used ?? 0}/{game.demonPool?.max ?? 0} used
+                </span>
             </div>
 
-            <div className="row" style={{ gap: 8 }}>
-                <input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
-                <input placeholder="Arcana" value={arcana} onChange={(e) => setArc(e.target.value)} />
-                <input placeholder="Alignment" value={align} onChange={(e) => setAlign(e.target.value)} />
-                <button className="btn" onClick={add} disabled={busyAdd || !canEdit}>
-                    {busyAdd ? "…" : "Add Demon"}
-                </button>
+            <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                <input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} style={{ flex: 2, minWidth: 160 }} />
+                <input placeholder="Arcana" value={arcana} onChange={(e) => setArc(e.target.value)} style={{ flex: 1, minWidth: 140 }} />
+                <input placeholder="Alignment" value={align} onChange={(e) => setAlign(e.target.value)} style={{ flex: 1, minWidth: 140 }} />
+                <input
+                    type="number"
+                    placeholder="Level"
+                    value={level}
+                    onChange={(e) => setLevel(Number(e.target.value || 0))}
+                    style={{ width: 100 }}
+                />
+                <div className="row" style={{ gap: 8 }}>
+                    <button className="btn" onClick={save} disabled={!canEdit || busySave}>
+                        {busySave ? "…" : editing ? "Save Demon" : "Add Demon"}
+                    </button>
+                    {editing && (
+                        <button className="btn" onClick={resetForm} disabled={busySave}>
+                            Cancel
+                        </button>
+                    )}
+                </div>
             </div>
 
-            <div className="row" style={{ marginTop: 16, gap: 16 }}>
+            <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                {[
+                    ["strength", "STR"],
+                    ["magic", "MAG"],
+                    ["endurance", "END"],
+                    ["agility", "AGI"],
+                    ["luck", "LUC"],
+                ].map(([key, label]) => (
+                    <label key={key} className="col" style={{ minWidth: 90 }}>
+                        <span>{label}</span>
+                        <input
+                            type="number"
+                            value={stats[key] ?? 0}
+                            onChange={(e) => setStats((prev) => ({ ...prev, [key]: Number(e.target.value || 0) }))}
+                        />
+                    </label>
+                ))}
+            </div>
+
+            <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                {[
+                    ["weak", "Weak"],
+                    ["resist", "Resist"],
+                    ["null", "Null"],
+                    ["absorb", "Absorb"],
+                    ["reflect", "Reflect"],
+                ].map(([key, label]) => (
+                    <label key={key} className="col" style={{ minWidth: 150, flex: 1 }}>
+                        <span>{label}</span>
+                        <textarea
+                            rows={2}
+                            value={resist[key]}
+                            placeholder="Comma or newline separated"
+                            onChange={(e) => setResist((prev) => ({ ...prev, [key]: e.target.value }))}
+                            style={{ width: '100%' }}
+                        />
+                    </label>
+                ))}
+            </div>
+
+            <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                <label className="col" style={{ flex: 1, minWidth: 220 }}>
+                    <span>Skills (one per line)</span>
+                    <textarea rows={3} value={skills} onChange={(e) => setSkills(e.target.value)} style={{ width: '100%' }} />
+                </label>
+                <label className="col" style={{ flex: 1, minWidth: 220 }}>
+                    <span>Notes</span>
+                    <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} style={{ width: '100%' }} />
+                </label>
+            </div>
+
+            <div className="row" style={{ marginTop: 16, gap: 16, alignItems: "flex-start" }}>
                 <div className="col" style={{ flex: 1 }}>
                     <h4>Lookup Persona (Persona Compendium)</h4>
                     <div className="row" style={{ gap: 8 }}>
@@ -881,32 +1166,54 @@ function DemonTab({ game, me, onUpdate }) {
                 </div>
             </div>
 
-            <div className="list" style={{ marginTop: 12 }}>
+            <div className="list" style={{ marginTop: 12, gap: 12 }}>
                 {game.demons.map((d) => (
-                    <div
-                        key={d.id}
-                        className="row"
-                        style={{ justifyContent: "space-between", alignItems: "center" }}
-                    >
-                        <div>
-                            <b>{d.name}</b> · {d.arcana ?? "—"} · {d.alignment ?? "—"}
+                    <div key={d.id} className="card" style={{ padding: 12 }}>
+                        <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+                            <div>
+                                <div><b>{d.name}</b> · {d.arcana ?? "—"} · {d.alignment ?? "—"}</div>
+                                <div style={{ opacity: 0.75, fontSize: 12 }}>Level {d.level ?? 0}</div>
+                            </div>
+                            {canEdit && (
+                                <div className="row" style={{ gap: 8 }}>
+                                    <button className="btn" onClick={() => startEdit(d)} disabled={busySave}>
+                                        Edit
+                                    </button>
+                                    <button
+                                        className="btn"
+                                        onClick={() => remove(d.id)}
+                                        disabled={busyDelete === d.id}
+                                    >
+                                        {busyDelete === d.id ? "…" : "Remove"}
+                                    </button>
+                                </div>
+                            )}
                         </div>
-                        <button
-                            className="btn"
-                            disabled={!canEdit}
-                            onClick={async () => {
-                                try {
-                                    await Games.delDemon(game.id, d.id);
-                                    await onUpdate();
-                                } catch (e) {
-                                    alert(e.message);
-                                }
-                            }}
-                        >
-                            Remove
-                        </button>
+                        <div className="row" style={{ gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                            <span className="pill">STR {d.stats?.strength ?? 0}</span>
+                            <span className="pill">MAG {d.stats?.magic ?? 0}</span>
+                            <span className="pill">END {d.stats?.endurance ?? 0}</span>
+                            <span className="pill">AGI {d.stats?.agility ?? 0}</span>
+                            <span className="pill">LUC {d.stats?.luck ?? 0}</span>
+                        </div>
+                        <div style={{ marginTop: 8, fontSize: 12 }}>
+                            <div><b>Weak:</b> {(d.resistances?.weak || []).join(', ') || '—'}</div>
+                            <div><b>Resist:</b> {(d.resistances?.resist || []).join(', ') || '—'}</div>
+                            <div><b>Null:</b> {(d.resistances?.null || []).join(', ') || '—'}</div>
+                            <div><b>Absorb:</b> {(d.resistances?.absorb || []).join(', ') || '—'}</div>
+                            <div><b>Reflect:</b> {(d.resistances?.reflect || []).join(', ') || '—'}</div>
+                        </div>
+                        {Array.isArray(d.skills) && d.skills.length > 0 && (
+                            <div style={{ marginTop: 8, fontSize: 12 }}>
+                                <b>Skills:</b> {d.skills.join(', ')}
+                            </div>
+                        )}
+                        {d.notes && (
+                            <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>{d.notes}</div>
+                        )}
                     </div>
                 ))}
+                {game.demons.length === 0 && <div style={{ opacity: 0.7 }}>No demons in the pool yet.</div>}
             </div>
         </div>
     );
