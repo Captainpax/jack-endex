@@ -13,16 +13,21 @@ If you are developing a production application, we recommend using TypeScript wi
 
 ## Discord story log sync
 
-The in-app **Story Logs** tab now reads messages through the backend. Provide a Discord bot token with permission to view the story log channel and configure the server with the following environment variables before starting `node server.js`:
+The in-app **Story Logs** tab now both reads and posts messages through the backend. To wire things up:
 
-```
-DISCORD_BOT_TOKEN=<bot token with access to the channel>
-DISCORD_CHANNEL_ID=<channel id to watch>
+1. Provide a Discord bot token that can view your campaign channels before starting `node server.js`.
 
-# Optional
-DISCORD_GUILD_ID=<guild id used to sanity-check the channel>
-DISCORD_POLL_INTERVAL_MS=15000   # how often to poll the channel (default 15s)
-DISCORD_MAX_MESSAGES=50          # how many recent messages to keep in memory (max 100)
-```
+   ```bash
+   export DISCORD_BOT_TOKEN="<bot token with read history access>"
+   ```
 
-Invite the bot to your server with the `Read Messages/View Channel` and `Read Message History` permissions so the sync can succeed.
+   The token is shared across every campaign on the instance. Use [the Discord developer portal](https://discord.com/developers/applications) to create a bot and invite it with the `Read Messages/View Channel` and `Read Message History` permissions. If the webhook will post to a different server, also grant it access there.
+
+2. Inside the app, each campaign's **Settings → Discord story integration** panel lets the DM supply:
+
+   - The Discord channel snowflake to watch.
+   - An optional guild ID used for validation and jump links.
+   - A Discord webhook URL that determines how outbound messages appear.
+   - Whether players may post from the dashboard and which players can act as **Scribes**.
+
+Once saved, the Story tab shows live channel activity, allows approved users to speak as the bot, Dungeon Master, Scribe, or specific players, and renders Discord image attachments inline.

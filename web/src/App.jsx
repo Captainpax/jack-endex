@@ -1011,7 +1011,7 @@ function GameView({
                         />
                     )}
 
-                    {tab === "storyLogs" && <StoryLogsTab />}
+                    {tab === "storyLogs" && <StoryLogsTab game={game} me={me} />}
 
                     {tab === "settings" && isDM && (
                         <SettingsTab
@@ -1022,6 +1022,7 @@ function GameView({
                                 const full = await Games.get(game.id);
                                 setActive(full);
                             }}
+                            onGameRefresh={handleRefresh}
                             onKickPlayer={
                                 isDM
                                     ? async (playerId) => {
@@ -2939,37 +2940,152 @@ function Party({ game, selectedPlayerId, onSelectPlayer, mode = "player", curren
     );
 }
 
+const DEFAULT_STORY_POLL_MS = 15_000;
+const IMAGE_FILE_REGEX = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
+
+/**
+ * Normalize the story log payload returned by the server into a predictable shape.
+ *
+ * @param {unknown} source
+ * @returns {{
+ *   channelId: string,
+ *   guildId: string,
+ *   allowPlayerPosts: boolean,
+ *   scribeIds: string[],
+ *   webhookConfigured: boolean,
+ *   pollIntervalMs: number
+ * }}
+ */
+function normalizeStoryLogConfig(source) {
+    if (!source || typeof source !== "object") {
+        return {
+            channelId: "",
+            guildId: "",
+            allowPlayerPosts: false,
+            scribeIds: [],
+            webhookConfigured: false,
+            pollIntervalMs: DEFAULT_STORY_POLL_MS,
+        };
+    }
+    const ids = Array.isArray(source.scribeIds)
+        ? source.scribeIds.filter((id) => typeof id === "string")
+        : [];
+    return {
+        channelId: source.channelId || "",
+        guildId: source.guildId || "",
+        allowPlayerPosts: !!source.allowPlayerPosts,
+        scribeIds: ids,
+        webhookConfigured: !!(source.webhookConfigured || source.webhookUrl),
+        pollIntervalMs: Number(source.pollIntervalMs) || DEFAULT_STORY_POLL_MS,
+    };
+}
+
+/**
+ * Normalize campaign story configuration for the DM-facing settings form.
+ *
+ * @param {unknown} story
+ * @returns {{
+ *   channelId: string,
+ *   guildId: string,
+ *   webhookUrl: string,
+ *   allowPlayerPosts: boolean,
+ *   scribeIds: string[]
+ * }}
+ */
+function normalizeStorySettings(story) {
+    if (!story || typeof story !== "object") {
+        return {
+            channelId: "",
+            guildId: "",
+            webhookUrl: "",
+            allowPlayerPosts: false,
+            scribeIds: [],
+        };
+    }
+    const ids = Array.isArray(story.scribeIds)
+        ? story.scribeIds.filter((id) => typeof id === "string").sort()
+        : [];
+    return {
+        channelId: story.channelId || "",
+        guildId: story.guildId || "",
+        webhookUrl: story.webhookUrl || "",
+        allowPlayerPosts: !!story.allowPlayerPosts,
+        scribeIds: ids,
+    };
+}
+
 // ---------- Story Logs ----------
-function StoryLogsTab() {
-    const [data, setData] = useState({
+function StoryLogsTab({ game, me }) {
+    const gameId = game?.id || null;
+    const isDM = game.dmId === me.id;
+    const storyConfigFromGame = useMemo(
+        () => normalizeStoryLogConfig(game?.story),
+        [game?.story]
+    );
+    const [data, setData] = useState(() => ({
         enabled: false,
         status: null,
         channel: null,
         messages: [],
         pollIntervalMs: null,
         fetchedAt: null,
-    });
+        config: storyConfigFromGame,
+    }));
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState(null);
+    const [sending, setSending] = useState(false);
+    const [message, setMessage] = useState('');
+    const [selectedPersona, setSelectedPersona] = useState('');
     const fetchRef = useRef(false);
     const firstLoadRef = useRef(true);
-    const pollMsRef = useRef(15_000);
+    const pollMsRef = useRef(DEFAULT_STORY_POLL_MS);
+    const previousGameIdRef = useRef(gameId);
+
+    useEffect(() => {
+        setData((prev) => ({
+            ...prev,
+            config: storyConfigFromGame,
+        }));
+    }, [storyConfigFromGame]);
+
+    useEffect(() => {
+        if (previousGameIdRef.current === gameId) {
+            return;
+        }
+        previousGameIdRef.current = gameId;
+        firstLoadRef.current = true;
+        pollMsRef.current = DEFAULT_STORY_POLL_MS;
+        setData({
+            enabled: false,
+            status: null,
+            channel: null,
+            messages: [],
+            pollIntervalMs: null,
+            fetchedAt: null,
+            config: storyConfigFromGame,
+        });
+        setLoading(true);
+        setRefreshing(false);
+        setError(null);
+        setMessage('');
+        setSelectedPersona('');
+    }, [gameId, storyConfigFromGame]);
 
     const dateFormatter = useMemo(
-        () => new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }),
+        () => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }),
         []
     );
     const relativeFormatter = useMemo(
-        () => new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }),
+        () => new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' }),
         []
     );
 
     const formatTimestamp = useCallback(
         (iso) => {
-            if (!iso) return "";
+            if (!iso) return '';
             const dt = new Date(iso);
-            if (Number.isNaN(dt.getTime())) return "";
+            if (Number.isNaN(dt.getTime())) return '';
             return dateFormatter.format(dt);
         },
         [dateFormatter]
@@ -2977,29 +3093,31 @@ function StoryLogsTab() {
 
     const formatRelative = useCallback(
         (iso) => {
-            if (!iso) return "";
+            if (!iso) return '';
             const value = Date.parse(iso);
-            if (!Number.isFinite(value)) return "";
+            if (!Number.isFinite(value)) return '';
             const diff = value - Date.now();
             const abs = Math.abs(diff);
             const units = [
-                ["day", 86_400_000],
-                ["hour", 3_600_000],
-                ["minute", 60_000],
-                ["second", 1000],
+                ['day', 86_400_000],
+                ['hour', 3_600_000],
+                ['minute', 60_000],
+                ['second', 1000],
             ];
             for (const [unit, ms] of units) {
-                if (abs >= ms || unit === "second") {
+                if (abs >= ms || unit === 'second') {
                     const amount = Math.round(diff / ms);
                     return relativeFormatter.format(amount, unit);
                 }
             }
-            return "";
+            return '';
         },
         [relativeFormatter]
     );
 
     const mergeData = useCallback((result) => {
+        const config = normalizeStoryLogConfig(result?.config);
+        pollMsRef.current = config.pollIntervalMs || pollMsRef.current;
         setData({
             enabled: !!(result?.enabled ?? result?.status?.enabled),
             status: result?.status ?? null,
@@ -3007,10 +3125,16 @@ function StoryLogsTab() {
             messages: Array.isArray(result?.messages) ? result.messages : [],
             pollIntervalMs: Number(result?.pollIntervalMs ?? result?.status?.pollIntervalMs) || null,
             fetchedAt: result?.fetchedAt || new Date().toISOString(),
+            config,
         });
     }, []);
 
     const fetchLogs = useCallback(async () => {
+        if (!gameId) {
+            setLoading(false);
+            setRefreshing(false);
+            return;
+        }
         if (fetchRef.current) return;
         fetchRef.current = true;
         const isInitial = firstLoadRef.current;
@@ -3020,14 +3144,12 @@ function StoryLogsTab() {
             setRefreshing(true);
         }
         try {
-            const result = await StoryLogs.fetch();
-            pollMsRef.current =
-                Number(result?.pollIntervalMs ?? result?.status?.pollIntervalMs) || pollMsRef.current;
+            const result = await StoryLogs.fetch(gameId);
             mergeData(result);
             const statusError = result?.status?.error;
             setError(statusError || null);
         } catch (err) {
-            setError(err?.message || "Failed to load story logs.");
+            setError(err?.message || 'Failed to load story logs.');
         } finally {
             if (isInitial) {
                 firstLoadRef.current = false;
@@ -3036,9 +3158,13 @@ function StoryLogsTab() {
             setRefreshing(false);
             fetchRef.current = false;
         }
-    }, [mergeData]);
+    }, [gameId, mergeData]);
 
     useEffect(() => {
+        if (!gameId) {
+            setLoading(false);
+            return;
+        }
         let cancelled = false;
         let timer = null;
 
@@ -3046,7 +3172,7 @@ function StoryLogsTab() {
             if (cancelled) return;
             await fetchLogs();
             if (cancelled) return;
-            const delay = Math.max(5_000, pollMsRef.current || 15_000);
+            const delay = Math.max(5_000, pollMsRef.current || DEFAULT_STORY_POLL_MS);
             timer = setTimeout(tick, delay);
         };
 
@@ -3056,38 +3182,188 @@ function StoryLogsTab() {
             cancelled = true;
             if (timer) clearTimeout(timer);
         };
-    }, [fetchLogs]);
+    }, [fetchLogs, gameId]);
 
     const handleRefresh = useCallback(() => {
         fetchLogs();
     }, [fetchLogs]);
 
+    const config = data.config;
+    const players = useMemo(
+        () => (Array.isArray(game.players) ? game.players.filter((p) => p && p.userId) : []),
+        [game.players]
+    );
+    const playerLabels = useMemo(
+        () =>
+            players.map((player, index) => {
+                const charName = player?.character?.name;
+                if (typeof charName === 'string' && charName.trim()) {
+                    return { player, label: charName.trim() };
+                }
+                if (player?.username) {
+                    return { player, label: player.username };
+                }
+                if (player?.userId) {
+                    return { player, label: `Player ${player.userId.slice(0, 6)}` };
+                }
+                return { player, label: `Player ${index + 1}` };
+            }),
+        [players]
+    );
+    const labelMap = useMemo(() => {
+        const map = new Map();
+        for (const entry of playerLabels) {
+            if (entry.player?.userId) {
+                map.set(entry.player.userId, entry.label);
+            }
+        }
+        return map;
+    }, [playerLabels]);
+    const selfLabel = useMemo(() => {
+        if (labelMap.has(me.id)) return labelMap.get(me.id);
+        return me.username;
+    }, [labelMap, me.id, me.username]);
+
+    const scribeIds = config.scribeIds || [];
+    const isScribe = scribeIds.includes(me.id);
+
+    const personaOptions = useMemo(() => {
+        if (isDM) {
+            const base = [
+                { value: 'bot', label: 'BOT', payload: { persona: 'bot' } },
+                { value: 'dm', label: 'Dungeon Master', payload: { persona: 'dm' } },
+                { value: 'scribe', label: 'Scribe', payload: { persona: 'scribe' } },
+                { value: 'player', label: 'Player', payload: { persona: 'player' } },
+            ];
+            const impersonation = playerLabels
+                .filter(
+                    ({ player }) =>
+                        player?.userId && (player.role || '').toLowerCase() !== 'dm'
+                )
+                .map(({ player, label }) => ({
+                    value: `player:${player.userId}`,
+                    label,
+                    payload: { persona: 'player', targetUserId: player.userId },
+                }));
+            return [...base, ...impersonation];
+        }
+        const opts = [];
+        if (selfLabel) {
+            opts.push({ value: 'self', label: selfLabel, payload: { persona: 'self' } });
+        }
+        if (isScribe) {
+            opts.push({ value: 'scribe', label: 'Scribe', payload: { persona: 'scribe' } });
+        }
+        return opts;
+    }, [isDM, isScribe, playerLabels, selfLabel]);
+
+    useEffect(() => {
+        if (personaOptions.length === 0) {
+            setSelectedPersona('');
+            return;
+        }
+        setSelectedPersona((prev) => {
+            if (prev && personaOptions.some((opt) => opt.value === prev)) {
+                return prev;
+            }
+            return personaOptions[0]?.value || '';
+        });
+    }, [personaOptions]);
+
+    const trimmedMessage = message.trim();
+    const canPost = isDM || (!!config.allowPlayerPosts && personaOptions.length > 0);
+    const composerHint = useMemo(() => {
+        if (!config.webhookConfigured) {
+            return 'Connect a Discord webhook in Campaign Settings to enable posting.';
+        }
+        if (!selectedPersona) {
+            return 'Choose who you want to speak as.';
+        }
+        if (!trimmedMessage) {
+            return 'Type your story update above.';
+        }
+        return 'Messages are delivered straight to the linked Discord channel.';
+    }, [config.webhookConfigured, selectedPersona, trimmedMessage]);
+    const readyToSend = Boolean(config.webhookConfigured && selectedPersona && trimmedMessage);
+    const composerDisabled = sending || !readyToSend;
+
+    const handleSend = useCallback(
+        async (evt) => {
+            evt.preventDefault();
+            if (!gameId) return;
+            const trimmed = message.trim();
+            if (!trimmed) return;
+            const option = personaOptions.find((opt) => opt.value === selectedPersona);
+            if (!option) return;
+            try {
+                setSending(true);
+                await StoryLogs.post(gameId, { ...option.payload, content: trimmed });
+                setMessage('');
+                setError(null);
+                await fetchLogs();
+            } catch (err) {
+                setError(err?.message || 'Failed to post to Discord.');
+            } finally {
+                setSending(false);
+            }
+        },
+        [fetchLogs, gameId, message, personaOptions, selectedPersona]
+    );
+
+    const isImageAttachment = useCallback((att) => {
+        if (!att) return false;
+        if (typeof att.contentType === 'string' && att.contentType.startsWith('image/')) {
+            return true;
+        }
+        if (typeof att.name === 'string' && IMAGE_FILE_REGEX.test(att.name)) {
+            return true;
+        }
+        if (typeof att.url === 'string') {
+            try {
+                const url = new URL(att.url);
+                return IMAGE_FILE_REGEX.test(url.pathname);
+            } catch {
+                return IMAGE_FILE_REGEX.test(att.url);
+            }
+        }
+        return false;
+    }, []);
+
     const status = data.status || {};
-    const phase = status.phase || (data.enabled ? "idle" : "disabled");
+    const phase = status.phase || (data.enabled ? 'idle' : 'disabled');
     const phaseLabelMap = {
-        disabled: "Disabled",
-        idle: "Idle",
-        connecting: "Connecting",
-        ready: "Connected",
-        error: "Error",
+        disabled: 'Disabled',
+        idle: 'Idle',
+        connecting: 'Connecting',
+        ready: 'Connected',
+        error: 'Error',
+        missing_token: 'Server setup required',
+        unconfigured: 'Not linked',
+        configuring: 'Connecting',
     };
     const phaseToneMap = {
-        disabled: "warn",
-        idle: "light",
-        connecting: "warn",
-        ready: "success",
-        error: "danger",
+        disabled: 'warn',
+        idle: 'light',
+        connecting: 'warn',
+        ready: 'success',
+        error: 'danger',
+        missing_token: 'danger',
+        unconfigured: 'warn',
+        configuring: 'warn',
     };
-    const phaseLabel = phaseLabelMap[phase] || "Unknown";
-    const phaseTone = phaseToneMap[phase] || "light";
+    const phaseLabel = phaseLabelMap[phase] || 'Unknown';
+    const phaseTone = phaseToneMap[phase] || 'light';
     const channelName = data.channel?.name ? `#${data.channel.name}` : null;
     const channelUrl = data.channel?.url || null;
-    const channelTopic = data.channel?.topic || "";
+    const channelTopic = data.channel?.topic || '';
     const lastSynced = status.lastSyncAt || data.fetchedAt;
     const lastSyncedRelative = formatRelative(lastSynced);
     const lastSyncedAbsolute = formatTimestamp(lastSynced);
-
-    const showMessages = data.enabled && data.messages.length > 0;
+    const showErrorBanner = error && phase === 'error';
+    const hasMessages = data.messages.length > 0;
+    const composerVisible = canPost && personaOptions.length > 0;
+    const playerPostingDisabled = !isDM && !config.allowPlayerPosts;
+    const webhookMissing = isDM && !config.webhookConfigured;
 
     return (
         <section className="card story-logs-card">
@@ -3103,9 +3379,9 @@ function StoryLogsTab() {
                         className="btn ghost btn-small"
                         type="button"
                         onClick={handleRefresh}
-                        disabled={loading || refreshing || !data.enabled}
+                        disabled={loading || refreshing || !gameId}
                     >
-                        {refreshing ? "Refreshing…" : "Refresh"}
+                        {refreshing ? 'Refreshing…' : 'Refresh'}
                     </button>
                     {channelUrl && (
                         <a
@@ -3128,7 +3404,7 @@ function StoryLogsTab() {
                     </span>
                 )}
             </div>
-            {error && (
+            {showErrorBanner && (
                 <div className="story-logs__alert">
                     <p>{error}</p>
                 </div>
@@ -3137,79 +3413,151 @@ function StoryLogsTab() {
                 <div className="story-logs__empty">
                     <p className="text-muted">Loading story logs…</p>
                 </div>
-            ) : !data.enabled ? (
-                <div className="story-logs__empty">
-                    <p className="text-muted">
-                        Configure <code>DISCORD_BOT_TOKEN</code>, <code>DISCORD_CHANNEL_ID</code>, and optionally {" "}
-                        <code>DISCORD_GUILD_ID</code> on the server to enable the Discord story log sync.
-                    </p>
-                </div>
-            ) : showMessages ? (
-                <div className="story-logs__body">
-                    {channelTopic && <p className="text-muted story-logs__topic">{channelTopic}</p>}
-                    <div className="story-logs__messages">
-                        {data.messages.map((msg) => {
-                            const msgRelative = formatRelative(msg.createdAt);
-                            const msgAbsolute = formatTimestamp(msg.createdAt);
-                            return (
-                                <article key={msg.id} className="story-logs__message">
-                                    <div className="story-logs__avatar">
-                                        {msg.author?.avatarUrl ? (
-                                            <img
-                                                src={msg.author.avatarUrl}
-                                                alt={msg.author?.displayName || "Avatar"}
-                                            />
-                                        ) : (
-                                            <span>{(msg.author?.displayName || "?").slice(0, 1)}</span>
-                                        )}
-                                    </div>
-                                    <div className="story-logs__message-body">
-                                        <header className="story-logs__message-header">
-                                            <span className="story-logs__author">{msg.author?.displayName || "Unknown"}</span>
-                                            {msg.author?.bot && <span className="pill warn">BOT</span>}
-                                            {msgAbsolute && (
-                                                <time
-                                                    className="story-logs__timestamp"
-                                                    dateTime={msg.createdAt || undefined}
-                                                    title={msgAbsolute}
-                                                >
-                                                    {msgRelative || msgAbsolute}
-                                                </time>
-                                            )}
-                                        </header>
-                                        {msg.content && (
-                                            <p className="story-logs__message-text">{msg.content}</p>
-                                        )}
-                                        {msg.attachments?.length > 0 && (
-                                            <ul className="story-logs__attachments">
-                                                {msg.attachments.map((att) => (
-                                                    <li key={att.id}>
-                                                        <a href={att.url} target="_blank" rel="noreferrer noopener">
-                                                            {att.name || "Attachment"}
-                                                        </a>
-                                                    </li>
-                                                ))}
-                                            </ul>
-                                        )}
-                                        {msg.jumpLink && (
-                                            <div className="story-logs__message-footer">
-                                                <a href={msg.jumpLink} target="_blank" rel="noreferrer noopener">
-                                                    View in Discord
-                                                </a>
-                                            </div>
-                                        )}
-                                    </div>
-                                </article>
-                            );
-                        })}
-                    </div>
-                </div>
             ) : (
-                <div className="story-logs__empty">
-                    <p className="text-muted">
-                        No messages synced yet. When players post in the configured Discord channel they will appear here.
-                    </p>
-                </div>
+                <>
+                    {playerPostingDisabled && (
+                        <p className="text-muted text-small" style={{ marginTop: -4 }}>
+                            The DM has disabled player posting for this campaign.
+                        </p>
+                    )}
+                    {webhookMissing && (
+                        <p className="text-muted text-small" style={{ marginTop: -4 }}>
+                            Add a Discord webhook URL in Campaign Settings to enable posting as the bot, DM, or scribe.
+                        </p>
+                    )}
+                    {composerVisible && (
+                        <form className="story-logs__composer" onSubmit={handleSend}>
+                            <div className="story-logs__composer-row">
+                                <label className="text-small" style={{ display: 'grid', gap: 4 }}>
+                                    Post as
+                                    <select
+                                        value={selectedPersona}
+                                        onChange={(e) => setSelectedPersona(e.target.value)}
+                                        disabled={sending}
+                                    >
+                                        {personaOptions.map((option) => (
+                                            <option key={option.value} value={option.value}>
+                                                {option.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                            </div>
+                            <textarea
+                                value={message}
+                                onChange={(e) => setMessage(e.target.value)}
+                                placeholder={
+                                    isDM
+                                        ? 'Narrate the next beat or speak for an adventurer…'
+                                        : 'Share your part of the story…'
+                                }
+                                disabled={sending}
+                            />
+                            <div className="story-logs__composer-footer">
+                                <span className="text-muted text-small">{composerHint}</span>
+                                <button type="submit" className="btn btn-small" disabled={composerDisabled}>
+                                    {sending ? 'Sending…' : 'Send to Discord'}
+                                </button>
+                            </div>
+                        </form>
+                    )}
+                    {!data.enabled ? (
+                        <div className="story-logs__empty">
+                            {phase === 'missing_token' ? (
+                                <p className="text-muted">
+                                    The server administrator must supply a Discord bot token before story syncing can run.
+                                </p>
+                            ) : phase === 'unconfigured' ? (
+                                <p className="text-muted">
+                                    Link this campaign to a Discord channel from Campaign Settings to start syncing the story log.
+                                </p>
+                            ) : (
+                                <p className="text-muted">{error || 'Discord sync is inactive for this campaign.'}</p>
+                            )}
+                        </div>
+                    ) : hasMessages ? (
+                        <div className="story-logs__body">
+                            {channelTopic && <p className="text-muted story-logs__topic">{channelTopic}</p>}
+                            <div className="story-logs__messages">
+                                {data.messages.map((msg) => {
+                                    const msgRelative = formatRelative(msg.createdAt);
+                                    const msgAbsolute = formatTimestamp(msg.createdAt);
+                                    return (
+                                        <article key={msg.id} className="story-logs__message">
+                                            <div className="story-logs__avatar">
+                                                {msg.author?.avatarUrl ? (
+                                                    <img
+                                                        src={msg.author.avatarUrl}
+                                                        alt={msg.author?.displayName || 'Avatar'}
+                                                    />
+                                                ) : (
+                                                    <span>{(msg.author?.displayName || '?').slice(0, 1)}</span>
+                                                )}
+                                            </div>
+                                            <div className="story-logs__message-body">
+                                                <header className="story-logs__message-header">
+                                                    <span className="story-logs__author">{msg.author?.displayName || 'Unknown'}</span>
+                                                    {msg.author?.bot && <span className="pill warn">BOT</span>}
+                                                    {msgAbsolute && (
+                                                        <time
+                                                            className="story-logs__timestamp"
+                                                            dateTime={msg.createdAt || undefined}
+                                                            title={msgAbsolute}
+                                                        >
+                                                            {msgRelative || msgAbsolute}
+                                                        </time>
+                                                    )}
+                                                </header>
+                                                {msg.content && (
+                                                    <p className="story-logs__message-text">{msg.content}</p>
+                                                )}
+                                                {msg.attachments?.length > 0 && (
+                                                    <ul className="story-logs__attachments">
+                                                        {msg.attachments.map((att) => (
+                                                            <li key={att.id}>
+                                                                {isImageAttachment(att) ? (
+                                                                    <a
+                                                                        className="story-logs__image-link"
+                                                                        href={att.url}
+                                                                        target="_blank"
+                                                                        rel="noreferrer noopener"
+                                                                    >
+                                                                        <img
+                                                                            className="story-logs__image"
+                                                                            src={att.proxyUrl || att.url}
+                                                                            alt={att.name || 'Attachment'}
+                                                                        />
+                                                                    </a>
+                                                                ) : (
+                                                                    <a href={att.url} target="_blank" rel="noreferrer noopener">
+                                                                        {att.name || 'Attachment'}
+                                                                    </a>
+                                                                )}
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                )}
+                                                {msg.jumpLink && (
+                                                    <div className="story-logs__message-footer">
+                                                        <a href={msg.jumpLink} target="_blank" rel="noreferrer noopener">
+                                                            View in Discord
+                                                        </a>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </article>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="story-logs__empty">
+                            <p className="text-muted">
+                                No messages synced yet. When players post in the configured Discord channel they will appear here.
+                            </p>
+                        </div>
+                    )}
+                </>
             )}
         </section>
     );
@@ -5550,13 +5898,16 @@ const PERMISSION_DEFAULTS = PERMISSION_OPTIONS.reduce((acc, option) => {
     return acc;
 }, {});
 
-function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer }) {
+function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh }) {
     const [perms, setPerms] = useState(() => ({
         ...PERMISSION_DEFAULTS,
         ...(game.permissions || {}),
     }));
     const [saving, setSaving] = useState(false);
     const [removingId, setRemovingId] = useState(null);
+    const storyDefaults = useMemo(() => normalizeStorySettings(game.story), [game.story]);
+    const [storyForm, setStoryForm] = useState(storyDefaults);
+    const [storySaving, setStorySaving] = useState(false);
 
     useEffect(() => {
         setPerms({
@@ -5565,6 +5916,10 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer }) {
         });
         setRemovingId(null);
     }, [game.id, game.permissions]);
+
+    useEffect(() => {
+        setStoryForm(storyDefaults);
+    }, [storyDefaults]);
 
     const removablePlayers = useMemo(
         () =>
@@ -5580,6 +5935,10 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer }) {
 
     const hasChanges = PERMISSION_OPTIONS.some(
         ({ key }) => !!(game.permissions?.[key]) !== !!perms[key]
+    );
+    const storyDirty = useMemo(
+        () => JSON.stringify(storyForm) !== JSON.stringify(storyDefaults),
+        [storyDefaults, storyForm]
     );
 
     return (
@@ -5637,6 +5996,148 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer }) {
                     {saving ? "Saving…" : hasChanges ? "Save changes" : "Saved"}
                 </button>
             </div>
+
+            {isDM && (
+                <>
+                    <div className="divider" />
+                    <div className="col" style={{ gap: 12 }}>
+                        <h4>Discord story integration</h4>
+                        <p className="text-muted text-small" style={{ marginTop: 0 }}>
+                            Link your campaign to a Discord channel and webhook so the story tab can both read and post
+                            updates.
+                        </p>
+                        <label className="field" style={{ display: "grid", gap: 4 }}>
+                            <span className="text-small">Channel ID</span>
+                            <input
+                                type="text"
+                                value={storyForm.channelId}
+                                onChange={(e) =>
+                                    setStoryForm((prev) => ({ ...prev, channelId: e.target.value }))
+                                }
+                                placeholder="e.g. 123456789012345678"
+                                disabled={storySaving}
+                            />
+                        </label>
+                        <label className="field" style={{ display: "grid", gap: 4 }}>
+                            <span className="text-small">Guild ID (optional)</span>
+                            <input
+                                type="text"
+                                value={storyForm.guildId}
+                                onChange={(e) =>
+                                    setStoryForm((prev) => ({ ...prev, guildId: e.target.value }))
+                                }
+                                placeholder="Needed for jump links if the webhook lives in another server"
+                                disabled={storySaving}
+                            />
+                        </label>
+                        <label className="field" style={{ display: "grid", gap: 4 }}>
+                            <span className="text-small">Webhook URL</span>
+                            <input
+                                type="url"
+                                value={storyForm.webhookUrl}
+                                onChange={(e) =>
+                                    setStoryForm((prev) => ({ ...prev, webhookUrl: e.target.value }))
+                                }
+                                placeholder="https://discord.com/api/webhooks/…"
+                                disabled={storySaving}
+                            />
+                        </label>
+                        <label className={`perm-toggle${storySaving ? " is-readonly" : ""}`}>
+                            <input
+                                type="checkbox"
+                                checked={storyForm.allowPlayerPosts}
+                                disabled={storySaving}
+                                onChange={(e) =>
+                                    setStoryForm((prev) => ({ ...prev, allowPlayerPosts: e.target.checked }))
+                                }
+                            />
+                            <div className="perm-toggle__text">
+                                <span className="perm-toggle__label">Allow players to post from the dashboard</span>
+                                <span className="text-muted text-small">
+                                    When enabled, players get a composer in the Story tab. They can only speak as themselves
+                                    unless marked as Scribes.
+                                </span>
+                            </div>
+                        </label>
+                        <div className="col" style={{ gap: 8 }}>
+                            <strong>Scribe access</strong>
+                            <p className="text-muted text-small" style={{ marginTop: 0 }}>
+                                Scribes can narrate as the outside storyteller instead of their character.
+                            </p>
+                            {removablePlayers.length === 0 ? (
+                                <span className="text-muted text-small">No players have joined yet.</span>
+                            ) : (
+                                removablePlayers.map((player, index) => {
+                                    if (!player?.userId) return null;
+                                    const label =
+                                        player.character?.name?.trim() ||
+                                        player.username ||
+                                        `Player ${index + 1}`;
+                                    const checked = storyForm.scribeIds.includes(player.userId);
+                                    return (
+                                        <label key={player.userId} className="perm-toggle">
+                                            <input
+                                                type="checkbox"
+                                                checked={checked}
+                                                disabled={storySaving}
+                                                onChange={(e) => {
+                                                    setStoryForm((prev) => {
+                                                        const next = new Set(prev.scribeIds);
+                                                        if (e.target.checked) {
+                                                            next.add(player.userId);
+                                                        } else {
+                                                            next.delete(player.userId);
+                                                        }
+                                                        return {
+                                                            ...prev,
+                                                            scribeIds: Array.from(next).sort(),
+                                                        };
+                                                    });
+                                                }}
+                                            />
+                                            <div className="perm-toggle__text">
+                                                <span className="perm-toggle__label">{label}</span>
+                                                {player.username && (
+                                                    <span className="text-muted text-small">@{player.username}</span>
+                                                )}
+                                            </div>
+                                        </label>
+                                    );
+                                })
+                            )}
+                        </div>
+                        <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}>
+                            <button
+                                className="btn"
+                                disabled={storySaving || !storyDirty}
+                                onClick={async () => {
+                                    try {
+                                        setStorySaving(true);
+                                        const payload = {
+                                            channelId: storyForm.channelId.trim(),
+                                            guildId: storyForm.guildId.trim(),
+                                            webhookUrl: storyForm.webhookUrl.trim(),
+                                            allowPlayerPosts: storyForm.allowPlayerPosts,
+                                            scribeIds: storyForm.scribeIds,
+                                        };
+                                        const result = await StoryLogs.configure(game.id, payload);
+                                        setStoryForm(normalizeStorySettings(result?.story));
+                                        if (typeof onGameRefresh === "function") {
+                                            await onGameRefresh();
+                                        }
+                                    } catch (e) {
+                                        alert(e.message);
+                                    } finally {
+                                        setStorySaving(false);
+                                    }
+                                }}
+                            >
+                                {storySaving ? "Saving…" : storyDirty ? "Save story settings" : "Saved"}
+                            </button>
+                        </div>
+                    </div>
+                </>
+            )}
 
             {canKick && (
                 <>
