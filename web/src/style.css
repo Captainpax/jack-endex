@@ -1573,6 +1573,30 @@ label {
 .sp-summary__warning { color: var(--warning); font-weight: 600; }
 .sheet-footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
 
+.world-skill-manager { display: grid; gap: 16px; }
+.world-skill-manager__header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.world-skill-manager__status { color: var(--brand-600); font-weight: 600; letter-spacing: 0.04em; }
+.world-skill-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.world-skill-card { position: relative; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--surface-2); display: grid; gap: 12px; min-height: 180px; transition: border-color var(--trans-fast), box-shadow var(--trans-fast), transform var(--trans-fast); }
+.world-skill-card:hover { border-color: color-mix(in oklab, var(--brand) 40%, var(--border) 60%); box-shadow: 0 8px 22px rgba(15,17,21,0.16); transform: translateY(-2px); }
+.world-skill-card.is-editing { border-color: var(--brand); box-shadow: 0 12px 28px rgba(15,17,21,0.18); }
+.world-skill-card__header { display: flex; justify-content: space-between; align-items: center; }
+.world-skill-card__badge { display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: var(--radius); background: color-mix(in oklab, var(--brand) 18%, transparent); color: var(--brand-700); font-weight: 700; letter-spacing: 0.05em; }
+.world-skill-card__delete { background: transparent; border: none; color: var(--muted); font-size: 1.35rem; line-height: 1; cursor: pointer; padding: 0; transition: color var(--trans-fast), transform var(--trans-fast); }
+.world-skill-card__delete:hover:not(:disabled) { color: var(--danger); transform: scale(1.1); }
+.world-skill-card__delete:disabled { opacity: 0.55; cursor: progress; }
+.world-skill-card__body { display: grid; gap: 8px; align-content: start; }
+.world-skill-card__body h4 { margin: 0; font-size: 1.05rem; color: var(--text); }
+.world-skill-card__actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.world-skill-card__form { display: grid; gap: 12px; align-content: start; }
+.world-skill-card--add { border-style: dashed; border-color: color-mix(in oklab, var(--border) 70%, var(--brand) 30%); align-content: center; justify-items: center; text-align: center; }
+.world-skill-card--add .world-skill-card__form { width: 100%; }
+.world-skill-card__add-btn { display: grid; gap: 10px; justify-items: center; border: none; background: transparent; color: var(--muted); cursor: pointer; font-weight: 600; font-size: 0.95rem; padding: 16px; transition: color var(--trans-fast), transform var(--trans-fast); }
+.world-skill-card__add-btn:hover:not(:disabled) { color: var(--brand-600); transform: translateY(-1px); }
+.world-skill-card__add-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.world-skill-card__plus { display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 999px; background: color-mix(in oklab, var(--brand) 18%, transparent); color: var(--brand-700); font-size: 1.6rem; font-weight: 700; }
+.world-skill-empty { border: 1px dashed var(--border); border-radius: var(--radius); padding: 16px; display: grid; gap: 6px; align-content: start; background: var(--surface); text-align: center; color: var(--muted); }
+
 /* Wizard overlay */
 .wizard-backdrop { position: fixed; inset: 0; background: rgba(15, 17, 21, 0.78); display: grid; place-items: center; padding: 24px; z-index: 20; }
 .wizard-panel { width: min(960px, 100%); max-height: 100%; overflow: hidden; border-radius: var(--radius-lg); background: var(--surface); display: grid; grid-template-rows: auto auto 1fr auto; box-shadow: 0 30px 80px rgba(0,0,0,0.35); }

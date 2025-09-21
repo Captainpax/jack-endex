@@ -615,6 +615,7 @@ const DEFAULT_WORLD_SKILLS = [
 ];
 
 const ABILITY_KEY_SET = new Set(ABILITY_DEFS.map((ability) => ability.key));
+const NEW_WORLD_SKILL_ID = "__new_world_skill__";
 
 function makeCustomSkillId(label, existing = new Set()) {
     const base = String(label || '')
@@ -5631,12 +5632,21 @@ function WorldSkillsTab({ game, me, onUpdate }) {
     const worldSkills = useMemo(() => normalizeWorldSkillDefs(game.worldSkills), [game.worldSkills]);
     const [skillForm, setSkillForm] = useState({ label: "", ability: abilityDefault });
     const [editingSkillId, setEditingSkillId] = useState(null);
-    const editingSkill = useMemo(
-        () => worldSkills.find((skill) => skill.id === editingSkillId) || null,
-        [editingSkillId, worldSkills]
-    );
+    const editingSkill = useMemo(() => {
+        if (!editingSkillId || editingSkillId === NEW_WORLD_SKILL_ID) return null;
+        return worldSkills.find((skill) => skill.id === editingSkillId) || null;
+    }, [editingSkillId, worldSkills]);
     const [skillBusy, setSkillBusy] = useState(false);
     const [skillRowBusy, setSkillRowBusy] = useState(null);
+    const isCreatingSkill = editingSkillId === NEW_WORLD_SKILL_ID;
+    const abilityDetails = useMemo(
+        () =>
+            ABILITY_DEFS.reduce((map, ability) => {
+                map[ability.key] = ability;
+                return map;
+            }, {}),
+        []
+    );
 
     const resetSkillForm = useCallback(() => {
         setEditingSkillId(null);
@@ -5646,6 +5656,11 @@ function WorldSkillsTab({ game, me, onUpdate }) {
     useEffect(() => {
         resetSkillForm();
     }, [game.id, resetSkillForm]);
+
+    const startCreateSkill = useCallback(() => {
+        setEditingSkillId(NEW_WORLD_SKILL_ID);
+        setSkillForm({ label: "", ability: abilityDefault });
+    }, [abilityDefault, setEditingSkillId, setSkillForm]);
 
     useEffect(() => {
         if (editingSkill) {
@@ -5689,8 +5704,12 @@ function WorldSkillsTab({ game, me, onUpdate }) {
         const ability = ABILITY_KEY_SET.has(abilityValue) ? abilityValue : abilityDefault;
         try {
             setSkillBusy(true);
-            if (editingSkillId) {
-                await Games.updateWorldSkill(game.id, editingSkillId, { label, ability });
+            const targetId =
+                editingSkillId && editingSkillId !== NEW_WORLD_SKILL_ID
+                    ? editingSkillId
+                    : null;
+            if (targetId && editingSkill) {
+                await Games.updateWorldSkill(game.id, targetId, { label, ability });
             } else {
                 await Games.addWorldSkill(game.id, { label, ability });
             }
@@ -5701,7 +5720,17 @@ function WorldSkillsTab({ game, me, onUpdate }) {
         } finally {
             setSkillBusy(false);
         }
-    }, [abilityDefault, editingSkillId, game.id, isDM, onUpdate, resetSkillForm, skillForm.ability, skillForm.label]);
+    }, [
+        abilityDefault,
+        editingSkill,
+        editingSkillId,
+        game.id,
+        isDM,
+        onUpdate,
+        resetSkillForm,
+        skillForm.ability,
+        skillForm.label,
+    ]);
 
     const handleSkillDelete = useCallback(
         async (skillId) => {
@@ -5958,20 +5987,24 @@ function WorldSkillsTab({ game, me, onUpdate }) {
         });
     }, [abilityMods, character.resources?.saves]);
 
-    const updateSkill = useCallback((key, field, value) => {
-        setSkills((prev) => {
-            const next = { ...prev };
-            const current = { ...(next[key] || { ranks: 0, misc: 0 }) };
-            if (field === "ranks") {
-                current.ranks = clampNonNegative(value);
-            } else if (field === "misc") {
-                const num = Number(value);
-                current.misc = Number.isFinite(num) ? num : 0;
-            }
-            next[key] = current;
-            return next;
-        });
-    }, []);
+    const updateSkill = useCallback(
+        (key, field, value) => {
+            setSkills((prev) => {
+                const next = { ...prev };
+                const current = { ...(next[key] || { ranks: 0, misc: 0 }) };
+                if (field === "ranks") {
+                    const sanitized = clampNonNegative(value);
+                    current.ranks = Math.min(sanitized, maxSkillRank);
+                } else if (field === "misc") {
+                    const num = Number(value);
+                    current.misc = Number.isFinite(num) ? num : 0;
+                }
+                next[key] = current;
+                return next;
+            });
+        },
+        [maxSkillRank]
+    );
 
     const canEdit = !!activePlayer && (isDM || (game.permissions?.canEditStats && activePlayer.userId === me.id));
     const disableInputs = !canEdit || saving;
@@ -6065,104 +6098,169 @@ function WorldSkillsTab({ game, me, onUpdate }) {
         }
     }, [activePlayer, customSkills, game.id, isDM, me.id, onUpdate, saving, skills, worldSkills]);
 
+    const renderSkillEditor = (mode) => {
+        const submitLabel =
+            skillBusy ? "Saving…" : mode === "edit" ? "Save changes" : "Add skill";
+        return (
+            <form
+                className="world-skill-card__form"
+                onSubmit={(e) => {
+                    e.preventDefault();
+                    void handleSkillSubmit();
+                }}
+            >
+                <label className="field">
+                    <span className="field__label">Skill name</span>
+                    <input
+                        value={skillForm.label}
+                        onChange={(e) =>
+                            setSkillForm((prev) => ({
+                                ...prev,
+                                label: e.target.value,
+                            }))
+                        }
+                        placeholder="e.g. Tracking"
+                        autoFocus
+                    />
+                </label>
+                <label className="field">
+                    <span className="field__label">Ability</span>
+                    <select
+                        value={skillForm.ability}
+                        onChange={(e) =>
+                            setSkillForm((prev) => ({
+                                ...prev,
+                                ability: e.target.value,
+                            }))
+                        }
+                    >
+                        {ABILITY_DEFS.map((ability) => (
+                            <option key={ability.key} value={ability.key}>
+                                {ability.key} · {ability.label}
+                            </option>
+                        ))}
+                    </select>
+                </label>
+                <div className="world-skill-card__actions">
+                    <button
+                        type="submit"
+                        className="btn btn-small"
+                        disabled={skillBusy || !skillForm.label.trim()}
+                    >
+                        {submitLabel}
+                    </button>
+                    <button
+                        type="button"
+                        className="btn btn-small secondary"
+                        onClick={resetSkillForm}
+                        disabled={skillBusy}
+                    >
+                        Cancel
+                    </button>
+                </div>
+            </form>
+        );
+    };
+
     return (
         <div className="col" style={{ display: "grid", gap: 16 }}>
             {isDM && (
-                <div className="card" style={{ display: "grid", gap: 12 }}>
-                    <div>
-                        <h3>Manage world skills</h3>
-                        <p className="text-muted text-small">
-                            Add, rename, or remove entries the party can invest ranks into.
-                        </p>
+                <div className="card world-skill-manager">
+                    <div className="world-skill-manager__header">
+                        <div>
+                            <h3>Manage world skills</h3>
+                            <p className="text-muted text-small">
+                                Craft the world's challenges with a glance. Edit cards below or add new
+                                expertise with the plus tile.
+                            </p>
+                        </div>
+                        {(editingSkill || isCreatingSkill) && (
+                            <span className="world-skill-manager__status text-small">
+                                {editingSkill?.label
+                                    ? `Editing ${editingSkill.label}`
+                                    : "Creating a new world skill"}
+                            </span>
+                        )}
                     </div>
-                    <div
-                        className="row"
-                        style={{ gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}
-                    >
-                        <input
-                            placeholder="Skill name"
-                            value={skillForm.label}
-                            onChange={(e) => setSkillForm((prev) => ({
-                                ...prev,
-                                label: e.target.value,
-                            }))}
-                            style={{ flex: 2, minWidth: 200 }}
-                        />
-                        <label className="field" style={{ minWidth: 160 }}>
-                            <span className="field__label">Ability</span>
-                            <select
-                                value={skillForm.ability}
-                                onChange={(e) =>
-                                    setSkillForm((prev) => ({
-                                        ...prev,
-                                        ability: e.target.value,
-                                    }))
-                                }
-                            >
-                                {ABILITY_DEFS.map((ability) => (
-                                    <option key={ability.key} value={ability.key}>
-                                        {ability.key} · {ability.label}
-                                    </option>
-                                ))}
-                            </select>
-                        </label>
-                        <div className="row" style={{ gap: 8 }}>
-                            <button
-                                className="btn"
-                                onClick={handleSkillSubmit}
-                                disabled={skillBusy || !skillForm.label.trim()}
-                            >
-                                {skillBusy ? "…" : editingSkill ? "Save" : "Add"}
-                            </button>
-                            {editingSkill && (
+                    <div className="world-skill-grid">
+                        {worldSkills.length === 0 && !isCreatingSkill && (
+                            <div className="world-skill-empty">
+                                <strong>No world skills yet</strong>
+                                <span className="text-muted text-small">
+                                    Use the plus card to create your first training option.
+                                </span>
+                            </div>
+                        )}
+                        {worldSkills.map((skill) => {
+                            const abilityInfo = abilityDetails[skill.ability] || null;
+                            const isEditing = editingSkillId === skill.id;
+                            return (
+                                <div
+                                    key={skill.id}
+                                    className={`world-skill-card${isEditing ? " is-editing" : ""}`}
+                                >
+                                    <div className="world-skill-card__header">
+                                        <span className="world-skill-card__badge">{skill.ability}</span>
+                                        <button
+                                            type="button"
+                                            className="world-skill-card__delete"
+                                            onClick={() => handleSkillDelete(skill.id)}
+                                            disabled={skillRowBusy === skill.id || skillBusy || isEditing}
+                                            aria-label={`Delete ${skill.label}`}
+                                        >
+                                            {skillRowBusy === skill.id ? "…" : "×"}
+                                        </button>
+                                    </div>
+                                    {isEditing ? (
+                                        renderSkillEditor("edit")
+                                    ) : (
+                                        <div className="world-skill-card__body">
+                                            <h4>{skill.label}</h4>
+                                            <span className="pill light">
+                                                {skill.ability}
+                                                {abilityInfo ? ` · ${abilityInfo.label}` : ""}
+                                            </span>
+                                            {abilityInfo?.summary && (
+                                                <p className="text-muted text-small">
+                                                    {abilityInfo.summary}
+                                                </p>
+                                            )}
+                                            <div className="world-skill-card__actions">
+                                                <button
+                                                    type="button"
+                                                    className="btn btn-small ghost"
+                                                    onClick={() => startEditSkill(skill)}
+                                                    disabled={skillBusy || skillRowBusy === skill.id}
+                                                >
+                                                    Edit
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                        <div
+                            className={`world-skill-card world-skill-card--add${
+                                isCreatingSkill ? " is-editing" : ""
+                            }`}
+                        >
+                            {isCreatingSkill ? (
+                                renderSkillEditor("create")
+                            ) : (
                                 <button
-                                    className="btn"
-                                    onClick={resetSkillForm}
+                                    type="button"
+                                    className="world-skill-card__add-btn"
+                                    onClick={startCreateSkill}
                                     disabled={skillBusy}
                                 >
-                                    Cancel
+                                    <span className="world-skill-card__plus" aria-hidden="true">
+                                        +
+                                    </span>
+                                    <span>New world skill</span>
                                 </button>
                             )}
                         </div>
-                    </div>
-                    <div className="list" style={{ maxHeight: 240, overflow: "auto", gap: 8 }}>
-                        {worldSkills.length === 0 ? (
-                            <div className="text-muted">No world skills configured yet.</div>
-                        ) : (
-                            worldSkills.map((skill) => (
-                                <div
-                                    key={skill.id}
-                                    className="row"
-                                    style={{
-                                        justifyContent: "space-between",
-                                        alignItems: "center",
-                                        gap: 8,
-                                        flexWrap: "wrap",
-                                    }}
-                                >
-                                    <div className="row" style={{ gap: 8, alignItems: "center" }}>
-                                        <strong>{skill.label}</strong>
-                                        <span className="pill light">{skill.ability}</span>
-                                    </div>
-                                    <div className="row" style={{ gap: 6 }}>
-                                        <button
-                                            className="btn"
-                                            onClick={() => startEditSkill(skill)}
-                                            disabled={skillBusy || skillRowBusy === skill.id}
-                                        >
-                                            Edit
-                                        </button>
-                                        <button
-                                            className="btn"
-                                            onClick={() => handleSkillDelete(skill.id)}
-                                            disabled={skillRowBusy === skill.id || skillBusy}
-                                        >
-                                            {skillRowBusy === skill.id ? "…" : "Remove"}
-                                        </button>
-                                    </div>
-                                </div>
-                            ))
-                        )}
                     </div>
                 </div>
             )}
