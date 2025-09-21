@@ -2481,6 +2481,10 @@ function DemonTab({ game, me, onUpdate }) {
 
     const save = async () => {
         if (!canEdit) return;
+        if (!editing && !isDM) {
+            alert("Only the DM can add new demons.");
+            return;
+        }
         if (!name.trim()) return alert("Enter a demon name");
         const payload = {
             name,
@@ -2509,7 +2513,7 @@ function DemonTab({ game, me, onUpdate }) {
     };
 
     const remove = async (id) => {
-        if (!canEdit) return;
+        if (!isDM) return;
         if (!confirm("Remove this demon from the pool?")) return;
         try {
             setBusyDelete(id);
@@ -2526,6 +2530,11 @@ function DemonTab({ game, me, onUpdate }) {
     // Debounced search
     const debounceRef = useRef(0);
     const runSearch = useCallback(async () => {
+        if (!isDM) {
+            setBusySearch(false);
+            setResults([]);
+            return;
+        }
         const term = q.trim();
         if (!term) {
             setResults([]);
@@ -2542,9 +2551,10 @@ function DemonTab({ game, me, onUpdate }) {
         } finally {
             if (debounceRef.current === ticket) setBusySearch(false);
         }
-    }, [q]);
+    }, [isDM, q]);
 
     const pick = async (slug) => {
+        if (!isDM) return;
         try {
             const p = await Personas.get(slug);
             setSelected(p);
@@ -2620,8 +2630,12 @@ function DemonTab({ game, me, onUpdate }) {
                     style={{ width: 100 }}
                 />
                 <div className="row" style={{ gap: 8 }}>
-                    <button className="btn" onClick={save} disabled={!canEdit || busySave}>
-                        {busySave ? "…" : editing ? "Save Demon" : "Add Demon"}
+                    <button
+                        className="btn"
+                        onClick={save}
+                        disabled={!canEdit || busySave || (!editing && !isDM)}
+                    >
+                        {busySave ? "…" : editing || !isDM ? "Save Demon" : "Add Demon"}
                     </button>
                     {editing && (
                         <button className="btn" onClick={resetForm} disabled={busySave}>
@@ -2685,33 +2699,41 @@ function DemonTab({ game, me, onUpdate }) {
             <div className="row" style={{ marginTop: 16, gap: 16, alignItems: "flex-start" }}>
                 <div className="col" style={{ flex: 1 }}>
                     <h4>Lookup Persona (Persona Compendium)</h4>
-                    <div className="row" style={{ gap: 8 }}>
-                        <input
-                            placeholder="Search name, e.g., jack frost"
-                            value={q}
-                            onChange={(e) => setQ(e.target.value)}
-                            onKeyDown={(e) => e.key === "Enter" && runSearch()}
-                        />
-                        <button className="btn" onClick={runSearch} disabled={busySearch}>
-                            {busySearch ? "…" : "Search"}
-                        </button>
-                    </div>
-
-                    <div className="list" style={{ maxHeight: 240, overflow: "auto", marginTop: 8 }}>
-                        {results.map((r) => (
-                            <div
-                                key={r.slug}
-                                className="row"
-                                style={{ justifyContent: "space-between", alignItems: "center" }}
-                            >
-                                <div>{r.name}</div>
-                                <button className="btn" onClick={() => pick(r.slug)}>Use</button>
+                    {isDM ? (
+                        <>
+                            <div className="row" style={{ gap: 8 }}>
+                                <input
+                                    placeholder="Search name, e.g., jack frost"
+                                    value={q}
+                                    onChange={(e) => setQ(e.target.value)}
+                                    onKeyDown={(e) => e.key === "Enter" && runSearch()}
+                                />
+                                <button className="btn" onClick={runSearch} disabled={busySearch}>
+                                    {busySearch ? "…" : "Search"}
+                                </button>
                             </div>
-                        ))}
-                        {results.length === 0 && (
-                            <div style={{ opacity: 0.7 }}>{busySearch ? "Searching…" : "No results yet."}</div>
-                        )}
-                    </div>
+
+                            <div className="list" style={{ maxHeight: 240, overflow: "auto", marginTop: 8 }}>
+                                {results.map((r) => (
+                                    <div
+                                        key={r.slug}
+                                        className="row"
+                                        style={{ justifyContent: "space-between", alignItems: "center" }}
+                                    >
+                                        <div>{r.name}</div>
+                                        <button className="btn" onClick={() => pick(r.slug)}>Use</button>
+                                    </div>
+                                ))}
+                                {results.length === 0 && (
+                                    <div style={{ opacity: 0.7 }}>{busySearch ? "Searching…" : "No results yet."}</div>
+                                )}
+                            </div>
+                        </>
+                    ) : (
+                        <p className="text-muted text-small" style={{ marginTop: 4 }}>
+                            Only the DM can search the compendium to add new demons.
+                        </p>
+                    )}
                 </div>
 
                 <div className="col" style={{ width: 360 }}>
@@ -2777,13 +2799,15 @@ function DemonTab({ game, me, onUpdate }) {
                                     <button className="btn" onClick={() => startEdit(d)} disabled={busySave}>
                                         Edit
                                     </button>
-                                    <button
-                                        className="btn"
-                                        onClick={() => remove(d.id)}
-                                        disabled={busyDelete === d.id}
-                                    >
-                                        {busyDelete === d.id ? "…" : "Remove"}
-                                    </button>
+                                    {isDM && (
+                                        <button
+                                            className="btn"
+                                            onClick={() => remove(d.id)}
+                                            disabled={busyDelete === d.id}
+                                        >
+                                            {busyDelete === d.id ? "…" : "Remove"}
+                                        </button>
+                                    )}
                                 </div>
                             )}
                         </div>
