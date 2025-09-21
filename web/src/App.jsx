@@ -166,24 +166,93 @@ function Center({ children }) {
 
 function InviteButton({ gameId }) {
     const [busy, setBusy] = useState(false);
+    const [feedback, setFeedback] = useState(null);
+
+    useEffect(() => {
+        if (!feedback) return undefined;
+        const timer = setTimeout(() => setFeedback(null), 8000);
+        return () => clearTimeout(timer);
+    }, [feedback]);
+
+    const copyToClipboard = useCallback(async (text) => {
+        try {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(text);
+                return true;
+            }
+        } catch (err) {
+            console.warn("Clipboard API failed", err);
+        }
+
+        try {
+            const area = document.createElement("textarea");
+            area.value = text;
+            area.setAttribute("readonly", "");
+            area.style.position = "absolute";
+            area.style.left = "-9999px";
+            document.body.appendChild(area);
+            area.select();
+            document.execCommand("copy");
+            document.body.removeChild(area);
+            return true;
+        } catch (err) {
+            console.warn("Fallback clipboard copy failed", err);
+            return false;
+        }
+    }, []);
+
     return (
-        <button
-            className="btn"
-            disabled={busy}
-            onClick={async () => {
-                try {
-                    setBusy(true);
-                    const code = await Games.invite(gameId);
-                    alert(`Invite code: ${code.code}\nURL: ${location.origin}${code.joinUrl}`);
-                } catch (e) {
-                    alert(e.message);
-                } finally {
-                    setBusy(false);
-                }
-            }}
-        >
-            {busy ? "…" : "Invite"}
-        </button>
+        <div className="invite-button">
+            <button
+                className="btn"
+                disabled={busy}
+                onClick={async () => {
+                    try {
+                        setBusy(true);
+                        const code = await Games.invite(gameId);
+                        const url = `${location.origin}${code.joinUrl}`;
+                        const copied = await copyToClipboard(
+                            `Join my campaign using invite code ${code.code}: ${url}`
+                        );
+                        setFeedback({
+                            code: code.code,
+                            url,
+                            copied,
+                        });
+                    } catch (e) {
+                        alert(e.message);
+                    } finally {
+                        setBusy(false);
+                    }
+                }}
+            >
+                {busy ? "…" : "Invite"}
+            </button>
+
+            {feedback && (
+                <div className="invite-feedback" role="status" aria-live="polite">
+                    <strong>
+                        {feedback.copied
+                            ? "Invite link copied to your clipboard"
+                            : "Invite ready to share"}
+                    </strong>
+                    <div className="invite-feedback__row">
+                        <span>Code:</span>
+                        <code>{feedback.code}</code>
+                    </div>
+                    <div className="invite-feedback__row">
+                        <span>Link:</span>
+                        <code>{feedback.url}</code>
+                    </div>
+                    {!feedback.copied && (
+                        <span className="invite-feedback__note">
+                            Copying may be blocked by your browser. You can manually copy the
+                            details above.
+                        </span>
+                    )}
+                </div>
+            )}
+        </div>
     );
 }
 
