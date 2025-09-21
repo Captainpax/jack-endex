@@ -498,6 +498,7 @@ function ItemsTab({ game, me, onUpdate }) {
     const [editing, setEditing] = useState(null);
     const [busySave, setBusySave] = useState(false);
     const [busyRow, setBusyRow] = useState(null);
+    const [selectedPlayerId, setSelectedPlayerId] = useState("");
     const gearTypes = ["weapon", "armor", "accessory"]; // types reserved for gear
 
     const isDM = game.dmId === me.id;
@@ -563,8 +564,39 @@ function ItemsTab({ game, me, onUpdate }) {
     const customItems = Array.isArray(game.items?.custom) ? game.items.custom : [];
     const libraryItems = [...customItems, ...itemList];
     const players = (game.players || []).filter(
-        (p) => (p?.role || '').toLowerCase() !== 'dm'
+        (p) => (p?.role || "").toLowerCase() !== "dm"
     );
+
+    const playerOptions = useMemo(
+        () =>
+            players.map((p, idx) => ({
+                data: p,
+                value: p.userId || `player-${idx}`,
+                label:
+                    p.character?.name?.trim() ||
+                    `Player ${p.userId?.slice?.(0, 6) || ""}` ||
+                    "Unnamed Player",
+            })),
+        [players]
+    );
+
+    useEffect(() => {
+        if (!isDM) {
+            setSelectedPlayerId("");
+            return;
+        }
+        setSelectedPlayerId((prev) => {
+            if (playerOptions.some((opt) => opt.value === prev)) return prev;
+            const next = playerOptions[0]?.value || "";
+            return prev === next ? prev : next;
+        });
+    }, [isDM, playerOptions]);
+
+    const visiblePlayers = isDM
+        ? playerOptions
+              .filter((opt) => selectedPlayerId && opt.value === selectedPlayerId)
+              .map((opt) => opt.data)
+        : players;
 
     return (
         <div className="col" style={{ display: "grid", gap: 16 }}>
@@ -672,15 +704,40 @@ function ItemsTab({ game, me, onUpdate }) {
 
             <div className="card">
                 <h3>Player Inventories</h3>
+                {isDM && players.length > 0 && (
+                    <div className="row" style={{ gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+                        <label htmlFor="player-inventory-picker" style={{ fontWeight: 600 }}>
+                            Select player:
+                        </label>
+                        <select
+                            id="player-inventory-picker"
+                            value={selectedPlayerId}
+                            onChange={(e) => setSelectedPlayerId(e.target.value)}
+                            style={{ minWidth: 200 }}
+                        >
+                            {!selectedPlayerId && <option value="">Choose a player…</option>}
+                            {playerOptions.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                )}
                 {players.length === 0 ? (
                     <div style={{ opacity: 0.7 }}>No players have joined yet.</div>
+                ) : visiblePlayers.length === 0 ? (
+                    <div style={{ opacity: 0.7 }}>Select a player to view their inventory.</div>
                 ) : (
                     <div className="list" style={{ gap: 12 }}>
-                        {players.map((p) => (
+                        {visiblePlayers.map((p) => (
                             <PlayerInventoryCard
                                 key={p.userId}
                                 player={p}
-                                canEdit={isDM || (game.permissions?.canEditItems && me.id === p.userId)}
+                                canEdit={
+                                    isDM ||
+                                    (game.permissions?.canEditItems && me.id === p.userId)
+                                }
                                 gameId={game.id}
                                 onUpdate={onUpdate}
                                 libraryItems={libraryItems}
