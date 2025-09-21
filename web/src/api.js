@@ -451,6 +451,10 @@ export const Personas = {
     get: (slug) => api(`/api/personas/${encodeURIComponent(slug)}`, { cache: 5000 }),
 };
 
+export const StoryLogs = {
+    fetch: () => api('/api/story-log'),
+};
+
 // ---------------- Helper: SSE (Server-Sent Events) ----------------
 // If you later expose real-time updates from the server, you can wire them here.
 /*
