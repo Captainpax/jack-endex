@@ -523,6 +523,7 @@ p  { margin: 0 0 .75rem; color: var(--text); }
 
 .text-muted { color: var(--muted); }
 .text-small { font-size: .85rem; line-height: 1.4; }
+.text-error { color: var(--danger); }
 
 .app-main__header-meta {
     display: grid;
@@ -801,11 +802,51 @@ input[readonly] {
     opacity: .85;
 }
 
+.input-error {
+    border-color: var(--danger);
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--danger) 35%, transparent);
+}
+
 label {
     font-size: 12px;
     color: var(--muted);
     font-weight: 600;
     letter-spacing: .2px;
+}
+
+.perm-toggle {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    transition: border-color var(--trans-fast), box-shadow var(--trans-fast);
+}
+
+.perm-toggle:hover {
+    border-color: var(--brand);
+    box-shadow: var(--focus);
+}
+
+.perm-toggle input {
+    margin-top: 4px;
+}
+
+.perm-toggle__text {
+    display: grid;
+    gap: 4px;
+}
+
+.perm-toggle__label {
+    font-weight: 600;
+    color: var(--text);
+}
+
+.perm-toggle.is-readonly {
+    opacity: .7;
+    cursor: not-allowed;
 }
 
 /* Images */
