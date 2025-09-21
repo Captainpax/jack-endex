@@ -91,6 +91,7 @@ async function loadEnvFiles() {
 await loadEnvFiles();
 const DB_PATH = path.join(__dirname, 'data', 'db.json');
 const ITEMS_PATH = path.join(__dirname, 'data', 'premade-items.json');
+const TXT_DOCS_PATH = path.join(__dirname, 'txtdocs');
 const INDEX_CANDIDATES = [
     path.join(__dirname, 'dist', 'index.html'),
     path.join(__dirname, 'public', 'index.html'),
@@ -154,7 +155,18 @@ function ensureInventoryItem(item) {
     return normalized;
 }
 
-const GEAR_SLOTS = ['weapon', 'armor', 'accessory'];
+const GEAR_SLOTS = [
+    'weapon',
+    'armor',
+    'accessory',
+    'slot4',
+    'slot5',
+    'slot6',
+    'slot7',
+    'slot8',
+    'slot9',
+    'slot10',
+];
 const ABILITY_CODES = new Set(['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']);
 
 const DEFAULT_WORLD_SKILLS = [
@@ -2978,10 +2990,28 @@ app.get('/api/items/premade', async (_req, res) => {
     }
 });
 
+app.get('/api/help/docs', async (_req, res) => {
+    try {
+        const entries = await fs.readdir(TXT_DOCS_PATH);
+        const docs = entries
+            .filter((name) => typeof name === 'string' && name.toLowerCase().endsWith('.txt'))
+            .sort((a, b) => a.localeCompare(b))
+            .map((name) => ({
+                name,
+                filename: name,
+                url: `/txtdocs/${encodeURIComponent(name)}`,
+            }));
+        res.json(docs);
+    } catch {
+        res.json([]);
+    }
+});
+
 // Persona proxy routes
 app.use('/api/personas', personas);
 
 // Static files (if built)
+app.use('/txtdocs', express.static(TXT_DOCS_PATH));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(path.join(__dirname, 'dist')));
 
