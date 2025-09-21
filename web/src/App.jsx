@@ -40,6 +40,11 @@ const DM_NAV = [
         description: "Track equipped slots",
     },
     {
+        key: "worldSkills",
+        label: "World Skills",
+        description: "Review party proficiencies",
+    },
+    {
         key: "demons",
         label: "Demon Codex",
         description: "Summoned allies and spirits",
@@ -76,6 +81,11 @@ const PLAYER_NAV = [
         key: "gear",
         label: "My Gear",
         description: "Weapons, armor, and accessories",
+    },
+    {
+        key: "worldSkills",
+        label: "World Skills",
+        description: "Ranks, modifiers, and totals",
     },
     {
         key: "demons",
@@ -981,6 +991,17 @@ function GameView({
 
                     {tab === "gear" && (
                         <GearTab
+                            game={game}
+                            me={me}
+                            onUpdate={async () => {
+                                const full = await Games.get(game.id);
+                                setActive(full);
+                            }}
+                        />
+                    )}
+
+                    {tab === "worldSkills" && (
+                        <WorldSkillsTab
                             game={game}
                             me={me}
                             onUpdate={async () => {
@@ -3002,6 +3023,536 @@ function StoryLogsTab() {
 }
 
 // ---------- Items ----------
+function WorldSkillsTab({ game, me, onUpdate }) {
+    const isDM = game.dmId === me.id;
+    const players = useMemo(
+        () =>
+            (game.players || []).filter(
+                (p) => (p?.role || "").toLowerCase() !== "dm"
+            ),
+        [game.players]
+    );
+
+    const playerOptions = useMemo(
+        () =>
+            players.map((p, idx) => ({
+                data: p,
+                value: p.userId || `player-${idx}`,
+                label:
+                    p.character?.name?.trim() ||
+                    p.username ||
+                    (p.userId ? `Player ${p.userId.slice(0, 6)}` : `Player ${idx + 1}`),
+            })),
+        [players]
+    );
+
+    const [selectedPlayerId, setSelectedPlayerId] = useState("");
+    const [saving, setSaving] = useState(false);
+
+    useEffect(() => {
+        if (!isDM) {
+            const self = playerOptions.find((opt) => opt.data?.userId === me.id);
+            setSelectedPlayerId(self ? self.value : "");
+            return;
+        }
+        setSelectedPlayerId((prev) => {
+            if (playerOptions.some((opt) => opt.value === prev)) return prev;
+            return playerOptions[0]?.value || "";
+        });
+    }, [isDM, me.id, playerOptions]);
+
+    const activePlayer = useMemo(() => {
+        if (playerOptions.length === 0) return null;
+        if (isDM) {
+            if (!selectedPlayerId) return null;
+            const match = playerOptions.find((opt) => opt.value === selectedPlayerId);
+            return match ? match.data : null;
+        }
+        const self = playerOptions.find((opt) => opt.data?.userId === me.id);
+        return self ? self.data : null;
+    }, [isDM, me.id, playerOptions, selectedPlayerId]);
+
+    const character = useMemo(
+        () => normalizeCharacter(activePlayer?.character),
+        [activePlayer?.character]
+    );
+
+    const [skills, setSkills] = useState(() => normalizeSkills(character.skills));
+
+    useEffect(() => {
+        setSkills(normalizeSkills(character.skills));
+    }, [character]);
+
+    const abilityMods = useMemo(() => {
+        return ABILITY_DEFS.reduce((acc, ability) => {
+            acc[ability.key] = abilityModifier(character.stats?.[ability.key]);
+            return acc;
+        }, {});
+    }, [character.stats]);
+
+    const abilitySummaries = useMemo(() => {
+        return ABILITY_DEFS.map((ability) => {
+            const raw = character.stats?.[ability.key];
+            const num = Number(raw);
+            const score =
+                raw === undefined || raw === null || raw === ""
+                    ? null
+                    : Number.isFinite(num)
+                    ? num
+                    : null;
+            return {
+                ...ability,
+                score,
+                modifier: abilityMods[ability.key] ?? 0,
+            };
+        });
+    }, [abilityMods, character.stats]);
+
+    const level = clampNonNegative(character.resources?.level) || 1;
+    const hp = clampNonNegative(character.resources?.hp);
+    const maxHP = clampNonNegative(character.resources?.maxHP);
+    const hpLabel = maxHP > 0 ? `${hp}/${maxHP}` : hp;
+    const resourceMode = character.resources?.useTP ? "TP" : "MP";
+    const mp = clampNonNegative(character.resources?.mp);
+    const maxMP = clampNonNegative(character.resources?.maxMP);
+    const tp = clampNonNegative(character.resources?.tp);
+    const initiativeBonus = Number(character.resources?.initiative) || 0;
+    const initiativeLabel = formatModifier(initiativeBonus);
+    const spRaw = character.resources?.sp;
+    const suggestedHP = Math.max(
+        1,
+        Math.ceil(
+            17 + (abilityMods.CON ?? 0) + (abilityMods.STR ?? 0) / 2
+        )
+    );
+    const suggestedMP = Math.max(
+        0,
+        Math.ceil(
+            17 + (abilityMods.INT ?? 0) + (abilityMods.WIS ?? 0) / 2
+        )
+    );
+    const suggestedTP = Math.max(
+        0,
+        Math.ceil(
+            7 + (abilityMods.DEX ?? 0) + (abilityMods.CON ?? 0) / 2
+        )
+    );
+    const suggestedSP = Math.max(
+        0,
+        Math.ceil((5 + (abilityMods.INT ?? 0)) * 2 + (abilityMods.CHA ?? 0))
+    );
+    const availableSP =
+        spRaw === undefined || spRaw === null || spRaw === ""
+            ? suggestedSP
+            : clampNonNegative(spRaw);
+    const maxSkillRank = Math.max(4, level * 2 + 2);
+
+    const skillRows = useMemo(() => {
+        return WORLD_SKILLS.map((skill) => {
+            const entry = skills?.[skill.key] || { ranks: 0, misc: 0 };
+            const ranks = clampNonNegative(entry.ranks);
+            const miscRaw = Number(entry.misc);
+            const misc = Number.isFinite(miscRaw) ? miscRaw : 0;
+            const abilityMod = abilityMods[skill.ability] ?? 0;
+            const total = abilityMod + ranks + misc;
+            return { ...skill, ranks, misc, abilityMod, total };
+        });
+    }, [abilityMods, skills]);
+
+    const spentSP = useMemo(
+        () => skillRows.reduce((sum, row) => sum + row.ranks, 0),
+        [skillRows]
+    );
+    const overSpent = spentSP > availableSP;
+    const rankIssues = useMemo(
+        () =>
+            skillRows
+                .filter((row) => row.ranks > maxSkillRank)
+                .map((row) => row.label),
+        [maxSkillRank, skillRows]
+    );
+
+    const saveRows = useMemo(() => {
+        const saves = character.resources?.saves || {};
+        return SAVE_DEFS.map((save) => {
+            const total = clampNonNegative(get(saves, `${save.key}.total`));
+            const abilityMod = abilityMods[save.ability] ?? 0;
+            const fallback = abilityMod;
+            return {
+                ...save,
+                abilityMod,
+                total: total || total === 0 ? total : fallback,
+            };
+        });
+    }, [abilityMods, character.resources?.saves]);
+
+    const updateSkill = useCallback((key, field, value) => {
+        setSkills((prev) => {
+            const next = { ...prev };
+            const current = { ...(next[key] || { ranks: 0, misc: 0 }) };
+            if (field === "ranks") {
+                current.ranks = clampNonNegative(value);
+            } else if (field === "misc") {
+                const num = Number(value);
+                current.misc = Number.isFinite(num) ? num : 0;
+            }
+            next[key] = current;
+            return next;
+        });
+    }, []);
+
+    const canEdit = !!activePlayer && (isDM || (game.permissions?.canEditStats && activePlayer.userId === me.id));
+    const disableInputs = !canEdit || saving;
+
+    const combatStats = useMemo(() => {
+        const resourceDisplay =
+            resourceMode === "TP"
+                ? String(tp)
+                : maxMP > 0
+                ? `${mp}/${maxMP}`
+                : String(mp);
+        return [
+            { key: "level", label: "Level", value: level },
+            {
+                key: "hp",
+                label: "HP",
+                value: hpLabel,
+                meta: `Suggested ${suggestedHP}`,
+            },
+            {
+                key: "resource",
+                label: resourceMode === "TP" ? "TP" : "MP",
+                value: resourceDisplay,
+                meta:
+                    resourceMode === "TP"
+                        ? `Suggested ${suggestedTP}`
+                        : `Suggested ${suggestedMP}`,
+            },
+            {
+                key: "sp",
+                label: "SP",
+                value: availableSP,
+                meta: `Suggested ${suggestedSP}`,
+            },
+            { key: "init", label: "Initiative", value: initiativeLabel },
+        ];
+    }, [
+        availableSP,
+        hpLabel,
+        initiativeLabel,
+        level,
+        maxMP,
+        mp,
+        resourceMode,
+        suggestedHP,
+        suggestedMP,
+        suggestedSP,
+        suggestedTP,
+        tp,
+    ]);
+
+    const summaryBoxStyle = {
+        border: "1px solid var(--border)",
+        borderRadius: "var(--radius-sm)",
+        padding: "8px 10px",
+        background: "var(--surface-2)",
+        minWidth: 120,
+    };
+
+    const playerLabel = activePlayer
+        ? activePlayer.character?.name?.trim() ||
+          activePlayer.username ||
+          "Unnamed Adventurer"
+        : "";
+
+    const handleSave = useCallback(async () => {
+        if (!activePlayer || saving) return;
+        if (isDM && !activePlayer.userId) {
+            alert("This player slot is not linked to a user yet.");
+            return;
+        }
+        try {
+            setSaving(true);
+            const base = normalizeCharacter(activePlayer.character);
+            const nextCharacter = deepClone(base);
+            nextCharacter.skills = normalizeSkills(skills);
+            if (isDM && activePlayer.userId && activePlayer.userId !== me.id) {
+                await Games.saveCharacter(game.id, {
+                    userId: activePlayer.userId,
+                    character: nextCharacter,
+                });
+            } else {
+                await Games.saveCharacter(game.id, nextCharacter);
+            }
+            await onUpdate?.();
+        } catch (e) {
+            alert(e.message || "Failed to save skills");
+        } finally {
+            setSaving(false);
+        }
+    }, [activePlayer, game.id, isDM, me.id, onUpdate, saving, skills]);
+
+    return (
+        <div className="col" style={{ display: "grid", gap: 16 }}>
+            <div className="card" style={{ display: "grid", gap: 16 }}>
+                <div
+                    className="row"
+                    style={{
+                        justifyContent: "space-between",
+                        alignItems: "flex-start",
+                        gap: 12,
+                        flexWrap: "wrap",
+                    }}
+                >
+                    <div>
+                        <h3>World Skill Planner</h3>
+                        <p className="text-muted text-small">
+                            Ranks automatically include ability modifiers and combat
+                            saves for quick reference.
+                        </p>
+                    </div>
+                    {isDM && playerOptions.length > 0 && (
+                        <div
+                            className="row"
+                            style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}
+                        >
+                            <label
+                                htmlFor="world-skill-player-picker"
+                                style={{ fontWeight: 600 }}
+                            >
+                                Select player:
+                            </label>
+                            <select
+                                id="world-skill-player-picker"
+                                value={selectedPlayerId}
+                                onChange={(e) => setSelectedPlayerId(e.target.value)}
+                                style={{ minWidth: 200 }}
+                            >
+                                {!selectedPlayerId && (
+                                    <option value="">Choose a player…</option>
+                                )}
+                                {playerOptions.map((opt) => (
+                                    <option key={opt.value} value={opt.value}>
+                                        {opt.label}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+                </div>
+
+                {playerOptions.length === 0 ? (
+                    <div className="text-muted">No players have joined yet.</div>
+                ) : !activePlayer ? (
+                    <div className="text-muted">
+                        {isDM
+                            ? "Select a player to review their world skills."
+                            : "No character data available yet."}
+                    </div>
+                ) : (
+                    <>
+                        <div
+                            className="row"
+                            style={{
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                gap: 12,
+                                flexWrap: "wrap",
+                            }}
+                        >
+                            <div>
+                                <h4 style={{ margin: 0 }}>{playerLabel}</h4>
+                                <span className="text-muted text-small">
+                                    Level {level} · {resourceMode === "TP" ? "TP" : "MP"} mode
+                                </span>
+                            </div>
+                            <div
+                                className={`sp-summary${overSpent ? " warn" : ""}`}
+                                style={{ margin: 0 }}
+                            >
+                                <span>SP spent: {spentSP}</span>
+                                <span>Available: {availableSP}</span>
+                                <span>Max rank: {maxSkillRank}</span>
+                                {rankIssues.length > 0 && (
+                                    <span className="sp-summary__warning">
+                                        Over cap: {rankIssues.join(", ")}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+
+                        <div
+                            className="row"
+                            style={{ gap: 12, flexWrap: "wrap", alignItems: "stretch" }}
+                        >
+                            {combatStats.map((stat) => (
+                                <div
+                                    key={stat.key}
+                                    style={{ ...summaryBoxStyle, minWidth: 110 }}
+                                >
+                                    <span
+                                        className="text-small"
+                                        style={{ color: "var(--muted)" }}
+                                    >
+                                        {stat.label}
+                                    </span>
+                                    <strong style={{ fontSize: "1.1rem" }}>
+                                        {stat.value ?? "—"}
+                                    </strong>
+                                    {stat.meta && (
+                                        <span
+                                            className="text-small"
+                                            style={{ color: "var(--muted)" }}
+                                        >
+                                            {stat.meta}
+                                        </span>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+
+                        <div
+                            className="row"
+                            style={{ gap: 12, flexWrap: "wrap", alignItems: "stretch" }}
+                        >
+                            {abilitySummaries.map((ability) => (
+                                <div
+                                    key={ability.key}
+                                    style={{ ...summaryBoxStyle, minWidth: 140 }}
+                                >
+                                    <div
+                                        style={{
+                                            display: "flex",
+                                            justifyContent: "space-between",
+                                            alignItems: "center",
+                                            gap: 6,
+                                        }}
+                                    >
+                                        <span style={{ fontWeight: 600 }}>
+                                            {ability.key}
+                                        </span>
+                                        <span
+                                            className="text-small"
+                                            style={{ color: "var(--muted)" }}
+                                        >
+                                            {ability.label}
+                                        </span>
+                                    </div>
+                                    <strong style={{ fontSize: "1.2rem" }}>
+                                        {ability.score ?? "—"}
+                                    </strong>
+                                    <span className="text-small">
+                                        Mod {formatModifier(ability.modifier)}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="save-grid">
+                            {saveRows.map((save) => (
+                                <div key={save.key} className="save-card">
+                                    <div className="save-card__header">
+                                        <span>{save.label}</span>
+                                        <span className="pill light">
+                                            {save.ability} mod {formatModifier(save.abilityMod)}
+                                        </span>
+                                    </div>
+                                    <div
+                                        className="row"
+                                        style={{
+                                            justifyContent: "space-between",
+                                            alignItems: "center",
+                                            gap: 8,
+                                        }}
+                                    >
+                                        <span className="text-small">Total save</span>
+                                        <span className="skill-total">
+                                            {formatModifier(save.total)}
+                                        </span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="sheet-table-wrapper">
+                            <table className="sheet-table skill-table">
+                                <thead>
+                                    <tr>
+                                        <th>Skill</th>
+                                        <th>Ability</th>
+                                        <th>Ability mod</th>
+                                        <th>Ranks</th>
+                                        <th>Misc</th>
+                                        <th>Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {skillRows.map((row) => (
+                                        <tr key={row.key}>
+                                            <th scope="row">
+                                                <span className="skill-name">{row.label}</span>
+                                            </th>
+                                            <td>{row.ability}</td>
+                                            <td>
+                                                <span className="pill light">
+                                                    {formatModifier(row.abilityMod)}
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <MathField
+                                                    label="Ranks"
+                                                    value={row.ranks}
+                                                    onCommit={(val) =>
+                                                        updateSkill(row.key, "ranks", val)
+                                                    }
+                                                    className="math-inline"
+                                                    disabled={disableInputs}
+                                                />
+                                            </td>
+                                            <td>
+                                                <MathField
+                                                    label="Misc"
+                                                    value={row.misc}
+                                                    onCommit={(val) =>
+                                                        updateSkill(row.key, "misc", val)
+                                                    }
+                                                    className="math-inline"
+                                                    disabled={disableInputs}
+                                                />
+                                            </td>
+                                            <td>
+                                                <span className="skill-total">
+                                                    {formatModifier(row.total)}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div className="sheet-footer">
+                            {!canEdit && (
+                                <span className="text-muted text-small">
+                                    You have read-only access. Ask your DM for edit
+                                    permissions.
+                                </span>
+                            )}
+                            <button
+                                className="btn"
+                                disabled={disableInputs}
+                                onClick={handleSave}
+                            >
+                                {saving ? "Saving…" : "Save skill ranks"}
+                            </button>
+                        </div>
+                    </>
+                )}
+            </div>
+        </div>
+    );
+}
+
 function ItemsTab({ game, me, onUpdate }) {
     const [premade, setPremade] = useState([]);
     const [form, setForm] = useState({ name: "", type: "", desc: "" });
