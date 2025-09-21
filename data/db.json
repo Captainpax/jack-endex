@@ -18,7 +18,8 @@
         {
           "userId": "2dbd5fc6-817d-4904-94c9-ff9de128c87d",
           "role": "dm",
-          "character": null
+          "character": null,
+          "inventory": []
         }
       ],
       "items": {

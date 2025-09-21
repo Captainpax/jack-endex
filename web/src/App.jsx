@@ -560,107 +560,345 @@ function ItemsTab({ game, me, onUpdate }) {
     const itemList = premade.filter(
         (it) => !gearTypes.some((t) => it.type?.toLowerCase().startsWith(t))
     );
+    const customItems = Array.isArray(game.items?.custom) ? game.items.custom : [];
+    const libraryItems = [...customItems, ...itemList];
+    const players = (game.players || []).filter(
+        (p) => (p?.role || '').toLowerCase() !== 'dm'
+    );
 
     return (
-        <div className="row" style={{ gap: 16 }}>
-            <div className="card" style={{ flex: 1 }}>
-                <h3>{editing ? "Edit Item" : "Custom Item"}</h3>
-                <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-                    <input
-                        placeholder="Name"
-                        value={form.name}
-                        onChange={(e) => setForm({ ...form, name: e.target.value })}
-                        style={{ flex: 1, minWidth: 180 }}
-                    />
-                    <input
-                        placeholder="Type"
-                        value={form.type}
-                        onChange={(e) => setForm({ ...form, type: e.target.value })}
-                        style={{ flex: 1, minWidth: 160 }}
-                    />
-                    <input
-                        placeholder="Description"
-                        value={form.desc}
-                        onChange={(e) => setForm({ ...form, desc: e.target.value })}
-                        style={{ flex: 2, minWidth: 220 }}
-                    />
-                    <div className="row" style={{ gap: 8 }}>
-                        <button
-                            className="btn"
-                            disabled={!form.name || busySave || !canEdit}
-                            onClick={() => save(form)}
-                        >
-                            {busySave ? "…" : editing ? "Save" : "Add"}
-                        </button>
-                        {editing && (
-                            <button className="btn" onClick={resetForm} disabled={busySave}>
-                                Cancel
+        <div className="col" style={{ display: "grid", gap: 16 }}>
+            <div className="row" style={{ gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
+                <div className="card" style={{ flex: 1, minWidth: 320 }}>
+                    <h3>{editing ? "Edit Item" : "Custom Item"}</h3>
+                    <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                        <input
+                            placeholder="Name"
+                            value={form.name}
+                            onChange={(e) => setForm({ ...form, name: e.target.value })}
+                            style={{ flex: 1, minWidth: 180 }}
+                        />
+                        <input
+                            placeholder="Type"
+                            value={form.type}
+                            onChange={(e) => setForm({ ...form, type: e.target.value })}
+                            style={{ flex: 1, minWidth: 160 }}
+                        />
+                        <input
+                            placeholder="Description"
+                            value={form.desc}
+                            onChange={(e) => setForm({ ...form, desc: e.target.value })}
+                            style={{ flex: 2, minWidth: 220 }}
+                        />
+                        <div className="row" style={{ gap: 8 }}>
+                            <button
+                                className="btn"
+                                disabled={!form.name || busySave || !canEdit}
+                                onClick={() => save(form)}
+                            >
+                                {busySave ? "…" : editing ? "Save" : "Add"}
                             </button>
+                            {editing && (
+                                <button className="btn" onClick={resetForm} disabled={busySave}>
+                                    Cancel
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
+                    <h4 style={{ marginTop: 16 }}>Game Custom Items</h4>
+                    <div className="list">
+                        {customItems.map((it) => (
+                            <div key={it.id} className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+                                <div>
+                                    <b>{it.name}</b> — {it.type || "—"}
+                                    <div style={{ opacity: 0.85, fontSize: 12 }}>{it.desc}</div>
+                                </div>
+                                {canEdit && (
+                                    <div className="row" style={{ gap: 6 }}>
+                                        <button
+                                            className="btn"
+                                            onClick={() => {
+                                                setEditing(it);
+                                                setForm({ name: it.name || "", type: it.type || "", desc: it.desc || "" });
+                                            }}
+                                            disabled={busySave}
+                                        >
+                                            Edit
+                                        </button>
+                                        <button
+                                            className="btn"
+                                            onClick={() => remove(it.id)}
+                                            disabled={busyRow === it.id}
+                                        >
+                                            {busyRow === it.id ? "…" : "Remove"}
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                        {customItems.length === 0 && (
+                            <div style={{ opacity: 0.7 }}>No custom items yet.</div>
                         )}
                     </div>
                 </div>
 
-                <h4 style={{ marginTop: 16 }}>Game Custom Items</h4>
-                <div className="list">
-                    {(game.items?.custom ?? []).map((it) => (
-                        <div key={it.id} className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-                            <div>
-                                <b>{it.name}</b> — {it.type || "—"}
-                                <div style={{ opacity: 0.85, fontSize: 12 }}>{it.desc}</div>
-                            </div>
-                            {canEdit && (
-                                <div className="row" style={{ gap: 6 }}>
-                                    <button
-                                        className="btn"
-                                        onClick={() => {
-                                            setEditing(it);
-                                            setForm({ name: it.name || "", type: it.type || "", desc: it.desc || "" });
-                                        }}
-                                        disabled={busySave}
-                                    >
-                                        Edit
-                                    </button>
-                                    <button
-                                        className="btn"
-                                        onClick={() => remove(it.id)}
-                                        disabled={busyRow === it.id}
-                                    >
-                                        {busyRow === it.id ? "…" : "Remove"}
-                                    </button>
+                <div className="card" style={{ width: 380 }}>
+                    <h3>Premade Items</h3>
+                    <div className="list" style={{ maxHeight: 420, overflow: "auto" }}>
+                        {itemList.map((it, idx) => (
+                            <div
+                                key={idx}
+                                className="row"
+                                style={{ justifyContent: "space-between", alignItems: "center" }}
+                            >
+                                <div>
+                                    <b>{it.name}</b> <span className="pill">{it.type || "—"}</span>
+                                    <div style={{ opacity: 0.8, fontSize: 12 }}>{it.desc}</div>
                                 </div>
-                            )}
-                        </div>
-                    ))}
-                    {(game.items?.custom ?? []).length === 0 && (
-                        <div style={{ opacity: 0.7 }}>No custom items yet.</div>
+                                <button
+                                    className="btn"
+                                    disabled={!canEdit || busySave}
+                                    onClick={() => save({ name: it.name, type: it.type, desc: it.desc })}
+                                >
+                                    Add
+                                </button>
+                            </div>
+                        ))}
+                        {itemList.length === 0 && <div style={{ opacity: 0.7 }}>No premade items.</div>}
+                    </div>
+                </div>
+            </div>
+
+            <div className="card">
+                <h3>Player Inventories</h3>
+                {players.length === 0 ? (
+                    <div style={{ opacity: 0.7 }}>No players have joined yet.</div>
+                ) : (
+                    <div className="list" style={{ gap: 12 }}>
+                        {players.map((p) => (
+                            <PlayerInventoryCard
+                                key={p.userId}
+                                player={p}
+                                canEdit={isDM || (game.permissions?.canEditItems && me.id === p.userId)}
+                                gameId={game.id}
+                                onUpdate={onUpdate}
+                                libraryItems={libraryItems}
+                            />
+                        ))}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems }) {
+    const [form, setForm] = useState({ name: "", type: "", desc: "", amount: "1" });
+    const [editing, setEditing] = useState(null);
+    const [busySave, setBusySave] = useState(false);
+    const [busyRow, setBusyRow] = useState(null);
+    const [picker, setPicker] = useState("");
+
+    const resetForm = useCallback(() => {
+        setEditing(null);
+        setForm({ name: "", type: "", desc: "", amount: "1" });
+        setPicker("");
+    }, []);
+
+    useEffect(() => {
+        resetForm();
+    }, [player.userId, resetForm]);
+
+    const inventory = Array.isArray(player.inventory) ? player.inventory : [];
+    const available = Array.isArray(libraryItems) ? libraryItems : [];
+
+    const parseAmount = useCallback((value, fallback) => {
+        if (value === undefined || value === null || value === "") return fallback;
+        const num = Number(value);
+        if (!Number.isFinite(num)) return fallback;
+        const rounded = Math.round(num);
+        return rounded < 0 ? 0 : rounded;
+    }, []);
+
+    const save = useCallback(async () => {
+        if (!canEdit) return;
+        const name = form.name.trim();
+        if (!name) return alert("Item needs a name");
+        const amount = parseAmount(form.amount, editing ? editing.amount ?? 0 : 1);
+        const payload = {
+            name,
+            type: form.type.trim(),
+            desc: form.desc.trim(),
+            amount: editing ? amount : (amount <= 0 ? 1 : amount),
+        };
+        try {
+            setBusySave(true);
+            if (editing) {
+                await Games.updatePlayerItem(gameId, player.userId, editing.id, payload);
+            } else {
+                await Games.addPlayerItem(gameId, player.userId, payload);
+            }
+            await onUpdate();
+            resetForm();
+        } catch (e) {
+            alert(e.message);
+        } finally {
+            setBusySave(false);
+        }
+    }, [canEdit, editing, form.amount, form.desc, form.name, form.type, gameId, onUpdate, parseAmount, player.userId, resetForm]);
+
+    const startEdit = useCallback((item) => {
+        setEditing(item);
+        setForm({
+            name: item.name || "",
+            type: item.type || "",
+            desc: item.desc || "",
+            amount: String(item.amount ?? 1),
+        });
+        setPicker("");
+    }, []);
+
+    const remove = useCallback(async (itemId) => {
+        if (!canEdit) return;
+        if (!confirm("Remove this item from the inventory?")) return;
+        try {
+            setBusyRow(itemId);
+            await Games.deletePlayerItem(gameId, player.userId, itemId);
+            if (editing?.id === itemId) resetForm();
+            await onUpdate();
+        } catch (e) {
+            alert(e.message);
+        } finally {
+            setBusyRow(null);
+        }
+    }, [canEdit, editing?.id, gameId, onUpdate, player.userId, resetForm]);
+
+    const playerLabel = player.character?.name || `Player ${player.userId?.slice?.(0, 6) || ""}`;
+    const subtitleParts = [];
+    if (player.character?.profile?.class) subtitleParts.push(player.character.profile.class);
+    if (player.character?.resources?.level) subtitleParts.push(`LV ${player.character.resources.level}`);
+    const subtitle = subtitleParts.join(" · ");
+
+    return (
+        <div className="card" style={{ padding: 12 }}>
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                <div>
+                    <div><b>{playerLabel || "Unnamed Player"}</b></div>
+                    {subtitle && <div style={{ opacity: 0.75, fontSize: 12 }}>{subtitle}</div>}
+                </div>
+                <span className="pill">Items: {inventory.length}</span>
+            </div>
+
+            {canEdit && available.length > 0 && (
+                <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                    <select
+                        value={picker}
+                        onChange={(e) => {
+                            const value = e.target.value;
+                            if (!value) {
+                                setPicker("");
+                                return;
+                            }
+                            const idx = Number(value);
+                            if (!Number.isNaN(idx) && available[idx]) {
+                                const chosen = available[idx];
+                                setForm((prev) => ({
+                                    ...prev,
+                                    name: chosen.name || "",
+                                    type: chosen.type || "",
+                                    desc: chosen.desc || "",
+                                }));
+                            }
+                            setPicker("");
+                        }}
+                    >
+                        <option value="">Copy from library…</option>
+                        {available.map((it, idx) => (
+                            <option key={`${it.id ?? it.name ?? idx}-${idx}`} value={String(idx)}>
+                                {(it.name || "Untitled").slice(0, 40)}
+                                {it.type ? ` · ${it.type}` : ""}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+            )}
+
+            <div className="row" style={{ gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                <input
+                    placeholder="Item name"
+                    value={form.name}
+                    onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+                    disabled={!canEdit}
+                    style={{ flex: 2, minWidth: 180 }}
+                />
+                <input
+                    placeholder="Type"
+                    value={form.type}
+                    onChange={(e) => setForm((prev) => ({ ...prev, type: e.target.value }))}
+                    disabled={!canEdit}
+                    style={{ flex: 1, minWidth: 140 }}
+                />
+                <input
+                    placeholder="Description"
+                    value={form.desc}
+                    onChange={(e) => setForm((prev) => ({ ...prev, desc: e.target.value }))}
+                    disabled={!canEdit}
+                    style={{ flex: 3, minWidth: 200 }}
+                />
+                <input
+                    type="number"
+                    placeholder="Qty"
+                    min={0}
+                    value={form.amount}
+                    onChange={(e) => setForm((prev) => ({ ...prev, amount: e.target.value }))}
+                    disabled={!canEdit}
+                    style={{ width: 80 }}
+                />
+                <div className="row" style={{ gap: 8 }}>
+                    <button className="btn" onClick={save} disabled={!canEdit || busySave || !form.name.trim()}>
+                        {busySave ? "…" : editing ? "Save" : "Give"}
+                    </button>
+                    {editing && (
+                        <button className="btn" onClick={resetForm} disabled={busySave}>
+                            Cancel
+                        </button>
                     )}
                 </div>
             </div>
 
-            <div className="card" style={{ width: 380 }}>
-                <h3>Premade Items</h3>
-                <div className="list" style={{ maxHeight: 420, overflow: "auto" }}>
-                    {itemList.map((it, idx) => (
-                        <div
-                            key={idx}
-                            className="row"
-                            style={{ justifyContent: "space-between", alignItems: "center" }}
-                        >
-                            <div>
-                                <b>{it.name}</b> <span className="pill">{it.type || "—"}</span>
-                                <div style={{ opacity: 0.8, fontSize: 12 }}>{it.desc}</div>
+            <div className="list" style={{ marginTop: 12 }}>
+                {inventory.map((it) => (
+                    <div key={it.id} className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                        <div style={{ flex: 1 }}>
+                            <div className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                                <b>{it.name}</b>
+                                {it.type && <span className="pill">{it.type}</span>}
+                                <span className="pill">x{it.amount ?? 0}</span>
                             </div>
-                            <button
-                                className="btn"
-                                disabled={!canEdit || busySave}
-                                onClick={() => save({ name: it.name, type: it.type, desc: it.desc })}
-                            >
-                                Add
-                            </button>
+                            {it.desc && (
+                                <div style={{ opacity: 0.75, fontSize: 12, marginTop: 4 }}>{it.desc}</div>
+                            )}
                         </div>
-                    ))}
-                    {itemList.length === 0 && <div style={{ opacity: 0.7 }}>No premade items.</div>}
-                </div>
+                        {canEdit && (
+                            <div className="row" style={{ gap: 6 }}>
+                                <button className="btn" onClick={() => startEdit(it)} disabled={busySave}>
+                                    Edit
+                                </button>
+                                <button
+                                    className="btn"
+                                    onClick={() => remove(it.id)}
+                                    disabled={busyRow === it.id}
+                                >
+                                    {busyRow === it.id ? "…" : "Remove"}
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                ))}
+                {inventory.length === 0 && (
+                    <div style={{ opacity: 0.7 }}>No items assigned.</div>
+                )}
             </div>
         </div>
     );
