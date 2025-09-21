@@ -462,6 +462,31 @@ app.post('/api/games/join/:code', requireAuth, async (req, res) => {
     res.json({ ok: true, gameId: game.id });
 });
 
+app.delete('/api/games/:id/players/:playerId', requireAuth, async (req, res) => {
+    const { id, playerId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const target = findPlayer(game, playerId);
+    if (!target) {
+        return res.status(404).json({ error: 'player_not_found' });
+    }
+    if ((target.role || '').toLowerCase() === 'dm') {
+        return res.status(400).json({ error: 'cannot_remove_dm' });
+    }
+
+    game.players = (game.players || []).filter((p) => p && p.userId !== playerId);
+    saveGame(db, game);
+    await writeDB(db);
+    res.json({ ok: true });
+});
+
 app.put('/api/games/:id/permissions', requireAuth, async (req, res) => {
     const { id } = req.params || {};
     const db = await readDB();

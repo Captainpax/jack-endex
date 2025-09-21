@@ -886,6 +886,24 @@ function GameView({
                                 const full = await Games.get(game.id);
                                 setActive(full);
                             }}
+                            onKickPlayer={
+                                isDM
+                                    ? async (playerId) => {
+                                          if (!playerId) return;
+                                          try {
+                                              if (dmSheetPlayerId === playerId) {
+                                                  setDmSheetPlayerId(null);
+                                              }
+                                              await Games.removePlayer(game.id, playerId);
+                                              const full = await Games.get(game.id);
+                                              setActive(full);
+                                              setGames(await Games.list());
+                                          } catch (e) {
+                                              alert(e.message);
+                                          }
+                                      }
+                                    : undefined
+                            }
                             onDelete={
                                 isDM
                                     ? async () => {
@@ -4260,21 +4278,32 @@ const PERMISSION_DEFAULTS = PERMISSION_OPTIONS.reduce((acc, option) => {
     return acc;
 }, {});
 
-function SettingsTab({ game, onUpdate, me, onDelete }) {
+function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer }) {
     const [perms, setPerms] = useState(() => ({
         ...PERMISSION_DEFAULTS,
         ...(game.permissions || {}),
     }));
     const [saving, setSaving] = useState(false);
+    const [removingId, setRemovingId] = useState(null);
 
     useEffect(() => {
         setPerms({
             ...PERMISSION_DEFAULTS,
             ...(game.permissions || {}),
         });
+        setRemovingId(null);
     }, [game.id, game.permissions]);
 
+    const removablePlayers = useMemo(
+        () =>
+            (game.players || []).filter(
+                (p) => (p?.role || "").toLowerCase() !== "dm"
+            ),
+        [game.players]
+    );
+
     const isDM = game.dmId === me?.id;
+    const canKick = isDM && typeof onKickPlayer === "function";
     const canDelete = isDM && typeof onDelete === "function";
 
     const hasChanges = PERMISSION_OPTIONS.some(
@@ -4336,6 +4365,94 @@ function SettingsTab({ game, onUpdate, me, onDelete }) {
                     {saving ? "Saving…" : hasChanges ? "Save changes" : "Saved"}
                 </button>
             </div>
+
+            {canKick && (
+                <>
+                    <div className="divider" />
+                    <div className="col" style={{ gap: 12 }}>
+                        <h4>Campaign members</h4>
+                        <p style={{ color: "var(--muted)", marginTop: 0 }}>
+                            Remove players from the campaign if they should no longer have
+                            access.
+                        </p>
+                        <div className="list">
+                            {removablePlayers.length === 0 ? (
+                                <span className="text-muted text-small">
+                                    No players have joined yet.
+                                </span>
+                            ) : (
+                                removablePlayers.map((player, index) => {
+                                    const name =
+                                        player.character?.name?.trim() ||
+                                        player.username ||
+                                        `Player ${index + 1}`;
+                                    const subtitleParts = [];
+                                    if (player.username) {
+                                        subtitleParts.push(`@${player.username}`);
+                                    }
+                                    const charClass = player.character?.profile?.class;
+                                    if (charClass) subtitleParts.push(charClass);
+                                    const subtitle = subtitleParts.join(" · ");
+                                    const isBusy = removingId === player.userId;
+
+                                    return (
+                                        <div
+                                            key={player.userId || `player-${index}`}
+                                            className="row"
+                                            style={{
+                                                justifyContent: "space-between",
+                                                alignItems: "center",
+                                                gap: 12,
+                                            }}
+                                        >
+                                            <div className="col" style={{ gap: 2 }}>
+                                                <strong>{name}</strong>
+                                                {subtitle && (
+                                                    <span className="text-muted text-small">
+                                                        {subtitle}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <button
+                                                type="button"
+                                                className="btn danger btn-small"
+                                                disabled={removingId !== null}
+                                                onClick={async () => {
+                                                    if (!canKick || typeof onKickPlayer !== "function") {
+                                                        return;
+                                                    }
+                                                    if (!player?.userId) return;
+                                                    const confirmName =
+                                                        player.character?.name?.trim() ||
+                                                        player.username ||
+                                                        "this player";
+                                                    if (
+                                                        !confirm(
+                                                            `Remove ${confirmName} from the campaign? They will lose access to this game.`
+                                                        )
+                                                    ) {
+                                                        return;
+                                                    }
+                                                    try {
+                                                        setRemovingId(player.userId);
+                                                        await onKickPlayer(player.userId);
+                                                    } catch (e) {
+                                                        alert(e.message);
+                                                    } finally {
+                                                        setRemovingId(null);
+                                                    }
+                                                }}
+                                            >
+                                                {isBusy ? "Removing…" : "Remove"}
+                                            </button>
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
+                    </div>
+                </>
+            )}
 
             {canDelete && (
                 <>
