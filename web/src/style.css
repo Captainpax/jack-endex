@@ -731,6 +731,57 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     font-size: 0.85rem;
 }
 
+.story-logs__composer {
+    display: grid;
+    gap: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+    background: color-mix(in srgb, var(--surface) 90%, transparent);
+}
+
+.story-logs__composer-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.story-logs__composer select {
+    min-width: 160px;
+}
+
+.story-logs__composer textarea {
+    width: 100%;
+    min-height: 72px;
+    resize: vertical;
+}
+
+.story-logs__composer-footer {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+}
+
+.story-logs__composer-footer .btn {
+    margin-left: auto;
+}
+
+.story-logs__image-link {
+    display: inline-block;
+    max-width: 100%;
+}
+
+.story-logs__image {
+    display: block;
+    max-width: min(360px, 100%);
+    border-radius: var(--radius-sm);
+    border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+    box-shadow: 0 2px 8px color-mix(in srgb, black 8%, transparent);
+}
+
 .story-logs__message-footer {
     font-size: 0.85rem;
 }

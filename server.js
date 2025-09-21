@@ -9,10 +9,23 @@ import crypto from 'crypto';
 import personas from './routes/personas.routes.js';
 import { fileURLToPath } from 'url';
 import cors from 'cors';
-import { createWatcherFromEnv } from './discordWatcher.js';
+import { createDiscordWatcher } from './discordWatcher.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const loadedEnvKeys = new Set();
+const storyWatchers = new Map();
+
+/**
+ * Read the bot token configured for Discord synchronization.
+ * Falls back to legacy BOT_TOKEN if present.
+ *
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string|null}
+ */
+function getDiscordBotToken(env = process.env) {
+    const token = env.DISCORD_BOT_TOKEN || env.BOT_TOKEN;
+    return typeof token === 'string' && token.trim() ? token.trim() : null;
+}
 
 function parseEnvFile(content) {
     const entries = new Map();
@@ -83,14 +96,6 @@ for (const candidate of INDEX_CANDIDATES) {
     }
 }
 
-const discordWatcher = createWatcherFromEnv(process.env);
-if (discordWatcher.enabled) {
-    console.log('discord watcher: monitoring configured channel');
-    discordWatcher.start();
-} else {
-    console.log('discord watcher disabled: missing DISCORD_BOT_TOKEN or DISCORD_CHANNEL_ID');
-}
-
 // --- game helpers ---
 function ensureGameShape(game) {
     if (!game || typeof game !== 'object') return null;
@@ -121,6 +126,7 @@ function ensureGameShape(game) {
         };
     }
     if (!Array.isArray(game.invites)) game.invites = [];
+    game.story = ensureStoryConfig(game);
     return game;
 }
 
@@ -259,6 +265,302 @@ function ensureInventoryList(player) {
     return player.inventory;
 }
 
+/**
+ * Locate a user record by id.
+ *
+ * @param {{ users: Array<{ id: string, username: string }> }} db
+ * @param {string} userId
+ */
+function findUser(db, userId) {
+    return (db.users || []).find((u) => u && u.id === userId) || null;
+}
+
+/**
+ * Normalize incoming story configuration payloads.
+ *
+ * @param {any} body
+ * @param {ReturnType<typeof ensureGameShape>} game
+ */
+function readStoryConfigUpdate(body, game) {
+    const current = ensureStoryConfig(game);
+    const pollMsRaw = Number(body?.pollIntervalMs);
+    const allowedPlayers = new Set(
+        Array.isArray(game.players)
+            ? game.players.map((p) => (p && typeof p.userId === 'string' ? p.userId : null)).filter(Boolean)
+            : []
+    );
+
+    const scribeIds = Array.isArray(body?.scribeIds)
+        ? Array.from(
+              new Set(
+                  body.scribeIds
+                      .map((id) => parseUUID(id))
+                      .filter((id) => id && allowedPlayers.has(id))
+              )
+          )
+        : current.scribeIds;
+
+    return {
+        channelId: readSnowflake(body?.channelId),
+        guildId: readSnowflake(body?.guildId),
+        webhookUrl: readWebhookUrl(body?.webhookUrl),
+        allowPlayerPosts: !!body?.allowPlayerPosts,
+        pollIntervalMs: Number.isFinite(pollMsRaw)
+            ? Math.min(120_000, Math.max(5_000, Math.round(pollMsRaw)))
+            : current.pollIntervalMs,
+        scribeIds,
+    };
+}
+
+/**
+ * Trim and clamp story content to Discord limits.
+ *
+ * @param {unknown} input
+ */
+function sanitizeStoryContent(input) {
+    if (typeof input !== 'string') return '';
+    const trimmed = input.trim();
+    return trimmed.length > 2000 ? trimmed.slice(0, 2000) : trimmed;
+}
+
+/**
+ * Dispatch a payload to a Discord webhook.
+ *
+ * @param {string} url
+ * @param {{ content: string, username?: string, avatar_url?: string }} payload
+ */
+async function sendWebhookMessage(url, payload) {
+    const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Discord webhook error ${res.status}: ${text.slice(0, 200)}`);
+    }
+}
+
+/**
+ * Resolve a persona selection into a Discord username/avatar payload.
+ *
+ * @param {{ persona?: string, targetUserId?: string }} selection
+ * @param {{ db: any, game: ReturnType<typeof ensureGameShape>, actorId: string }} ctx
+ */
+function resolveStoryPersona(selection, { db, game, actorId }) {
+    const story = ensureStoryConfig(game);
+    const persona = typeof selection?.persona === 'string' ? selection.persona : 'self';
+    const actorIsDM = isDM(game, actorId);
+    const actorPlayer = findPlayer(game, actorId);
+    const actorUser = findUser(db, actorId);
+
+    const describePlayer = (player, user) => {
+        if (!player) return user?.username || 'Player';
+        const name = player.character?.name;
+        if (typeof name === 'string' && name.trim()) return name.trim();
+        return user?.username || `Player ${player.userId?.slice(0, 6) || ''}`;
+    };
+
+    if (persona === 'bot') {
+        if (!actorIsDM) throw new Error('persona_forbidden');
+        return { username: 'BOT' };
+    }
+
+    if (persona === 'dm') {
+        if (!actorIsDM) throw new Error('persona_forbidden');
+        return { username: 'Dungeon Master' };
+    }
+
+    if (persona === 'scribe') {
+        if (!actorIsDM && !story.scribeIds.includes(actorId)) {
+            throw new Error('persona_forbidden');
+        }
+        return { username: 'Scribe' };
+    }
+
+    if (persona === 'self') {
+        if (actorPlayer) {
+            return { username: describePlayer(actorPlayer, actorUser) };
+        }
+        if (actorIsDM) {
+            return { username: actorUser?.username || 'Dungeon Master' };
+        }
+        return { username: actorUser?.username || 'Player' };
+    }
+
+    if (persona === 'player') {
+        if (selection?.targetUserId) {
+            if (!actorIsDM) throw new Error('persona_forbidden');
+            const targetId = parseUUID(selection.targetUserId);
+            if (!targetId) throw new Error('invalid_target');
+            const targetPlayer = findPlayer(game, targetId);
+            if (!targetPlayer) throw new Error('invalid_target');
+            const targetUser = findUser(db, targetId);
+            return { username: describePlayer(targetPlayer, targetUser) };
+        }
+
+        if (actorIsDM) {
+            return { username: 'Player' };
+        }
+
+        if (actorPlayer) {
+            return { username: describePlayer(actorPlayer, actorUser) };
+        }
+    }
+
+    throw new Error('persona_forbidden');
+}
+
+/**
+ * Produce a sanitized story configuration for API responses.
+ *
+ * @param {ReturnType<typeof ensureStoryConfig>} story
+ * @param {{ includeSecrets?: boolean }} [options]
+ */
+function presentStoryConfig(story, { includeSecrets = false } = {}) {
+    const normalized = story && typeof story === 'object'
+        ? story
+        : {
+              channelId: '',
+              guildId: '',
+              webhookUrl: '',
+              allowPlayerPosts: false,
+              scribeIds: [],
+              pollIntervalMs: 15_000,
+          };
+    const output = {
+        channelId: normalized.channelId || '',
+        guildId: normalized.guildId || '',
+        allowPlayerPosts: !!normalized.allowPlayerPosts,
+        scribeIds: Array.isArray(normalized.scribeIds) ? [...normalized.scribeIds] : [],
+        pollIntervalMs: Number.isFinite(Number(normalized.pollIntervalMs))
+            ? Number(normalized.pollIntervalMs)
+            : 15_000,
+        webhookConfigured: !!normalized.webhookUrl,
+    };
+    if (includeSecrets) {
+        output.webhookUrl = normalized.webhookUrl || '';
+    }
+    return output;
+}
+
+/**
+ * Remove and stop a cached Discord watcher for the given game.
+ *
+ * @param {string} gameId
+ */
+function removeStoryWatcher(gameId) {
+    const existing = storyWatchers.get(gameId);
+    if (existing && existing.watcher && typeof existing.watcher.stop === 'function') {
+        try {
+            existing.watcher.stop();
+        } catch {
+            // ignore stop errors
+        }
+    }
+    storyWatchers.delete(gameId);
+}
+
+/**
+ * Ensure a watcher exists for the supplied game configuration.
+ *
+ * @param {ReturnType<typeof ensureGameShape>} game
+ * @returns {ReturnType<typeof createDiscordWatcher>|null}
+ */
+function getOrCreateStoryWatcher(game) {
+    const story = ensureStoryConfig(game);
+    const token = getDiscordBotToken();
+    if (!token || !story.channelId) {
+        removeStoryWatcher(game.id);
+        return null;
+    }
+
+    const signature = `${token}:${story.channelId}:${story.guildId || ''}:${story.pollIntervalMs}`;
+    const existing = storyWatchers.get(game.id);
+    if (existing && existing.signature === signature) {
+        return existing.watcher;
+    }
+
+    removeStoryWatcher(game.id);
+    const watcher = createDiscordWatcher({
+        token,
+        guildId: story.guildId || undefined,
+        channelId: story.channelId,
+        pollIntervalMs: story.pollIntervalMs,
+    });
+    if (watcher.enabled) {
+        watcher.start();
+        storyWatchers.set(game.id, { watcher, signature });
+        return watcher;
+    }
+    return null;
+}
+
+/**
+ * Build the story log snapshot for a game.
+ *
+ * @param {ReturnType<typeof ensureGameShape>} game
+ */
+function getStorySnapshot(game) {
+    const story = ensureStoryConfig(game);
+    const token = getDiscordBotToken();
+    if (!token) {
+        removeStoryWatcher(game.id);
+        return {
+            enabled: false,
+            status: {
+                enabled: false,
+                phase: 'missing_token',
+                error: 'Discord bot token missing on the server.',
+                pollIntervalMs: story.pollIntervalMs,
+                channel: null,
+            },
+            channel: null,
+            messages: [],
+        };
+    }
+
+    if (!story.channelId) {
+        removeStoryWatcher(game.id);
+        return {
+            enabled: false,
+            status: {
+                enabled: false,
+                phase: 'unconfigured',
+                error: 'No Discord channel configured for this campaign.',
+                pollIntervalMs: story.pollIntervalMs,
+                channel: null,
+            },
+            channel: null,
+            messages: [],
+        };
+    }
+
+    const watcher = getOrCreateStoryWatcher(game);
+    if (!watcher) {
+        return {
+            enabled: false,
+            status: {
+                enabled: false,
+                phase: 'configuring',
+                error: 'Discord watcher is not ready yet.',
+                pollIntervalMs: story.pollIntervalMs,
+                channel: null,
+            },
+            channel: null,
+            messages: [],
+        };
+    }
+
+    const status = watcher.getStatus();
+    return {
+        enabled: true,
+        status,
+        channel: status.channel || null,
+        messages: watcher.getMessages(),
+    };
+}
+
 function canEditInventory(game, actingUserId, targetUserId) {
     if (isDM(game, actingUserId)) return true;
     if (actingUserId !== targetUserId) return false;
@@ -311,6 +613,83 @@ function normalizeCount(value, fallback = 0) {
     if (!Number.isFinite(num)) return fallback;
     const rounded = Math.round(num);
     return rounded < 0 ? 0 : rounded;
+}
+
+/**
+ * Validate a Discord snowflake identifier.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+function readSnowflake(value) {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    if (!trimmed) return '';
+    return /^\d{5,25}$/.test(trimmed) ? trimmed : '';
+}
+
+/**
+ * Validate a Discord webhook URL. Supports discord.com and discordapp.com hosts.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+function readWebhookUrl(value) {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    if (!trimmed) return '';
+    try {
+        const url = new URL(trimmed);
+        const host = url.host.toLowerCase();
+        if (!host.endsWith('discord.com') && !host.endsWith('discordapp.com')) return '';
+        if (!url.pathname.startsWith('/api/webhooks/')) return '';
+        return url.toString();
+    } catch {
+        return '';
+    }
+}
+
+/**
+ * Ensure the story configuration is normalized on the game object.
+ *
+ * @param {any} game
+ * @returns {{ channelId: string, guildId: string, webhookUrl: string, allowPlayerPosts: boolean, scribeIds: string[], pollIntervalMs: number }}
+ */
+function ensureStoryConfig(game) {
+    const raw = game && typeof game.story === 'object' ? game.story : {};
+    const channelId = readSnowflake(raw.channelId);
+    const guildId = readSnowflake(raw.guildId);
+    const webhookUrl = readWebhookUrl(raw.webhookUrl);
+    const allowPlayerPosts = !!raw.allowPlayerPosts;
+    const pollMsRaw = Number(raw.pollIntervalMs);
+    const pollIntervalMs = Number.isFinite(pollMsRaw)
+        ? Math.min(120_000, Math.max(5_000, Math.round(pollMsRaw)))
+        : 15_000;
+    const allowedPlayers = new Set(
+        Array.isArray(game?.players)
+            ? game.players.map((p) => (p && typeof p.userId === 'string' ? p.userId : null)).filter(Boolean)
+            : []
+    );
+    const scribeIds = Array.isArray(raw.scribeIds)
+        ? Array.from(
+              new Set(
+                  raw.scribeIds
+                      .map((id) => parseUUID(id))
+                      .filter((id) => id && allowedPlayers.has(id))
+              )
+          )
+        : [];
+
+    const normalized = {
+        channelId,
+        guildId,
+        webhookUrl,
+        allowPlayerPosts,
+        scribeIds,
+        pollIntervalMs,
+    };
+    game.story = normalized;
+    return normalized;
 }
 
 const USERNAME_REGEX = /^[A-Za-z0-9_]{3,30}$/;
@@ -494,6 +873,14 @@ app.post('/api/games', requireAuth, async (req, res) => {
         demonPool: { max: 0, used: 0 },
         permissions: { canEditStats: false, canEditItems: false, canEditGear: false, canEditDemons: false },
         invites: [],
+        story: {
+            channelId: '',
+            guildId: '',
+            webhookUrl: '',
+            allowPlayerPosts: false,
+            scribeIds: [],
+            pollIntervalMs: 15_000,
+        },
     };
     db.games.push(game);
     await writeDB(db);
@@ -508,6 +895,8 @@ app.get('/api/games/:id', requireAuth, async (req, res) => {
         return res.status(404).json({ error: 'not_found' });
     }
 
+    const story = ensureStoryConfig(g);
+    const includeSecrets = isDM(g, req.session.userId);
     const out = {
         id: g.id,
         name: g.name,
@@ -519,6 +908,7 @@ app.get('/api/games/:id', requireAuth, async (req, res) => {
         demonPool: g.demonPool,
         permissions: g.permissions,
         invites: g.invites,
+        story: presentStoryConfig(story, { includeSecrets }),
     };
 
     res.json(out);
@@ -668,6 +1058,7 @@ app.delete('/api/games/:id', requireAuth, async (req, res) => {
     }
 
     const gameId = game.id;
+    removeStoryWatcher(gameId);
     db.games = (db.games || []).filter((g) => g && g.id !== gameId);
     await writeDB(db);
     res.json({ ok: true });
@@ -1286,20 +1677,98 @@ app.delete('/api/games/:id/demons/:demonId', requireAuth, async (req, res) => {
     res.json({ ok: true });
 });
 
-app.get('/api/story-log', requireAuth, (_req, res) => {
-    const status = discordWatcher.getStatus();
-    const messages = discordWatcher.getMessages();
+app.get('/api/games/:id/story-log', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
+    const snapshot = getStorySnapshot(game);
+    const story = ensureStoryConfig(game);
     res.json({
-        enabled: !!status.enabled,
-        status,
-        channel: status.channel,
-        pollIntervalMs: status.pollIntervalMs,
-        messages,
+        ...snapshot,
+        config: presentStoryConfig(story, { includeSecrets: false }),
         fetchedAt: new Date().toISOString(),
     });
 });
 
-// (the rest of your routes unchanged, but add the same style of defensive checks on g.players, etc.)
+app.put('/api/games/:id/story-config', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const update = readStoryConfigUpdate(req.body || {}, game);
+    game.story = { ...game.story, ...update };
+    ensureStoryConfig(game);
+    removeStoryWatcher(game.id);
+    getOrCreateStoryWatcher(game);
+    saveGame(db, game);
+    await writeDB(db);
+
+    res.json({
+        ok: true,
+        story: presentStoryConfig(game.story, { includeSecrets: true }),
+    });
+});
+
+app.post('/api/games/:id/story-log/messages', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
+    const story = ensureStoryConfig(game);
+    const actorId = req.session.userId;
+    const actorIsDM = isDM(game, actorId);
+    if (!actorIsDM && !story.allowPlayerPosts) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    if (!story.webhookUrl) {
+        return res.status(400).json({ error: 'not_configured' });
+    }
+
+    const content = sanitizeStoryContent(req.body?.content);
+    if (!content) {
+        return res.status(400).json({ error: 'empty_content' });
+    }
+
+    let persona;
+    try {
+        persona = resolveStoryPersona(req.body || {}, { db, game, actorId });
+    } catch (err) {
+        const message = err instanceof Error ? err.message : 'persona_forbidden';
+        if (message === 'invalid_target') {
+            return res.status(400).json({ error: 'invalid_target' });
+        }
+        return res.status(403).json({ error: 'persona_forbidden' });
+    }
+
+    try {
+        await sendWebhookMessage(story.webhookUrl, {
+            content,
+            username: persona.username,
+            avatar_url: persona.avatarUrl || undefined,
+        });
+    } catch (err) {
+        const message = err instanceof Error ? err.message : 'webhook_error';
+        return res.status(502).json({ error: 'webhook_error', message });
+    }
+
+    getOrCreateStoryWatcher(game);
+
+    res.status(201).json({ ok: true });
+});
 
 // --- Items ---
 app.get('/api/items/premade', async (_req, res) => {

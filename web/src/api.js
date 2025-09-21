@@ -452,7 +452,47 @@ export const Personas = {
 };
 
 export const StoryLogs = {
-    fetch: () => api('/api/story-log'),
+    /**
+     * Fetch the latest Discord story snapshot for the supplied campaign.
+     *
+     * @param {string} gameId
+     * @returns {Promise<any>}
+     */
+    fetch: (gameId) => api(`/api/games/${encodeURIComponent(gameId)}/story-log`),
+
+    /**
+     * Post a message to the campaign's configured Discord webhook.
+     * The payload mirrors the server's persona selection schema.
+     *
+     * @param {string} gameId
+     * @param {{ persona?: string, targetUserId?: string, content: string }} payload
+     * @returns {Promise<any>}
+     */
+    post: (gameId, payload) =>
+        api(`/api/games/${encodeURIComponent(gameId)}/story-log/messages`, {
+            method: 'POST',
+            body: payload,
+        }),
+
+    /**
+     * Update the Discord story configuration for a campaign.
+     *
+     * @param {string} gameId
+     * @param {{
+     *   channelId?: string,
+     *   guildId?: string,
+     *   webhookUrl?: string,
+     *   allowPlayerPosts?: boolean,
+     *   scribeIds?: string[],
+     *   pollIntervalMs?: number
+     * }} payload
+     * @returns {Promise<any>}
+     */
+    configure: (gameId, payload) =>
+        api(`/api/games/${encodeURIComponent(gameId)}/story-config`, {
+            method: 'PUT',
+            body: payload,
+        }),
 };
 
 // ---------------- Helper: SSE (Server-Sent Events) ----------------
