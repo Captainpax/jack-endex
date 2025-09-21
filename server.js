@@ -17,7 +17,13 @@ const ITEMS_PATH = path.join(__dirname, 'data', 'premade-items.json');
 // --- game helpers ---
 function ensureGameShape(game) {
     if (!game || typeof game !== 'object') return null;
-    game.players = Array.isArray(game.players) ? game.players : [];
+    if (Array.isArray(game.players)) {
+        game.players = game.players
+            .map((p) => ensurePlayerShape(p))
+            .filter(Boolean);
+    } else {
+        game.players = [];
+    }
     if (!game.name) game.name = 'Untitled Game';
     if (!game.items || typeof game.items !== 'object') game.items = { custom: [] };
     if (!Array.isArray(game.items.custom)) game.items.custom = [];
@@ -39,6 +45,31 @@ function ensureGameShape(game) {
     }
     if (!Array.isArray(game.invites)) game.invites = [];
     return game;
+}
+
+function ensureInventoryItem(item) {
+    if (!item || typeof item !== 'object') return null;
+    const normalized = {
+        id: typeof item.id === 'string' && item.id ? item.id : uuid(),
+        name: sanitizeText(item.name),
+        type: sanitizeText(item.type),
+        desc: sanitizeText(item.desc),
+        amount: normalizeCount(item.amount, 0),
+    };
+    return normalized;
+}
+
+function ensurePlayerShape(player) {
+    if (!player || typeof player !== 'object') return null;
+    const out = { ...player };
+    out.role = typeof out.role === 'string' ? out.role : 'player';
+    if (out.character === undefined) out.character = null;
+    if (Array.isArray(out.inventory)) {
+        out.inventory = out.inventory.map((item) => ensureInventoryItem(item)).filter(Boolean);
+    } else {
+        out.inventory = [];
+    }
+    return out;
 }
 
 function getGame(db, id) {
@@ -71,6 +102,22 @@ function ensureCustomList(obj) {
     return obj.custom;
 }
 
+function findPlayer(game, userId) {
+    return (game.players || []).find((p) => p && p.userId === userId);
+}
+
+function ensureInventoryList(player) {
+    if (!player || typeof player !== 'object') return [];
+    if (!Array.isArray(player.inventory)) player.inventory = [];
+    return player.inventory;
+}
+
+function canEditInventory(game, actingUserId, targetUserId) {
+    if (isDM(game, actingUserId)) return true;
+    if (actingUserId !== targetUserId) return false;
+    return !!game.permissions?.canEditItems;
+}
+
 function generateInviteCode(existing) {
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     let code = '';
@@ -84,6 +131,14 @@ function generateInviteCode(existing) {
 function sanitizeText(value) {
     if (value == null) return '';
     return String(value).slice(0, 500);
+}
+
+function normalizeCount(value, fallback = 0) {
+    if (value === undefined || value === null || value === '') return fallback;
+    const num = Number(value);
+    if (!Number.isFinite(num)) return fallback;
+    const rounded = Math.round(num);
+    return rounded < 0 ? 0 : rounded;
 }
 
 // --- helpers ---
@@ -202,7 +257,7 @@ app.post('/api/games', requireAuth, async (req, res) => {
         id: uuid(),
         name,
         dmId: req.session.userId,
-        players: [{ userId: req.session.userId, role: 'dm', character: null }],
+        players: [{ userId: req.session.userId, role: 'dm', character: null, inventory: [] }],
         items: { custom: [] },
         gear: { custom: [] },
         demons: [],
@@ -275,7 +330,7 @@ app.post('/api/games/join/:code', requireAuth, async (req, res) => {
     if (!game) return res.status(404).json({ error: 'not_found' });
 
     if (!isMember(game, req.session.userId)) {
-        game.players.push({ userId: req.session.userId, role: 'player', character: null });
+        game.players.push({ userId: req.session.userId, role: 'player', character: null, inventory: [] });
     }
 
     game.invites = game.invites.map((inv) => inv && inv.code === code
@@ -406,6 +461,122 @@ app.delete('/api/games/:id/items/custom/:itemId', requireAuth, async (req, res) 
     const list = ensureCustomList(game.items);
     const next = list.filter((it) => it && it.id !== itemId);
     game.items.custom = next;
+    saveGame(db, game);
+    await writeDB(db);
+    res.json({ ok: true });
+});
+
+app.post('/api/games/:id/players/:playerId/items', requireAuth, async (req, res) => {
+    const { id, playerId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
+    const target = findPlayer(game, playerId);
+    if (!target) return res.status(404).json({ error: 'player_not_found' });
+    if ((target.role || '').toLowerCase() === 'dm') {
+        return res.status(400).json({ error: 'dm_has_no_inventory' });
+    }
+
+    const actor = req.session.userId;
+    if (!canEditInventory(game, actor, playerId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const payload = req.body?.item || req.body || {};
+    const name = sanitizeText(payload.name).trim();
+    if (!name) return res.status(400).json({ error: 'missing name' });
+    const type = sanitizeText(payload.type).trim();
+    const desc = sanitizeText(payload.desc);
+    const amountRaw = normalizeCount(payload.amount ?? payload.qty, 1);
+    const amount = amountRaw <= 0 ? 1 : amountRaw;
+
+    const entry = {
+        id: uuid(),
+        name,
+        type,
+        desc,
+        amount,
+    };
+
+    const list = ensureInventoryList(target);
+    list.push(entry);
+    saveGame(db, game);
+    await writeDB(db);
+    res.json(entry);
+});
+
+app.put('/api/games/:id/players/:playerId/items/:itemId', requireAuth, async (req, res) => {
+    const { id, playerId, itemId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
+    const target = findPlayer(game, playerId);
+    if (!target) return res.status(404).json({ error: 'player_not_found' });
+    if ((target.role || '').toLowerCase() === 'dm') {
+        return res.status(400).json({ error: 'dm_has_no_inventory' });
+    }
+
+    const actor = req.session.userId;
+    if (!canEditInventory(game, actor, playerId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const list = ensureInventoryList(target);
+    const entry = list.find((it) => it && it.id === itemId);
+    if (!entry) return res.status(404).json({ error: 'item_not_found' });
+
+    const payload = req.body?.item || req.body || {};
+    if (Object.prototype.hasOwnProperty.call(payload, 'name')) {
+        const name = sanitizeText(payload.name).trim();
+        if (!name) return res.status(400).json({ error: 'missing name' });
+        entry.name = name;
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'type')) {
+        entry.type = sanitizeText(payload.type).trim();
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'desc')) {
+        entry.desc = sanitizeText(payload.desc);
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'amount') || Object.prototype.hasOwnProperty.call(payload, 'qty')) {
+        entry.amount = normalizeCount(payload.amount ?? payload.qty, entry.amount);
+    }
+
+    saveGame(db, game);
+    await writeDB(db);
+    res.json(entry);
+});
+
+app.delete('/api/games/:id/players/:playerId/items/:itemId', requireAuth, async (req, res) => {
+    const { id, playerId, itemId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
+    const target = findPlayer(game, playerId);
+    if (!target) return res.status(404).json({ error: 'player_not_found' });
+    if ((target.role || '').toLowerCase() === 'dm') {
+        return res.status(400).json({ error: 'dm_has_no_inventory' });
+    }
+
+    const actor = req.session.userId;
+    if (!canEditInventory(game, actor, playerId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const list = ensureInventoryList(target);
+    const next = list.filter((it) => it && it.id !== itemId);
+    if (next.length === list.length) {
+        return res.status(404).json({ error: 'item_not_found' });
+    }
+    target.inventory = next;
     saveGame(db, game);
     await writeDB(db);
     res.json({ ok: true });
