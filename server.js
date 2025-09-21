@@ -142,6 +142,27 @@ function ensureGameShape(game) {
     return game;
 }
 
+function presentGame(game, { includeSecrets = false } = {}) {
+    const normalized = ensureGameShape(game);
+    if (!normalized) return null;
+    const story = ensureStoryConfig(normalized);
+    const worldSkills = ensureWorldSkills(normalized);
+    return {
+        id: normalized.id,
+        name: normalized.name,
+        dmId: normalized.dmId,
+        players: normalized.players,
+        items: normalized.items,
+        gear: normalized.gear,
+        demons: normalized.demons,
+        demonPool: normalized.demonPool,
+        permissions: normalized.permissions,
+        invites: normalized.invites,
+        story: presentStoryConfig(story, { includeSecrets }),
+        worldSkills,
+    };
+}
+
 function ensureInventoryItem(item) {
     if (!item || typeof item !== 'object') return null;
     const normalized = {
@@ -1965,9 +1986,10 @@ app.post('/api/games', requireAuth, async (req, res) => {
             pollIntervalMs: 15_000,
         },
     };
+    ensureWorldSkills(game);
     db.games.push(game);
     await writeDB(db);
-    res.json(game);
+    res.json(presentGame(game, { includeSecrets: true }));
 });
 
 app.get('/api/games/:id', requireAuth, async (req, res) => {
@@ -1978,23 +2000,8 @@ app.get('/api/games/:id', requireAuth, async (req, res) => {
         return res.status(404).json({ error: 'not_found' });
     }
 
-    const story = ensureStoryConfig(g);
     const includeSecrets = isDM(g, req.session.userId);
-    const out = {
-        id: g.id,
-        name: g.name,
-        dmId: g.dmId,
-        players: g.players,
-        items: g.items,
-        gear: g.gear,
-        demons: g.demons,
-        demonPool: g.demonPool,
-        permissions: g.permissions,
-        invites: g.invites,
-        story: presentStoryConfig(story, { includeSecrets }),
-    };
-
-    res.json(out);
+    res.json(presentGame(g, { includeSecrets }));
 });
 
 app.post('/api/games/:id/invites', requireAuth, async (req, res) => {
