@@ -1,6 +1,8 @@
 // --- FILE: web/src/App.jsx ---
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Auth, Games, Items, Personas, StoryLogs, onApiActivity } from "./api";
+
+const EMPTY_ARRAY = Object.freeze([]);
 
 const DM_NAV = [
     {
@@ -87,6 +89,334 @@ const PLAYER_NAV = [
         description: "Catch up on the Discord channel",
     },
 ];
+
+const RealtimeContext = createContext(null);
+
+function useRealtimeConnection({ gameId, refreshGame }) {
+    const [connectionState, setConnectionState] = useState("idle");
+    const socketRef = useRef(null);
+    const retryRef = useRef(null);
+    const storyHandlersRef = useRef(new Set());
+    const latestStoryRef = useRef(null);
+    const pendingPersonaRef = useRef(new Map());
+    const [personaPrompts, setPersonaPrompts] = useState([]);
+    const [personaStatuses, setPersonaStatuses] = useState({});
+    const [tradeSessions, setTradeSessions] = useState({});
+
+    const sendMessage = useCallback((payload) => {
+        const ws = socketRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            throw new Error("not_connected");
+        }
+        ws.send(JSON.stringify(payload));
+    }, []);
+
+    const subscribeStory = useCallback(
+        (handler) => {
+            if (typeof handler !== "function") return () => {};
+            storyHandlersRef.current.add(handler);
+            if (latestStoryRef.current) {
+                try {
+                    handler(latestStoryRef.current);
+                } catch (err) {
+                    console.error("story handler error", err);
+                }
+            }
+            return () => {
+                storyHandlersRef.current.delete(handler);
+            };
+        },
+        []
+    );
+
+    const updatePersonaStatus = useCallback((message) => {
+        if (!message?.requestId) return;
+        setPersonaStatuses((prev) => ({
+            ...prev,
+            [message.requestId]: message,
+        }));
+        if (message.status && message.status !== "pending") {
+            setPersonaPrompts((prev) => prev.filter((entry) => entry.request.id !== message.requestId));
+        }
+    }, []);
+
+    const updateTradeSession = useCallback((trade, extras = {}) => {
+        if (!trade || !trade.id) return;
+        setTradeSessions((prev) => ({
+            ...prev,
+            [trade.id]: { ...trade, ...extras },
+        }));
+    }, []);
+
+    const removeTradeSession = useCallback((tradeId) => {
+        setTradeSessions((prev) => {
+            if (!prev[tradeId]) return prev;
+            const next = { ...prev };
+            delete next[tradeId];
+            return next;
+        });
+    }, []);
+
+    useEffect(() => {
+        if (!gameId || typeof window === "undefined") {
+            return () => {};
+        }
+
+        let cancelled = false;
+
+        const rejectPendingPersona = (reason) => {
+            for (const [, entry] of pendingPersonaRef.current) {
+                try {
+                    entry.reject(new Error(reason));
+                } catch (err) {
+                    console.error("persona request reject failed", err);
+                }
+            }
+            pendingPersonaRef.current.clear();
+        };
+
+        const handleMessage = (msg) => {
+            if (!msg || typeof msg !== "object") return;
+            switch (msg.type) {
+                case "welcome":
+                    setConnectionState("connected");
+                    break;
+                case "story:update":
+                    if (msg.gameId !== gameId) return;
+                    latestStoryRef.current = msg.snapshot;
+                    for (const handler of storyHandlersRef.current) {
+                        try {
+                            handler(msg.snapshot);
+                        } catch (err) {
+                            console.error("story listener error", err);
+                        }
+                    }
+                    break;
+                case "story:impersonation_prompt":
+                    if (msg.request?.gameId !== gameId) return;
+                    setPersonaPrompts((prev) => {
+                        const next = prev.filter((entry) => entry.request.id !== msg.request.id);
+                        next.push(msg);
+                        return next;
+                    });
+                    break;
+                case "story:impersonation_status":
+                    if (msg.gameId !== gameId) return;
+                    if (msg.nonce && pendingPersonaRef.current.has(msg.nonce)) {
+                        const pending = pendingPersonaRef.current.get(msg.nonce);
+                        pendingPersonaRef.current.delete(msg.nonce);
+                        try {
+                            pending.resolve(msg);
+                        } catch (err) {
+                            console.error("persona resolve error", err);
+                        }
+                    }
+                    updatePersonaStatus(msg);
+                    break;
+                case "trade:invite":
+                case "trade:active":
+                case "trade:update":
+                    if (msg.trade?.gameId !== gameId) return;
+                    updateTradeSession(msg.trade, { lastEvent: msg.type, reason: msg.reason || null, initiatedBy: msg.initiatedBy });
+                    break;
+                case "trade:cancelled":
+                case "trade:completed":
+                    if (msg.trade?.gameId !== gameId) return;
+                    updateTradeSession(msg.trade, { lastEvent: msg.type, reason: msg.reason || null });
+                    if (msg.type === "trade:completed" && typeof refreshGame === "function") {
+                        refreshGame().catch((err) => console.warn("trade refresh failed", err));
+                    }
+                    break;
+                case "trade:error":
+                    console.warn("Trade error", msg.error);
+                    break;
+                case "error":
+                    console.warn("Realtime error", msg.error);
+                    break;
+                default:
+                    break;
+            }
+        };
+
+        const connect = () => {
+            if (cancelled) return;
+            try {
+                const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+                const url = `${protocol}//${window.location.host}/ws`;
+                const ws = new WebSocket(url);
+                socketRef.current = ws;
+                setConnectionState("connecting");
+
+                ws.onopen = () => {
+                    if (cancelled) return;
+                    setConnectionState("connected");
+                    try {
+                        ws.send(JSON.stringify({ type: "subscribe", channel: "story", gameId }));
+                        ws.send(JSON.stringify({ type: "subscribe", channel: "trade", gameId }));
+                    } catch (err) {
+                        console.error("subscribe failed", err);
+                    }
+                };
+
+                ws.onmessage = (event) => {
+                    if (cancelled) return;
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleMessage(data);
+                    } catch (err) {
+                        console.error("Failed to parse realtime message", err);
+                    }
+                };
+
+                ws.onclose = () => {
+                    if (cancelled) return;
+                    setConnectionState("disconnected");
+                    socketRef.current = null;
+                    rejectPendingPersona("connection_closed");
+                    retryRef.current = window.setTimeout(connect, 2000);
+                };
+
+                ws.onerror = () => {
+                    ws.close();
+                };
+            } catch (err) {
+                console.error("Realtime connection failed", err);
+                retryRef.current = window.setTimeout(connect, 2000);
+            }
+        };
+
+        setPersonaPrompts([]);
+        setPersonaStatuses({});
+        setTradeSessions({});
+        latestStoryRef.current = null;
+        connect();
+
+        return () => {
+            cancelled = true;
+            if (retryRef.current) {
+                clearTimeout(retryRef.current);
+                retryRef.current = null;
+            }
+            const ws = socketRef.current;
+            if (ws) {
+                ws.close();
+            }
+            socketRef.current = null;
+            rejectPendingPersona("connection_closed");
+            setConnectionState("idle");
+            setPersonaPrompts([]);
+            setPersonaStatuses({});
+            setTradeSessions({});
+        };
+    }, [gameId, refreshGame, updatePersonaStatus, updateTradeSession]);
+
+    const requestPersona = useCallback(
+        (targetUserId, content) =>
+            new Promise((resolve, reject) => {
+                if (!targetUserId) {
+                    reject(new Error("missing_target"));
+                    return;
+                }
+                const ws = socketRef.current;
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    reject(new Error("not_connected"));
+                    return;
+                }
+                const nonce = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+                pendingPersonaRef.current.set(nonce, { resolve, reject });
+                try {
+                    sendMessage({
+                        type: "story.impersonation.request",
+                        gameId,
+                        targetUserId,
+                        content,
+                        nonce,
+                    });
+                } catch (err) {
+                    pendingPersonaRef.current.delete(nonce);
+                    reject(err);
+                }
+            }),
+        [gameId, sendMessage]
+    );
+
+    const respondPersona = useCallback(
+        (requestId, approve) => {
+            try {
+                sendMessage({ type: "story.impersonation.respond", requestId, approve });
+            } catch (err) {
+                console.error("Failed to respond to persona request", err);
+            }
+        },
+        [sendMessage]
+    );
+
+    const tradeActions = useMemo(
+        () => ({
+            start(partnerId, note) {
+                if (!partnerId) return;
+                try {
+                    sendMessage({ type: "trade.start", gameId, partnerId, note });
+                } catch (err) {
+                    console.error("trade.start failed", err);
+                }
+            },
+            respond(tradeId, accept) {
+                try {
+                    sendMessage({ type: "trade.respond", tradeId, accept });
+                } catch (err) {
+                    console.error("trade.respond failed", err);
+                }
+            },
+            updateOffer(tradeId, items) {
+                try {
+                    sendMessage({ type: "trade.update", tradeId, items });
+                } catch (err) {
+                    console.error("trade.update failed", err);
+                }
+            },
+            confirm(tradeId) {
+                try {
+                    sendMessage({ type: "trade.confirm", tradeId });
+                } catch (err) {
+                    console.error("trade.confirm failed", err);
+                }
+            },
+            unconfirm(tradeId) {
+                try {
+                    sendMessage({ type: "trade.unconfirm", tradeId });
+                } catch (err) {
+                    console.error("trade.unconfirm failed", err);
+                }
+            },
+            cancel(tradeId) {
+                try {
+                    sendMessage({ type: "trade.cancel", tradeId });
+                } catch (err) {
+                    console.error("trade.cancel failed", err);
+                }
+            },
+            dismiss(tradeId) {
+                removeTradeSession(tradeId);
+            },
+        }),
+        [gameId, removeTradeSession, sendMessage]
+    );
+
+    const tradeList = useMemo(() => Object.values(tradeSessions), [tradeSessions]);
+
+    return {
+        status: connectionState,
+        connected: connectionState === "connected",
+        subscribeStory,
+        requestPersona,
+        respondPersona,
+        personaPrompts,
+        personaStatuses,
+        tradeSessions: tradeList,
+        tradeActions,
+    };
+}
 
 const ABILITY_DEFS = [
     {
@@ -797,18 +1127,24 @@ function GameView({
         return pills;
     }, [campaignPlayers.length, demonCount, isDM, myEntry]);
 
+    const refreshGameData = useCallback(async () => {
+        if (!game?.id) return null;
+        const full = await Games.get(game.id);
+        setActive(full);
+        return full;
+    }, [game?.id, setActive]);
+
     const handleRefresh = useCallback(async () => {
         if (!game?.id) return;
         try {
             setRefreshBusy(true);
-            const full = await Games.get(game.id);
-            setActive(full);
+            await refreshGameData();
         } catch (e) {
             alert(e.message);
         } finally {
             setRefreshBusy(false);
         }
-    }, [game?.id, setActive]);
+    }, [game?.id, refreshGameData]);
 
     useEffect(() => {
         const handler = (evt) => {
@@ -833,12 +1169,15 @@ function GameView({
         return () => window.removeEventListener("keydown", handler);
     }, [handleRefresh, navItems, setTab]);
 
+    const realtime = useRealtimeConnection({ gameId: game.id, refreshGame: refreshGameData });
+
     return (
-        <div className="app-root">
-            <div className={`app-activity${apiBusy ? " is-active" : ""}`}>
-                <div className="app-activity__bar" />
-            </div>
-            <div className="app-shell">
+        <RealtimeContext.Provider value={realtime}>
+            <div className="app-root">
+                <div className={`app-activity${apiBusy ? " is-active" : ""}`}>
+                    <div className="app-activity__bar" />
+                </div>
+                <div className="app-shell">
             <aside className="app-sidebar">
                 <div className="sidebar__header">
                     <span className="sidebar__mode">
@@ -1067,8 +1406,11 @@ function GameView({
                     )}
                 </div>
             </main>
-        </div>
-    </div>
+                </div>
+                <PersonaPromptCenter realtime={realtime} />
+                <TradeOverlay game={game} me={me} realtime={realtime} />
+            </div>
+        </RealtimeContext.Provider>
     );
 }
 
@@ -3024,6 +3366,7 @@ function normalizeStorySettings(story) {
 function StoryLogsTab({ game, me }) {
     const gameId = game?.id || null;
     const isDM = game.dmId === me.id;
+    const realtime = useContext(RealtimeContext);
     const storyConfigFromGame = useMemo(
         () => normalizeStoryLogConfig(game?.story),
         [game?.story]
@@ -3043,10 +3386,12 @@ function StoryLogsTab({ game, me }) {
     const [sending, setSending] = useState(false);
     const [message, setMessage] = useState('');
     const [selectedPersona, setSelectedPersona] = useState('');
+    const [deletingId, setDeletingId] = useState(null);
     const fetchRef = useRef(false);
     const firstLoadRef = useRef(true);
     const pollMsRef = useRef(DEFAULT_STORY_POLL_MS);
     const previousGameIdRef = useRef(gameId);
+    const messagesRef = useRef(null);
 
     useEffect(() => {
         setData((prev) => ({
@@ -3077,6 +3422,29 @@ function StoryLogsTab({ game, me }) {
         setMessage('');
         setSelectedPersona('');
     }, [gameId, storyConfigFromGame]);
+
+    useEffect(() => {
+        if (!realtime) return undefined;
+        const unsubscribe = realtime.subscribeStory((snapshot) => {
+            if (!snapshot) return;
+            pollMsRef.current = snapshot.config?.pollIntervalMs || pollMsRef.current;
+            setData({
+                enabled: !!(snapshot?.enabled ?? snapshot?.status?.enabled),
+                status: snapshot?.status ?? null,
+                channel: snapshot?.channel ?? snapshot?.status?.channel ?? null,
+                messages: Array.isArray(snapshot?.messages) ? snapshot.messages : [],
+                pollIntervalMs: Number(snapshot?.pollIntervalMs ?? snapshot?.status?.pollIntervalMs) || null,
+                fetchedAt: snapshot?.fetchedAt || new Date().toISOString(),
+                config: normalizeStoryLogConfig(snapshot?.config ?? storyConfigFromGame),
+            });
+            const statusError = snapshot?.status?.error;
+            setError(statusError || null);
+            setLoading(false);
+            setRefreshing(false);
+            firstLoadRef.current = false;
+        });
+        return unsubscribe;
+    }, [realtime, storyConfigFromGame]);
 
     const dateFormatter = useMemo(
         () => new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }),
@@ -3169,7 +3537,7 @@ function StoryLogsTab({ game, me }) {
     useEffect(() => {
         if (!gameId) {
             setLoading(false);
-            return;
+            return undefined;
         }
         let cancelled = false;
         let timer = null;
@@ -3178,6 +3546,9 @@ function StoryLogsTab({ game, me }) {
             if (cancelled) return;
             await fetchLogs();
             if (cancelled) return;
+            if (realtime?.connected) {
+                return;
+            }
             const delay = Math.max(5_000, pollMsRef.current || DEFAULT_STORY_POLL_MS);
             timer = setTimeout(tick, delay);
         };
@@ -3188,11 +3559,16 @@ function StoryLogsTab({ game, me }) {
             cancelled = true;
             if (timer) clearTimeout(timer);
         };
-    }, [fetchLogs, gameId]);
+    }, [fetchLogs, gameId, realtime?.connected]);
 
     const handleRefresh = useCallback(() => {
         fetchLogs();
     }, [fetchLogs]);
+
+    useEffect(() => {
+        if (!messagesRef.current) return;
+        messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+    }, [data.messages]);
 
     const config = data.config;
     const players = useMemo(
@@ -3232,6 +3608,31 @@ function StoryLogsTab({ game, me }) {
 
     const scribeIds = config.scribeIds || [];
     const isScribe = scribeIds.includes(me.id);
+    const personaStatusList = useMemo(() => {
+        if (!realtime?.personaStatuses) return [];
+        const entries = Object.values(realtime.personaStatuses).filter((entry) => entry?.gameId === gameId);
+        entries.sort((a, b) => {
+            const aTime = Date.parse(a?.createdAt || a?.fetchedAt || '');
+            const bTime = Date.parse(b?.createdAt || b?.fetchedAt || '');
+            return aTime - bTime;
+        });
+        return entries;
+    }, [realtime?.personaStatuses, gameId]);
+    const describePersonaStatus = useCallback((status) => {
+        const target = status?.targetName || 'the player';
+        switch (status?.status) {
+            case 'pending':
+                return `Awaiting approval from ${target}.`;
+            case 'approved':
+                return `Approved by ${target}.`;
+            case 'denied':
+                return `Denied by ${target}.`;
+            case 'expired':
+                return 'Request expired without a response.';
+            default:
+                return status?.reason || status?.status || '';
+        }
+    }, []);
 
     const personaOptions = useMemo(() => {
         if (isDM) {
@@ -3303,6 +3704,20 @@ function StoryLogsTab({ game, me }) {
             if (!option) return;
             try {
                 setSending(true);
+                if (
+                    !isDM &&
+                    option.payload?.persona === 'player' &&
+                    option.payload?.targetUserId &&
+                    option.payload.targetUserId !== me.id
+                ) {
+                    if (!realtime) {
+                        throw new Error('Real-time connection unavailable.');
+                    }
+                    await realtime.requestPersona(option.payload.targetUserId, trimmed);
+                    setMessage('');
+                    setError(null);
+                    return;
+                }
                 await StoryLogs.post(gameId, { ...option.payload, content: trimmed });
                 setMessage('');
                 setError(null);
@@ -3313,7 +3728,38 @@ function StoryLogsTab({ game, me }) {
                 setSending(false);
             }
         },
-        [fetchLogs, gameId, message, personaOptions, selectedPersona]
+        [fetchLogs, gameId, isDM, me.id, message, personaOptions, realtime, selectedPersona]
+    );
+
+    const handleDeleteMessage = useCallback(
+        async (messageId) => {
+            if (!isDM || !gameId || !messageId) return;
+            if (typeof window !== 'undefined') {
+                const confirmed = window.confirm('Delete this Discord message? This cannot be undone.');
+                if (!confirmed) return;
+            }
+            try {
+                setDeletingId(messageId);
+                await StoryLogs.delete(gameId, messageId);
+                setData((prev) => ({
+                    ...prev,
+                    messages: prev.messages.filter((entry) => entry.id !== messageId),
+                }));
+                setError(null);
+                if (!realtime?.connected) {
+                    await fetchLogs();
+                }
+            } catch (err) {
+                const message = err?.message || 'Failed to delete message.';
+                setError(message);
+                if (typeof window !== 'undefined') {
+                    alert(message);
+                }
+            } finally {
+                setDeletingId(null);
+            }
+        },
+        [fetchLogs, gameId, isDM, realtime?.connected]
     );
 
     const isImageAttachment = useCallback((att) => {
@@ -3469,6 +3915,20 @@ function StoryLogsTab({ game, me }) {
                             </div>
                         </form>
                     )}
+                    {isScribe && personaStatusList.length > 0 && (
+                        <div className="story-logs__persona-statuses">
+                            {personaStatusList.map((status) => (
+                                <div
+                                    key={status.requestId}
+                                    className={`story-logs__persona-status story-logs__persona-status--${status.status}`}
+                                >
+                                    <span className="story-logs__persona-status-text">
+                                        {describePersonaStatus(status)}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                     {!data.enabled ? (
                         <div className="story-logs__empty">
                             {phase === 'missing_token' ? (
@@ -3486,7 +3946,7 @@ function StoryLogsTab({ game, me }) {
                     ) : hasMessages ? (
                         <div className="story-logs__body">
                             {channelTopic && <p className="text-muted story-logs__topic">{channelTopic}</p>}
-                            <div className="story-logs__messages">
+                            <div className="story-logs__messages" ref={messagesRef}>
                                 {data.messages.map((msg) => {
                                     const msgRelative = formatRelative(msg.createdAt);
                                     const msgAbsolute = formatTimestamp(msg.createdAt);
@@ -3504,21 +3964,31 @@ function StoryLogsTab({ game, me }) {
                                             </div>
                                             <div className="story-logs__message-body">
                                                 <header className="story-logs__message-header">
-                                                    <span className="story-logs__author">{msg.author?.displayName || 'Unknown'}</span>
-                                                    {msg.author?.bot && <span className="pill warn">BOT</span>}
-                                                    {msgAbsolute && (
-                                                        <time
-                                                            className="story-logs__timestamp"
-                                                            dateTime={msg.createdAt || undefined}
-                                                            title={msgAbsolute}
+                                                    <div className="story-logs__message-meta">
+                                                        <span className="story-logs__author">{msg.author?.displayName || 'Unknown'}</span>
+                                                        {msg.author?.bot && <span className="pill warn">BOT</span>}
+                                                        {msgAbsolute && (
+                                                            <time
+                                                                className="story-logs__timestamp"
+                                                                dateTime={msg.createdAt || undefined}
+                                                                title={msgAbsolute}
+                                                            >
+                                                                {msgRelative || msgAbsolute}
+                                                            </time>
+                                                        )}
+                                                    </div>
+                                                    {isDM && msg.id && (
+                                                        <button
+                                                            type="button"
+                                                            className="story-logs__delete"
+                                                            onClick={() => handleDeleteMessage(msg.id)}
+                                                            disabled={deletingId === msg.id}
                                                         >
-                                                            {msgRelative || msgAbsolute}
-                                                        </time>
+                                                            {deletingId === msg.id ? 'Deleting…' : 'Delete'}
+                                                        </button>
                                                     )}
                                                 </header>
-                                                {msg.content && (
-                                                    <p className="story-logs__message-text">{msg.content}</p>
-                                                )}
+                                                {msg.content && <MessageMarkdown content={msg.content} />}
                                                 {msg.attachments?.length > 0 && (
                                                     <ul className="story-logs__attachments">
                                                         {msg.attachments.map((att) => (
@@ -3569,6 +4039,811 @@ function StoryLogsTab({ game, me }) {
             )}
         </section>
     );
+}
+
+const INLINE_PATTERN =
+    /(\[([^\]]+)\]\(([^)]+)\)|\*\*([^*]+)\*\*|__([^_]+)__|~~([^~]+)~~|`([^`]+)`|\*(?!\s)([^*]+?)\*(?!\s)|_(?!\s)([^_]+?)_(?!\s))/g;
+
+function sanitizeLinkHref(raw) {
+    if (typeof raw !== 'string') return null;
+    const trimmed = raw.trim();
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    if (/^mailto:/i.test(trimmed)) return trimmed;
+    if (/^discord:/i.test(trimmed)) return trimmed;
+    return null;
+}
+
+function renderInlineSegments(text, keyPrefix) {
+    if (!text) return [];
+    const nodes = [];
+    let remaining = text;
+    let index = 0;
+
+    while (remaining.length > 0) {
+        INLINE_PATTERN.lastIndex = 0;
+        const match = INLINE_PATTERN.exec(remaining);
+        if (!match || match.index === undefined) {
+            if (remaining) nodes.push(remaining);
+            break;
+        }
+        if (match.index > 0) {
+            nodes.push(remaining.slice(0, match.index));
+        }
+        const full = match[0];
+        if (match[2] !== undefined) {
+            const href = sanitizeLinkHref(match[3]);
+            if (href) {
+                nodes.push(
+                    <a
+                        key={`${keyPrefix}-link-${index}`}
+                        href={href}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                    >
+                        {renderInlineSegments(match[2], `${keyPrefix}-link-${index}`)}
+                    </a>
+                );
+            } else {
+                nodes.push(match[2]);
+            }
+        } else if (match[4] !== undefined) {
+            nodes.push(
+                <strong key={`${keyPrefix}-strong-${index}`}>
+                    {renderInlineSegments(match[4], `${keyPrefix}-strong-${index}`)}
+                </strong>
+            );
+        } else if (match[5] !== undefined) {
+            nodes.push(
+                <strong key={`${keyPrefix}-strongu-${index}`}>
+                    {renderInlineSegments(match[5], `${keyPrefix}-strongu-${index}`)}
+                </strong>
+            );
+        } else if (match[6] !== undefined) {
+            nodes.push(
+                <del key={`${keyPrefix}-del-${index}`}>
+                    {renderInlineSegments(match[6], `${keyPrefix}-del-${index}`)}
+                </del>
+            );
+        } else if (match[7] !== undefined) {
+            nodes.push(
+                <code key={`${keyPrefix}-code-${index}`}>{match[7]}</code>
+            );
+        } else if (match[8] !== undefined) {
+            nodes.push(
+                <em key={`${keyPrefix}-em-${index}`}>
+                    {renderInlineSegments(match[8], `${keyPrefix}-em-${index}`)}
+                </em>
+            );
+        } else if (match[9] !== undefined) {
+            nodes.push(
+                <em key={`${keyPrefix}-emu-${index}`}>
+                    {renderInlineSegments(match[9], `${keyPrefix}-emu-${index}`)}
+                </em>
+            );
+        } else {
+            nodes.push(full);
+        }
+        remaining = remaining.slice(match.index + full.length);
+        index += 1;
+    }
+
+    return nodes;
+}
+
+function renderInlineWithBreaks(text, keyPrefix) {
+    const lines = text.split('\n');
+    return lines.flatMap((line, idx) => {
+        const parts = renderInlineSegments(line, `${keyPrefix}-${idx}`);
+        if (idx === lines.length - 1) {
+            return parts;
+        }
+        return [
+            <React.Fragment key={`${keyPrefix}-frag-${idx}`}>{parts}</React.Fragment>,
+            <br key={`${keyPrefix}-br-${idx}`} />,
+        ];
+    });
+}
+
+function parseMarkdownBlocks(raw) {
+    if (!raw) return [];
+    const source = String(raw).replace(/\r\n?/g, '\n');
+    const lines = source.split('\n');
+    const blocks = [];
+    let index = 0;
+
+    while (index < lines.length) {
+        const line = lines[index];
+        if (line.startsWith('```')) {
+            const language = line.slice(3).trim();
+            index += 1;
+            const codeLines = [];
+            while (index < lines.length && !lines[index].startsWith('```')) {
+                codeLines.push(lines[index]);
+                index += 1;
+            }
+            if (index < lines.length && lines[index].startsWith('```')) {
+                index += 1;
+            }
+            blocks.push({ type: 'code', language, content: codeLines.join('\n') });
+            continue;
+        }
+
+        const chunkLines = [];
+        while (index < lines.length && !lines[index].startsWith('```')) {
+            chunkLines.push(lines[index]);
+            index += 1;
+        }
+        const chunk = chunkLines.join('\n');
+        const segments = chunk.split(/\n{2,}/);
+        for (const segment of segments) {
+            const trimmed = segment.trim();
+            if (!trimmed) continue;
+            const segLines = trimmed.split('\n');
+            const allTrimmed = segLines.map((ln) => ln.trim());
+            const isQuote = allTrimmed.every((ln) => ln === '' || ln.startsWith('>'));
+            if (isQuote) {
+                const cleaned = segLines
+                    .map((ln) => ln.replace(/^>\s?/, '').trim())
+                    .join('\n')
+                    .split(/\n{2,}/)
+                    .map((entry) => entry.trim())
+                    .filter(Boolean);
+                if (cleaned.length > 0) {
+                    blocks.push({ type: 'quote', lines: cleaned });
+                }
+                continue;
+            }
+            const isBullet = allTrimmed.every((ln) => ln === '' || /^[-*]\s+/.test(ln));
+            if (isBullet) {
+                const items = segLines
+                    .map((ln) => ln.replace(/^[-*]\s+/, '').trim())
+                    .filter(Boolean);
+                if (items.length > 0) {
+                    blocks.push({ type: 'list', ordered: false, items });
+                }
+                continue;
+            }
+            const isOrdered = allTrimmed.every((ln) => ln === '' || /^\d+\.\s+/.test(ln));
+            if (isOrdered) {
+                const items = segLines
+                    .map((ln) => ln.replace(/^\d+\.\s+/, '').trim())
+                    .filter(Boolean);
+                if (items.length > 0) {
+                    blocks.push({ type: 'list', ordered: true, items });
+                }
+                continue;
+            }
+            blocks.push({ type: 'paragraph', content: trimmed });
+        }
+    }
+
+    return blocks;
+}
+
+function MessageMarkdown({ content }) {
+    const blocks = useMemo(() => parseMarkdownBlocks(content), [content]);
+    if (blocks.length === 0) return null;
+
+    return (
+        <div className="story-logs__markdown">
+            {blocks.map((block, index) => {
+                const key = `md-block-${index}`;
+                if (block.type === 'code') {
+                    return (
+                        <pre key={key} data-language={block.language || undefined}>
+                            <code>{block.content}</code>
+                        </pre>
+                    );
+                }
+                if (block.type === 'quote') {
+                    return (
+                        <blockquote key={key}>
+                            {block.lines.map((line, idx) => (
+                                <p key={`${key}-line-${idx}`}>{renderInlineWithBreaks(line, `${key}-line-${idx}`)}</p>
+                            ))}
+                        </blockquote>
+                    );
+                }
+                if (block.type === 'list') {
+                    const Tag = block.ordered ? 'ol' : 'ul';
+                    return (
+                        <Tag key={key}>
+                            {block.items.map((item, itemIndex) => (
+                                <li key={`${key}-item-${itemIndex}`}>
+                                    {renderInlineWithBreaks(item, `${key}-item-${itemIndex}`)}
+                                </li>
+                            ))}
+                        </Tag>
+                    );
+                }
+                return (
+                    <p key={key}>{renderInlineWithBreaks(block.content, `${key}-paragraph`)}</p>
+                );
+            })}
+        </div>
+    );
+}
+
+function PersonaPromptCenter({ realtime }) {
+    const prompts = Array.isArray(realtime?.personaPrompts)
+        ? realtime.personaPrompts
+        : EMPTY_ARRAY;
+    const respondPersona = realtime?.respondPersona;
+    const sorted = useMemo(() => {
+        const list = prompts.slice();
+        list.sort((a, b) => {
+            const aTime = Date.parse(a?.request?.createdAt || '');
+            const bTime = Date.parse(b?.request?.createdAt || '');
+            return aTime - bTime;
+        });
+        return list;
+    }, [prompts]);
+    const active = sorted[0]?.request || null;
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        if (typeof window === 'undefined') return undefined;
+        const timer = window.setInterval(() => setNow(Date.now()), 1000);
+        return () => window.clearInterval(timer);
+    }, []);
+    const [busy, setBusy] = useState(null);
+    useEffect(() => {
+        setBusy(null);
+    }, [active?.id]);
+
+    if (!active) return null;
+
+    const expiresAt = active.expiresAt ? Date.parse(active.expiresAt) : null;
+    const remaining = expiresAt ? expiresAt - now : null;
+    const remainingLabel = remaining !== null ? formatDuration(remaining) : null;
+    const actionDisabled = !respondPersona || busy !== null;
+
+    const handleRespond = (approve) => {
+        if (!respondPersona || !active.id) return;
+        setBusy(approve ? 'approve' : 'deny');
+        try {
+            respondPersona(active.id, approve);
+        } catch (err) {
+            console.error('Failed to respond to persona prompt', err);
+            setBusy(null);
+        }
+    };
+
+    return (
+        <div className="persona-overlay" role="presentation">
+            <div className="persona-modal" role="dialog" aria-modal="true" aria-labelledby="persona-modal-title">
+                <header className="persona-modal__header">
+                    <div>
+                        <h3 id="persona-modal-title">
+                            {active.scribeName || 'A scribe'} wants to speak as you
+                        </h3>
+                        {active.gameName && (
+                            <p className="text-muted text-small">Campaign: {active.gameName}</p>
+                        )}
+                    </div>
+                    {remainingLabel && (
+                        <span className="persona-modal__timer">Time left: {remainingLabel}</span>
+                    )}
+                </header>
+                <div className="persona-modal__body">
+                    <p className="text-small">
+                        Approve to let {active.scribeName || 'the scribe'} send this update as {active.targetName || 'you'}.
+                    </p>
+                    <MessageMarkdown content={active.content || ''} />
+                </div>
+                <div className="persona-modal__actions">
+                    <button
+                        type="button"
+                        className="btn ghost"
+                        onClick={() => handleRespond(false)}
+                        disabled={actionDisabled}
+                    >
+                        Deny
+                    </button>
+                    <button
+                        type="button"
+                        className="btn"
+                        onClick={() => handleRespond(true)}
+                        disabled={actionDisabled}
+                    >
+                        Approve
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+const TRADE_REASON_LABELS = {
+    timeout: 'Trade timed out.',
+    declined: 'The trade was declined.',
+    cancelled: 'The trade was cancelled.',
+    game_missing: 'Trade cancelled because the campaign data was unavailable.',
+    player_missing: 'Trade cancelled because a participant could not be found.',
+};
+
+const MAX_TRADE_ITEMS = 20;
+
+function TradeOverlay({ game, me, realtime }) {
+    const trades = Array.isArray(realtime?.tradeSessions)
+        ? realtime.tradeSessions
+        : EMPTY_ARRAY;
+    const actions = realtime?.tradeActions || {};
+    const relevant = useMemo(() => {
+        const list = trades.filter((trade) => trade?.participants?.[me.id]);
+        list.sort((a, b) => {
+            const aTime = Date.parse(a?.createdAt || '');
+            const bTime = Date.parse(b?.createdAt || '');
+            return aTime - bTime;
+        });
+        return list;
+    }, [me.id, trades]);
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        if (typeof window === 'undefined') return undefined;
+        const timer = window.setInterval(() => setNow(Date.now()), 1000);
+        return () => window.clearInterval(timer);
+    }, []);
+
+    if (relevant.length === 0) return null;
+
+    return (
+        <div className="trade-overlay" role="presentation">
+            {relevant.map((trade) => (
+                <TradeWindow key={trade.id} trade={trade} me={me} game={game} actions={actions} now={now} />
+            ))}
+        </div>
+    );
+}
+
+function TradeWindow({ trade, me, game, actions, now }) {
+    const myId = me.id;
+    const partnerId = trade.initiatorId === myId ? trade.partnerId : trade.initiatorId;
+    const partnerParticipant = trade.participants?.[partnerId];
+    const partnerName = partnerParticipant?.name || 'Partner';
+    const status = trade.status || 'active';
+    const myOffer = useMemo(
+        () => (Array.isArray(trade.offers?.[myId]) ? trade.offers[myId] : []),
+        [myId, trade.offers]
+    );
+    const partnerOffer = useMemo(
+        () => (Array.isArray(trade.offers?.[partnerId]) ? trade.offers[partnerId] : []),
+        [partnerId, trade.offers]
+    );
+    const myOfferMap = useMemo(() => {
+        const map = new Map();
+        for (const entry of myOffer) {
+            if (entry?.itemId) map.set(entry.itemId, entry);
+        }
+        return map;
+    }, [myOffer]);
+
+    const myPlayer = useMemo(
+        () => (Array.isArray(game.players) ? game.players.find((p) => p?.userId === myId) || null : null),
+        [game.players, myId]
+    );
+    const myInventory = useMemo(
+        () => (Array.isArray(myPlayer?.inventory) ? myPlayer.inventory : []),
+        [myPlayer?.inventory]
+    );
+    const inventoryMap = useMemo(() => {
+        const map = new Map();
+        for (const item of myInventory) {
+            if (item?.id) map.set(item.id, item);
+        }
+        return map;
+    }, [myInventory]);
+
+    const [draft, setDraft] = useState(() =>
+        myOffer.map((entry) => ({
+            itemId: entry.itemId,
+            quantity: clampQuantity(entry.quantity),
+        }))
+    );
+    const [dirty, setDirty] = useState(false);
+    const [picker, setPicker] = useState('');
+
+    useEffect(() => {
+        setDraft(
+            myOffer.map((entry) => ({
+                itemId: entry.itemId,
+                quantity: clampQuantity(entry.quantity),
+            }))
+        );
+        setDirty(false);
+        setPicker('');
+    }, [trade.id, myOffer]);
+
+    useEffect(() => {
+        if (dirty) return;
+        const remote = myOffer.map((entry) => ({
+            itemId: entry.itemId,
+            quantity: clampQuantity(entry.quantity),
+        }));
+        setDraft((prev) => (offersEqual(prev, remote) ? prev : remote));
+    }, [dirty, myOffer]);
+
+    useEffect(() => {
+        if (!dirty) return;
+        const remote = myOffer.map((entry) => ({
+            itemId: entry.itemId,
+            quantity: clampQuantity(entry.quantity),
+        }));
+        if (offersEqual(draft, remote)) {
+            setDirty(false);
+        }
+    }, [dirty, draft, myOffer]);
+
+    const expiresAt = trade.expiresAt ? Date.parse(trade.expiresAt) : null;
+    const timeLeft = expiresAt ? formatDuration(expiresAt - now) : null;
+    const myConfirmed = !!trade.confirmations?.[myId];
+    const partnerConfirmed = !!trade.confirmations?.[partnerId];
+    const tradeNote = typeof trade.note === 'string' ? trade.note.trim() : '';
+
+    const availableOptions = useMemo(() => {
+        return myInventory.filter((item) => {
+            if (!item?.id) return false;
+            const max = getItemMaxQuantity(inventoryMap, item.id);
+            if (max <= 0) return false;
+            const offered = draft.find((entry) => entry.itemId === item.id)?.quantity || 0;
+            return offered < max;
+        });
+    }, [draft, inventoryMap, myInventory]);
+
+    const handleAddItem = useCallback(
+        (itemId) => {
+            if (!itemId) return;
+            setDraft((prev) => {
+                if (prev.length >= MAX_TRADE_ITEMS) return prev;
+                const max = getItemMaxQuantity(inventoryMap, itemId);
+                if (max <= 0) return prev;
+                const index = prev.findIndex((entry) => entry.itemId === itemId);
+                if (index >= 0) {
+                    const existing = prev[index];
+                    const nextQty = Math.min(max, clampQuantity((existing.quantity || 0) + 1, max));
+                    if (nextQty === existing.quantity) return prev;
+                    const copy = [...prev];
+                    copy[index] = { ...existing, quantity: nextQty };
+                    return copy;
+                }
+                return [...prev, { itemId, quantity: 1 }];
+            });
+            setDirty(true);
+        },
+        [inventoryMap]
+    );
+
+    const handleQuantityChange = useCallback(
+        (itemId, value) => {
+            setDraft((prev) => {
+                const index = prev.findIndex((entry) => entry.itemId === itemId);
+                if (index < 0) return prev;
+                const max = getItemMaxQuantity(inventoryMap, itemId) || 9999;
+                const nextQty = clampQuantity(value, max || 9999);
+                if (nextQty === prev[index].quantity) return prev;
+                const copy = [...prev];
+                copy[index] = { ...prev[index], quantity: nextQty };
+                return copy;
+            });
+            setDirty(true);
+        },
+        [inventoryMap]
+    );
+
+    const handleRemove = useCallback((itemId) => {
+        setDraft((prev) => prev.filter((entry) => entry.itemId !== itemId));
+        setDirty(true);
+    }, []);
+
+    const handleApply = useCallback(() => {
+        if (!actions.updateOffer) return;
+        const payload = draft
+            .map((entry) => {
+                const max = getItemMaxQuantity(inventoryMap, entry.itemId) || entry.quantity;
+                return {
+                    itemId: entry.itemId,
+                    quantity: clampQuantity(entry.quantity, max || 9999),
+                };
+            })
+            .filter((entry) => entry.itemId);
+        actions.updateOffer(trade.id, payload);
+        setDirty(false);
+    }, [actions, draft, inventoryMap, trade.id]);
+
+    const handleConfirm = useCallback(() => {
+        actions.confirm?.(trade.id);
+    }, [actions, trade.id]);
+
+    const handleUnconfirm = useCallback(() => {
+        actions.unconfirm?.(trade.id);
+    }, [actions, trade.id]);
+
+    const handleCancel = useCallback(() => {
+        actions.cancel?.(trade.id);
+    }, [actions, trade.id]);
+
+    const handleAccept = useCallback(() => {
+        actions.respond?.(trade.id, true);
+    }, [actions, trade.id]);
+
+    const handleDecline = useCallback(() => {
+        actions.respond?.(trade.id, false);
+    }, [actions, trade.id]);
+
+    const handleDismiss = useCallback(() => {
+        actions.dismiss?.(trade.id);
+    }, [actions, trade.id]);
+
+    const disableConfirm = dirty || !actions.confirm;
+
+    if (status === 'awaiting-partner') {
+        const awaitingPartner = trade.partnerId === myId;
+        return (
+            <div className="trade-window" role="dialog" aria-modal="true">
+                <header className="trade-window__header">
+                    <h3>Trade request from {trade.participants?.[trade.initiatorId]?.name || 'Player'}</h3>
+                    {timeLeft && <span className="trade-window__timer">Respond within {timeLeft}</span>}
+                </header>
+                <div className="trade-window__body">
+                    {tradeNote && <p className="trade-window__note">“{tradeNote}”</p>}
+                    {awaitingPartner ? (
+                        <p>{trade.participants?.[trade.initiatorId]?.name || 'A player'} wants to trade items with you.</p>
+                    ) : (
+                        <p>Waiting for {partnerName} to accept the trade request…</p>
+                    )}
+                </div>
+                <div className="trade-window__actions trade-window__actions--invite">
+                    {awaitingPartner ? (
+                        <>
+                            <button
+                                type="button"
+                                className="btn ghost"
+                                onClick={handleDecline}
+                                disabled={!actions.respond}
+                            >
+                                Decline
+                            </button>
+                            <button
+                                type="button"
+                                className="btn"
+                                onClick={handleAccept}
+                                disabled={!actions.respond}
+                            >
+                                Accept trade
+                            </button>
+                        </>
+                    ) : (
+                        <button
+                            type="button"
+                            className="btn ghost"
+                            onClick={handleCancel}
+                            disabled={!actions.cancel}
+                        >
+                            Cancel request
+                        </button>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
+    if (status !== 'active') {
+        const completed = status === 'completed';
+        const reasonText = trade.reason ? TRADE_REASON_LABELS[trade.reason] || trade.reason : null;
+        return (
+            <div className="trade-window" role="dialog" aria-modal="true">
+                <header className="trade-window__header">
+                    <h3>{completed ? 'Trade complete' : 'Trade closed'}</h3>
+                </header>
+                <div className="trade-window__body">
+                    <p className="trade-window__message">
+                        {completed ? `Your trade with ${partnerName} finished successfully.` : reasonText || 'The trade ended.'}
+                    </p>
+                </div>
+                <div className="trade-window__actions">
+                    <button type="button" className="btn" onClick={handleDismiss} disabled={!actions.dismiss}>
+                        Close
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="trade-window" role="dialog" aria-modal="true">
+            <header className="trade-window__header">
+                <div>
+                    <h3>Trading with {partnerName}</h3>
+                    {tradeNote && <p className="trade-window__note">“{tradeNote}”</p>}
+                </div>
+                {timeLeft && <span className="trade-window__timer">Expires in {timeLeft}</span>}
+            </header>
+            <div className="trade-window__columns">
+                <div className="trade-window__column">
+                    <h4>Your offer</h4>
+                    {dirty && (
+                        <p className="trade-window__warning text-small">Apply your changes before confirming.</p>
+                    )}
+                    <div className="trade-offer">
+                        {draft.length > 0 ? (
+                            draft.map((entry) => {
+                                const item = inventoryMap.get(entry.itemId) || myOfferMap.get(entry.itemId) || {};
+                                const label = item.name || 'Item';
+                                const type = item.type || '';
+                                const desc = item.desc || '';
+                                const max = getItemMaxQuantity(inventoryMap, entry.itemId) || undefined;
+                                return (
+                                    <div key={entry.itemId} className="trade-offer__row">
+                                        <div className="trade-offer__info">
+                                            <div className="trade-offer__name">{label}</div>
+                                            <div className="trade-offer__meta">
+                                                {type && <span className="pill">{type}</span>}
+                                                {typeof max === 'number' && Number.isFinite(max) && (
+                                                    <span className="text-muted text-tiny">Inventory: {max}</span>
+                                                )}
+                                            </div>
+                                            {desc && <p className="trade-offer__desc text-small">{desc}</p>}
+                                        </div>
+                                        <div className="trade-offer__controls">
+                                            <label className="text-tiny" htmlFor={`trade-${trade.id}-${entry.itemId}`}>
+                                                Qty
+                                            </label>
+                                            <input
+                                                id={`trade-${trade.id}-${entry.itemId}`}
+                                                type="number"
+                                                min={1}
+                                                max={max || undefined}
+                                                value={entry.quantity}
+                                                onChange={(e) => handleQuantityChange(entry.itemId, e.target.value)}
+                                            />
+                                            <button
+                                                type="button"
+                                                className="btn ghost btn-small"
+                                                onClick={() => handleRemove(entry.itemId)}
+                                            >
+                                                Remove
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })
+                        ) : (
+                            <p className="trade-offer__empty text-muted">No items offered yet.</p>
+                        )}
+                    </div>
+                    <div className="trade-offer__picker">
+                        <label htmlFor={`trade-picker-${trade.id}`} className="text-small">
+                            Add from inventory
+                        </label>
+                        <select
+                            id={`trade-picker-${trade.id}`}
+                            value={picker}
+                            onChange={(e) => {
+                                const value = e.target.value;
+                                if (value) {
+                                    handleAddItem(value);
+                                    setPicker('');
+                                } else {
+                                    setPicker('');
+                                }
+                            }}
+                        >
+                            <option value="">Select an item…</option>
+                            {availableOptions.map((item) => (
+                                <option key={item.id} value={item.id}>
+                                    {item.name || 'Item'}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="trade-offer__footer">
+                        <button
+                            type="button"
+                            className="btn secondary"
+                            onClick={handleApply}
+                            disabled={!actions.updateOffer || !dirty}
+                        >
+                            Save offer
+                        </button>
+                    </div>
+                </div>
+                <div className="trade-window__column trade-window__column--partner">
+                    <h4>{partnerName}'s offer</h4>
+                    <div className="trade-offer">
+                        {partnerOffer.length > 0 ? (
+                            partnerOffer.map((entry) => (
+                                <div key={entry.itemId} className="trade-offer__row">
+                                    <div className="trade-offer__info">
+                                        <div className="trade-offer__name">{entry.name || 'Item'}</div>
+                                        <div className="trade-offer__meta">
+                                            {entry.type && <span className="pill">{entry.type}</span>}
+                                            <span className="pill">x{entry.quantity || 1}</span>
+                                        </div>
+                                        {entry.desc && <p className="trade-offer__desc text-small">{entry.desc}</p>}
+                                    </div>
+                                </div>
+                            ))
+                        ) : (
+                            <p className="trade-offer__empty text-muted">No items offered yet.</p>
+                        )}
+                    </div>
+                </div>
+            </div>
+            <footer className="trade-window__footer">
+                <div className="trade-window__status">
+                    <span className={`pill ${myConfirmed ? 'success' : ''}`}>
+                        {myConfirmed ? 'You confirmed' : 'Awaiting your confirmation'}
+                    </span>
+                    <span className={`pill ${partnerConfirmed ? 'success' : ''}`}>
+                        {partnerConfirmed ? `${partnerName} confirmed` : `${partnerName} reviewing`}
+                    </span>
+                </div>
+                <div className="trade-window__actions">
+                    <button
+                        type="button"
+                        className="btn ghost"
+                        onClick={handleCancel}
+                        disabled={!actions.cancel}
+                    >
+                        Cancel trade
+                    </button>
+                    {myConfirmed ? (
+                        <button
+                            type="button"
+                            className="btn secondary"
+                            onClick={handleUnconfirm}
+                            disabled={!actions.unconfirm}
+                        >
+                            Unconfirm
+                        </button>
+                    ) : (
+                        <button
+                            type="button"
+                            className="btn"
+                            onClick={handleConfirm}
+                            disabled={disableConfirm}
+                        >
+                            Confirm trade
+                        </button>
+                    )}
+                </div>
+            </footer>
+        </div>
+    );
+}
+
+function offersEqual(a, b) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) {
+        if (a[i].itemId !== b[i].itemId) return false;
+        if (clampQuantity(a[i].quantity) !== clampQuantity(b[i].quantity)) return false;
+    }
+    return true;
+}
+
+function clampQuantity(value, max = 9999) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return 1;
+    const rounded = Math.round(num);
+    return Math.max(1, Math.min(max, rounded));
+}
+
+function getItemMaxQuantity(inventoryMap, itemId) {
+    const item = inventoryMap.get(itemId);
+    if (!item) return 0;
+    const amount = Number(item.amount);
+    if (!Number.isFinite(amount)) return 0;
+    return Math.max(0, Math.round(amount));
+}
+
+function formatDuration(ms) {
+    if (!Number.isFinite(ms)) return '';
+    const clamped = Math.max(0, Math.round(ms / 1000));
+    const minutes = Math.floor(clamped / 60);
+    const seconds = clamped % 60;
+    if (minutes > 0) {
+        return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
+    }
+    return `${seconds}s`;
 }
 
 // ---------- Items ----------

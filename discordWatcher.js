@@ -178,11 +178,27 @@ export function createDiscordWatcher({
     let timer = null;
     let inFlight = false;
     let stopped = false;
+    const listeners = new Set();
+
+    function notify() {
+        if (listeners.size === 0) return;
+        const payload = { status: getStatus(), messages: getMessages() };
+        for (const listener of listeners) {
+            try {
+                listener(payload);
+            } catch (err) {
+                console.warn('discordWatcher listener error', err);
+            }
+        }
+    }
 
     function setPhase(phase) {
-        state.phase = phase;
-        if (phase === 'ready' || phase === 'connecting') {
-            state.error = null;
+        if (state.phase !== phase) {
+            state.phase = phase;
+            if (phase === 'ready' || phase === 'connecting') {
+                state.error = null;
+            }
+            notify();
         }
     }
 
@@ -190,6 +206,7 @@ export function createDiscordWatcher({
         state.phase = 'error';
         state.error = message;
         state.lastErrorAt = new Date().toISOString();
+        notify();
     }
 
     function scheduleNext(delayMs = state.pollIntervalMs) {
@@ -240,6 +257,7 @@ export function createDiscordWatcher({
             state.lastSyncAt = new Date().toISOString();
             if (!state.readyAt) state.readyAt = state.lastSyncAt;
             setPhase('ready');
+            notify();
             return state.pollIntervalMs;
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Failed to sync Discord channel.';
@@ -278,12 +296,27 @@ export function createDiscordWatcher({
         return { ...state, channel: state.channel ? { ...state.channel } : null };
     }
 
+    function subscribe(listener) {
+        if (typeof listener !== 'function') return () => {};
+        listeners.add(listener);
+        try {
+            listener({ status: getStatus(), messages: getMessages() });
+        } catch (err) {
+            console.warn('discordWatcher listener bootstrap error', err);
+        }
+        return () => {
+            listeners.delete(listener);
+        };
+    }
+
     return {
         enabled,
         start,
         stop,
         getMessages,
         getStatus,
+        subscribe,
+        forceSync: () => syncOnce(),
     };
 }
 

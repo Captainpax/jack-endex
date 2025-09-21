@@ -474,6 +474,11 @@ export const StoryLogs = {
             body: payload,
         }),
 
+    delete: (gameId, messageId) =>
+        api(`/api/games/${encodeURIComponent(gameId)}/story-log/messages/${encodeURIComponent(messageId)}`, {
+            method: 'DELETE',
+        }),
+
     /**
      * Update the Discord story configuration for a campaign.
      *
