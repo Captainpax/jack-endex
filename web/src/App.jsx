@@ -10,6 +10,12 @@ export default function App() {
     const [active, setActive] = useState(null);
     const [tab, setTab] = useState("sheet");
     const [dmSheetPlayerId, setDmSheetPlayerId] = useState(null);
+    const [pendingJoinCode, setPendingJoinCode] = useState(() => {
+        if (typeof window === "undefined") return null;
+        const match = window.location.pathname.match(/^\/join\/([^/?#]+)/i);
+        return match ? match[1].toUpperCase() : null;
+    });
+    const joinInFlight = useRef(false);
 
     const meId = me?.id;
 
@@ -51,6 +57,40 @@ export default function App() {
         })();
         return () => { mounted = false; };
     }, []);
+
+    useEffect(() => {
+        if (!pendingJoinCode || !me || joinInFlight.current) return;
+        joinInFlight.current = true;
+        (async () => {
+            try {
+                const result = await Games.joinByCode(pendingJoinCode);
+                setGames(await Games.list());
+                if (result?.gameId) {
+                    const full = await Games.get(result.gameId);
+                    setActive(full);
+                    if (full.dmId === me.id) {
+                        const firstPlayer = (full.players || []).find(
+                            (p) => (p?.role || "").toLowerCase() !== "dm"
+                        );
+                        setDmSheetPlayerId(firstPlayer ? firstPlayer.userId : null);
+                        setTab("party");
+                    } else {
+                        setDmSheetPlayerId(null);
+                        setTab("sheet");
+                    }
+                }
+            } catch (e) {
+                console.error(e);
+                alert(e.message || "Failed to join game");
+            } finally {
+                setPendingJoinCode(null);
+                joinInFlight.current = false;
+                if (typeof window !== "undefined") {
+                    window.history.replaceState({}, "", "/");
+                }
+            }
+        })();
+    }, [pendingJoinCode, me]);
 
     if (loading) return <Center>Loading…</Center>;
 

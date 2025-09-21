@@ -13,6 +13,21 @@ import cors from 'cors';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DB_PATH = path.join(__dirname, 'data', 'db.json');
 const ITEMS_PATH = path.join(__dirname, 'data', 'premade-items.json');
+const INDEX_CANDIDATES = [
+    path.join(__dirname, 'dist', 'index.html'),
+    path.join(__dirname, 'public', 'index.html'),
+    path.join(__dirname, 'index.html'),
+];
+let SPA_INDEX = null;
+for (const candidate of INDEX_CANDIDATES) {
+    try {
+        await fs.access(candidate);
+        SPA_INDEX = candidate;
+        break;
+    } catch {
+        // ignore missing candidates
+    }
+}
 
 // --- game helpers ---
 function ensureGameShape(game) {
@@ -926,6 +941,12 @@ app.use('/api/personas', personas);
 // Static files (if built)
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.static(path.join(__dirname, 'dist')));
+
+if (SPA_INDEX) {
+    app.get('/join/:code', (_req, res) => {
+        res.sendFile(SPA_INDEX);
+    });
+}
 
 // centralized error handler (prevents crashing the process)
 app.use((err, _req, res, next) => {
