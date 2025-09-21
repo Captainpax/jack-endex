@@ -156,6 +156,54 @@ function ensureInventoryItem(item) {
 
 const GEAR_SLOTS = ['weapon', 'armor', 'accessory'];
 const ABILITY_CODES = new Set(['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']);
+const ABILITY_LIST = Array.from(ABILITY_CODES);
+
+function abilityModifier(score) {
+    const num = Number(score);
+    if (!Number.isFinite(num)) return 0;
+    return Math.floor((num - 10) / 2);
+}
+
+function normalizeAbilityScores(raw, fallback = {}) {
+    const out = {};
+    for (const key of ABILITY_LIST) {
+        const source = raw && Object.prototype.hasOwnProperty.call(raw, key) ? raw[key] : fallback[key];
+        const num = Number(source);
+        out[key] = Number.isFinite(num) ? num : 0;
+    }
+    return out;
+}
+
+function deriveAbilityMods(stats) {
+    const mods = {};
+    for (const key of ABILITY_LIST) {
+        mods[key] = abilityModifier(stats?.[key]);
+    }
+    return mods;
+}
+
+function convertLegacyStats(raw) {
+    if (!raw || typeof raw !== 'object') {
+        return normalizeAbilityScores({});
+    }
+    const hasModernKeys = ABILITY_LIST.some((key) => Object.prototype.hasOwnProperty.call(raw, key));
+    if (hasModernKeys) {
+        return normalizeAbilityScores(raw);
+    }
+    const mapped = {
+        STR: raw.STR ?? raw.strength,
+        DEX: raw.DEX ?? raw.agility,
+        CON: raw.CON ?? raw.endurance,
+        INT: raw.INT ?? raw.magic,
+        CHA: raw.CHA ?? raw.luck,
+    };
+    const legacyWis =
+        raw.WIS ??
+        raw.wisdom ??
+        Math.round(((Number(raw.magic) || 0) + (Number(raw.luck) || 0)) / 2);
+    mapped.WIS = legacyWis;
+    return normalizeAbilityScores(mapped);
+}
 
 const DEFAULT_WORLD_SKILLS = [
     { id: 'balance', key: 'balance', label: 'Balance', ability: 'DEX' },
@@ -2716,19 +2764,15 @@ app.post('/api/games/:id/demons', requireAuth, async (req, res) => {
     }
 
     const body = req.body || {};
+    const stats = convertLegacyStats(body.stats);
     const demon = {
         id: uuid(),
         name: sanitizeText(body.name),
         arcana: sanitizeText(body.arcana),
         alignment: sanitizeText(body.alignment),
         level: Number(body.level) || 0,
-        stats: {
-            strength: Number(body.stats?.strength) || 0,
-            magic: Number(body.stats?.magic) || 0,
-            endurance: Number(body.stats?.endurance) || 0,
-            agility: Number(body.stats?.agility) || 0,
-            luck: Number(body.stats?.luck) || 0,
-        },
+        stats,
+        mods: deriveAbilityMods(stats),
         resistances: {
             weak: normalizeArray(body.resistances?.weak),
             resist: normalizeArray(body.resistances?.resist),
@@ -2763,19 +2807,20 @@ app.put('/api/games/:id/demons/:demonId', requireAuth, async (req, res) => {
 
     const body = req.body || {};
     const current = game.demons[idx] || {};
+    const baseStats = convertLegacyStats(current.stats);
+    const stats =
+        body.stats !== undefined
+            ? normalizeAbilityScores(convertLegacyStats(body.stats), baseStats)
+            : baseStats;
+
     const updated = {
         ...current,
         name: sanitizeText(body.name ?? current.name),
         arcana: sanitizeText(body.arcana ?? current.arcana),
         alignment: sanitizeText(body.alignment ?? current.alignment),
         level: Number(body.level ?? current.level) || 0,
-        stats: {
-            strength: Number(body.stats?.strength ?? current.stats?.strength) || 0,
-            magic: Number(body.stats?.magic ?? current.stats?.magic) || 0,
-            endurance: Number(body.stats?.endurance ?? current.stats?.endurance) || 0,
-            agility: Number(body.stats?.agility ?? current.stats?.agility) || 0,
-            luck: Number(body.stats?.luck ?? current.stats?.luck) || 0,
-        },
+        stats,
+        mods: deriveAbilityMods(stats),
         resistances: {
             weak: body.resistances?.weak !== undefined ? normalizeArray(body.resistances?.weak) : (current.resistances?.weak || []),
             resist: body.resistances?.resist !== undefined ? normalizeArray(body.resistances?.resist) : (current.resistances?.resist || []),

@@ -16,7 +16,16 @@ export default function MatrixRain() {
     const [columns, setColumns] = useState(() => []);
     const fadeTimer = useRef(null);
 
-    useEffect(() => onApiActivity(setActive), []);
+    useEffect(() => {
+        const unsubscribe = onApiActivity(setActive);
+        return () => {
+            unsubscribe();
+            if (fadeTimer.current) {
+                clearTimeout(fadeTimer.current);
+                fadeTimer.current = null;
+            }
+        };
+    }, []);
 
     useEffect(() => {
         if (active) {
