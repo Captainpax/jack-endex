@@ -409,6 +409,7 @@ export const Games = {
     addPlayerItem: (id, playerId, item) => api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/items`, { method: 'POST', body: { item } }),
     updatePlayerItem: (id, playerId, itemId, item) => api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/items/${encodeURIComponent(itemId)}`, { method: 'PUT', body: { item } }),
     deletePlayerItem: (id, playerId, itemId) => api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/items/${encodeURIComponent(itemId)}`, { method: 'DELETE' }),
+    removePlayer: (id, playerId) => api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}`, { method: 'DELETE' }),
     setPlayerGear: (id, playerId, slot, item) => api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/gear/${encodeURIComponent(slot)}`, { method: 'PUT', body: { item } }),
     clearPlayerGear: (id, playerId, slot) => api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/gear/${encodeURIComponent(slot)}`, { method: 'DELETE' }),
     addCustomGear: (id, item) => api(`/api/games/${encodeURIComponent(id)}/gear/custom`, { method: 'POST', body: { item } }),
