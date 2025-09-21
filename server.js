@@ -1718,7 +1718,9 @@ function readWebhookUrl(value) {
         const url = new URL(trimmed);
         const host = url.host.toLowerCase();
         if (!host.endsWith('discord.com') && !host.endsWith('discordapp.com')) return '';
-        if (!url.pathname.startsWith('/api/webhooks/')) return '';
+        const path = url.pathname;
+        const webhookPattern = /^\/api(?:\/v\d+)?\/webhooks\//;
+        if (!webhookPattern.test(path)) return '';
         return url.toString();
     } catch {
         return '';
