@@ -88,13 +88,55 @@ function ensureGearEntry(item) {
     };
 }
 
-function ensureGearSlots(player) {
+function ensureGearState(player) {
     const raw = player && typeof player.gear === 'object' ? player.gear : {};
-    const normalized = {};
-    for (const slot of GEAR_SLOTS) {
-        normalized[slot] = ensureGearEntry(raw?.[slot]) ?? null;
+    const bagMap = new Map();
+
+    function upsert(entry) {
+        const normalized = ensureGearEntry(entry);
+        if (!normalized) return null;
+        const existing = bagMap.get(normalized.id);
+        if (existing) {
+            bagMap.set(normalized.id, { ...existing, ...normalized });
+        } else {
+            bagMap.set(normalized.id, normalized);
+        }
+        return normalized.id;
     }
-    return normalized;
+
+    const inputBag = Array.isArray(raw.bag) ? raw.bag : [];
+    for (const entry of inputBag) upsert(entry);
+
+    const normalizedSlots = {};
+    const rawSlots = raw && typeof raw.slots === 'object' ? raw.slots : {};
+
+    for (const slot of GEAR_SLOTS) {
+        let itemId = null;
+        const slotSource = rawSlots?.[slot];
+        if (slotSource && typeof slotSource === 'object') {
+            if (typeof slotSource.itemId === 'string' && slotSource.itemId) {
+                if (bagMap.has(slotSource.itemId)) {
+                    itemId = slotSource.itemId;
+                } else if (slotSource.item && typeof slotSource.item === 'object') {
+                    itemId = upsert({ ...slotSource.item, id: slotSource.itemId });
+                }
+            } else {
+                const inserted = upsert(slotSource);
+                if (inserted) itemId = inserted;
+            }
+        }
+
+        if (!itemId) {
+            const legacyEntry = raw?.[slot];
+            const inserted = upsert(legacyEntry);
+            if (inserted) itemId = inserted;
+        }
+
+        normalizedSlots[slot] = itemId ? { itemId } : null;
+    }
+
+    const bag = Array.from(bagMap.values());
+    return { bag, slots: normalizedSlots };
 }
 
 function ensurePlayerShape(player) {
@@ -107,7 +149,7 @@ function ensurePlayerShape(player) {
     } else {
         out.inventory = [];
     }
-    out.gear = ensureGearSlots(out);
+    out.gear = ensureGearState(out);
     return out;
 }
 
@@ -161,10 +203,23 @@ function canEditInventory(game, actingUserId, targetUserId) {
     return !!game.permissions?.canEditItems;
 }
 
-function ensureGearMap(player) {
-    if (!player || typeof player !== 'object') return { weapon: null, armor: null, accessory: null };
-    player.gear = ensureGearSlots(player);
-    return player.gear;
+function ensureGear(player) {
+    if (!player || typeof player !== 'object') {
+        return {
+            bag: [],
+            slots: GEAR_SLOTS.reduce((acc, slot) => {
+                acc[slot] = null;
+                return acc;
+            }, {}),
+        };
+    }
+    const normalized = ensureGearState(player);
+    player.gear = normalized;
+    return normalized;
+}
+
+function ensureGearBag(player) {
+    return ensureGear(player).bag;
 }
 
 function canEditGear(game, actingUserId, targetUserId) {
@@ -369,7 +424,7 @@ app.post('/api/games', requireAuth, async (req, res) => {
             role: 'dm',
             character: null,
             inventory: [],
-            gear: { weapon: null, armor: null, accessory: null },
+            gear: { bag: [], slots: { weapon: null, armor: null, accessory: null } },
         }],
         items: { custom: [] },
         gear: { custom: [] },
@@ -448,7 +503,7 @@ app.post('/api/games/join/:code', requireAuth, async (req, res) => {
             role: 'player',
             character: null,
             inventory: [],
-            gear: { weapon: null, armor: null, accessory: null },
+        gear: { bag: [], slots: { weapon: null, armor: null, accessory: null } },
         });
     }
 
@@ -743,13 +798,8 @@ app.delete('/api/games/:id/players/:playerId/items/:itemId', requireAuth, async 
     res.json({ ok: true });
 });
 
-app.put('/api/games/:id/players/:playerId/gear/:slot', requireAuth, async (req, res) => {
+app.post('/api/games/:id/players/:playerId/gear/bag', requireAuth, async (req, res) => {
     const { id, playerId } = req.params || {};
-    const slot = (req.params?.slot || '').toLowerCase();
-    if (!GEAR_SLOTS.includes(slot)) {
-        return res.status(400).json({ error: 'invalid_slot' });
-    }
-
     const db = await readDB();
     const game = getGame(db, id);
     if (!game || !isMember(game, req.session.userId)) {
@@ -773,28 +823,29 @@ app.put('/api/games/:id/players/:playerId/gear/:slot', requireAuth, async (req, 
     const type = sanitizeText(payload.type).trim();
     const desc = sanitizeText(payload.desc);
 
-    const gear = ensureGearMap(target);
-    const current = gear?.[slot];
+    const gearState = ensureGear(target);
+    const bag = gearState.bag;
     const entry = {
-        id: typeof payload.id === 'string' && payload.id ? payload.id : current?.id || uuid(),
+        id: typeof payload.id === 'string' && payload.id ? payload.id : uuid(),
         name,
         type,
         desc,
     };
 
-    gear[slot] = entry;
+    const existingIdx = bag.findIndex((it) => it && it.id === entry.id);
+    if (existingIdx === -1) {
+        bag.push(entry);
+    } else {
+        bag[existingIdx] = entry;
+    }
+
     saveGame(db, game);
     await writeDB(db);
     res.json(entry);
 });
 
-app.delete('/api/games/:id/players/:playerId/gear/:slot', requireAuth, async (req, res) => {
-    const { id, playerId } = req.params || {};
-    const slot = (req.params?.slot || '').toLowerCase();
-    if (!GEAR_SLOTS.includes(slot)) {
-        return res.status(400).json({ error: 'invalid_slot' });
-    }
-
+app.put('/api/games/:id/players/:playerId/gear/bag/:itemId', requireAuth, async (req, res) => {
+    const { id, playerId, itemId } = req.params || {};
     const db = await readDB();
     const game = getGame(db, id);
     if (!game || !isMember(game, req.session.userId)) {
@@ -812,16 +863,186 @@ app.delete('/api/games/:id/players/:playerId/gear/:slot', requireAuth, async (re
         return res.status(403).json({ error: 'forbidden' });
     }
 
-    const gear = ensureGearMap(target);
-    if (!gear?.[slot]) {
-        return res.status(404).json({ error: 'gear_not_found' });
+    const bag = ensureGearBag(target);
+    const entry = bag.find((it) => it && it.id === itemId);
+    if (!entry) {
+        return res.status(404).json({ error: 'gear_item_not_found' });
     }
 
-    gear[slot] = null;
+    const payload = req.body?.item || req.body || {};
+    if (Object.prototype.hasOwnProperty.call(payload, 'name')) {
+        const name = sanitizeText(payload.name).trim();
+        if (!name) return res.status(400).json({ error: 'missing name' });
+        entry.name = name;
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'type')) {
+        entry.type = sanitizeText(payload.type).trim();
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'desc')) {
+        entry.desc = sanitizeText(payload.desc);
+    }
+
+    saveGame(db, game);
+    await writeDB(db);
+    res.json(entry);
+});
+
+app.delete('/api/games/:id/players/:playerId/gear/bag/:itemId', requireAuth, async (req, res) => {
+    const { id, playerId, itemId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
+    const target = findPlayer(game, playerId);
+    if (!target) return res.status(404).json({ error: 'player_not_found' });
+    if ((target.role || '').toLowerCase() === 'dm') {
+        return res.status(400).json({ error: 'dm_has_no_gear' });
+    }
+
+    const actor = req.session.userId;
+    if (!canEditGear(game, actor, playerId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const gearState = ensureGear(target);
+    const bag = gearState.bag;
+    const idx = bag.findIndex((it) => it && it.id === itemId);
+    if (idx === -1) {
+        return res.status(404).json({ error: 'gear_item_not_found' });
+    }
+
+    const [removed] = bag.splice(idx, 1);
+    if (removed) {
+        const slots = gearState.slots;
+        for (const slot of GEAR_SLOTS) {
+            if (slots?.[slot]?.itemId === removed.id) {
+                slots[slot] = null;
+            }
+        }
+    }
+
     saveGame(db, game);
     await writeDB(db);
     res.json({ ok: true });
 });
+
+async function handleEquipSlot(req, res) {
+    const { id, playerId } = req.params || {};
+    const slot = (req.params?.slot || '').toLowerCase();
+    if (!GEAR_SLOTS.includes(slot)) {
+        res.status(400).json({ error: 'invalid_slot' });
+        return null;
+    }
+
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        res.status(404).json({ error: 'not_found' });
+        return null;
+    }
+
+    const target = findPlayer(game, playerId);
+    if (!target) {
+        res.status(404).json({ error: 'player_not_found' });
+        return null;
+    }
+    if ((target.role || '').toLowerCase() === 'dm') {
+        res.status(400).json({ error: 'dm_has_no_gear' });
+        return null;
+    }
+
+    const actor = req.session.userId;
+    if (!canEditGear(game, actor, playerId)) {
+        res.status(403).json({ error: 'forbidden' });
+        return null;
+    }
+
+    return { db, game, target, slot };
+}
+
+async function equipSlotPut(req, res) {
+    const context = await handleEquipSlot(req, res);
+    if (!context) return;
+    const { db, game, target, slot } = context;
+
+    const gearState = ensureGear(target);
+    const bag = gearState.bag;
+    const slots = gearState.slots;
+
+    const payload = req.body?.item || req.body || {};
+    let itemId = null;
+
+    if (typeof payload.itemId === 'string') {
+        const trimmed = payload.itemId.trim();
+        if (!trimmed) {
+            slots[slot] = null;
+            saveGame(db, game);
+            await writeDB(db);
+            res.json({ ok: true });
+            return;
+        }
+        const match = bag.find((it) => it && it.id === trimmed);
+        if (!match) {
+            res.status(404).json({ error: 'gear_item_not_found' });
+            return;
+        }
+        itemId = match.id;
+    } else {
+        const name = sanitizeText(payload.name).trim();
+        if (!name) {
+            res.status(400).json({ error: 'missing name' });
+            return;
+        }
+        const type = sanitizeText(payload.type).trim();
+        const desc = sanitizeText(payload.desc);
+        const entry = {
+            id: typeof payload.id === 'string' && payload.id ? payload.id : uuid(),
+            name,
+            type,
+            desc,
+        };
+        const existingIdx = bag.findIndex((it) => it && it.id === entry.id);
+        if (existingIdx === -1) {
+            bag.push(entry);
+        } else {
+            bag[existingIdx] = entry;
+        }
+        itemId = entry.id;
+    }
+
+    slots[slot] = itemId ? { itemId } : null;
+
+    saveGame(db, game);
+    await writeDB(db);
+    const item = bag.find((it) => it && it.id === itemId) || null;
+    res.json({ slot, itemId, item });
+}
+
+async function equipSlotDelete(req, res) {
+    const context = await handleEquipSlot(req, res);
+    if (!context) return;
+    const { db, game, target, slot } = context;
+
+    const gearState = ensureGear(target);
+    const slots = gearState.slots;
+    if (!slots?.[slot]) {
+        res.status(404).json({ error: 'gear_not_found' });
+        return;
+    }
+
+    slots[slot] = null;
+    saveGame(db, game);
+    await writeDB(db);
+    res.json({ ok: true });
+}
+
+app.put('/api/games/:id/players/:playerId/gear/:slot', requireAuth, equipSlotPut);
+app.put('/api/games/:id/players/:playerId/gear/slots/:slot', requireAuth, equipSlotPut);
+
+app.delete('/api/games/:id/players/:playerId/gear/:slot', requireAuth, equipSlotDelete);
+app.delete('/api/games/:id/players/:playerId/gear/slots/:slot', requireAuth, equipSlotDelete);
 
 app.post('/api/games/:id/gear/custom', requireAuth, async (req, res) => {
     const { id } = req.params || {};

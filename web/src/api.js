@@ -410,7 +410,26 @@ export const Games = {
     updatePlayerItem: (id, playerId, itemId, item) => api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/items/${encodeURIComponent(itemId)}`, { method: 'PUT', body: { item } }),
     deletePlayerItem: (id, playerId, itemId) => api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/items/${encodeURIComponent(itemId)}`, { method: 'DELETE' }),
     removePlayer: (id, playerId) => api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}`, { method: 'DELETE' }),
-    setPlayerGear: (id, playerId, slot, item) => api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/gear/${encodeURIComponent(slot)}`, { method: 'PUT', body: { item } }),
+    addPlayerGearBag: (id, playerId, item) =>
+        api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/gear/bag`, {
+            method: 'POST',
+            body: { item },
+        }),
+    updatePlayerGearBag: (id, playerId, itemId, item) =>
+        api(
+            `/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/gear/bag/${encodeURIComponent(itemId)}`,
+            { method: 'PUT', body: { item } }
+        ),
+    deletePlayerGearBag: (id, playerId, itemId) =>
+        api(
+            `/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/gear/bag/${encodeURIComponent(itemId)}`,
+            { method: 'DELETE' }
+        ),
+    setPlayerGear: (id, playerId, slot, payload) =>
+        api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/gear/${encodeURIComponent(slot)}`, {
+            method: 'PUT',
+            body: payload,
+        }),
     clearPlayerGear: (id, playerId, slot) => api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/gear/${encodeURIComponent(slot)}`, { method: 'DELETE' }),
     addCustomGear: (id, item) => api(`/api/games/${encodeURIComponent(id)}/gear/custom`, { method: 'POST', body: { item } }),
     updateCustomGear: (id, itemId, item) => api(`/api/games/${encodeURIComponent(id)}/gear/custom/${encodeURIComponent(itemId)}`, { method: 'PUT', body: { item } }),
