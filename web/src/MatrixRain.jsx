@@ -51,7 +51,7 @@ export default function MatrixRain() {
                     chars: [randomGlyph(), ...col.chars.slice(0, ROWS - 1)],
                 }))
             );
-        }, 120);
+        }, 95);
         return () => clearInterval(interval);
     }, [active]);
 
