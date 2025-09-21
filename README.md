@@ -15,15 +15,17 @@ If you are developing a production application, we recommend using TypeScript wi
 
 The in-app **Story Logs** tab now both reads and posts messages through the backend. To wire things up:
 
-1. Provide a Discord bot token that can view your campaign channels before starting `node server.js`.
+1. Invite a Discord bot that can view your campaign channels. Each campaign may use its own bot token, or you can provide a shared fallback token before starting `node server.js`:
 
    ```bash
-   export DISCORD_BOT_TOKEN="<bot token with read history access>"
+   export DISCORD_BOT_TOKEN="<optional fallback bot token with read history access>"
    ```
 
-   The token is shared across every campaign on the instance. Use [the Discord developer portal](https://discord.com/developers/applications) to create a bot and invite it with the `Read Messages/View Channel` and `Read Message History` permissions. If the webhook will post to a different server, also grant it access there.
+   Use [the Discord developer portal](https://discord.com/developers/applications) to create a bot and invite it with the `Read Messages/View Channel` and `Read Message History` permissions. If the webhook will post to a different server, also grant it access there.
 
 2. Inside the app, each campaign's **Settings → Discord story integration** panel lets the DM supply:
+
+   - A Discord bot token dedicated to that campaign (falls back to the shared token if omitted).
 
    - The Discord channel snowflake to watch.
    - An optional guild ID used for validation and jump links.

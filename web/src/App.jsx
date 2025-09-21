@@ -2953,6 +2953,7 @@ const IMAGE_FILE_REGEX = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
  *   allowPlayerPosts: boolean,
  *   scribeIds: string[],
  *   webhookConfigured: boolean,
+ *   botTokenConfigured: boolean,
  *   pollIntervalMs: number
  * }}
  */
@@ -2964,6 +2965,7 @@ function normalizeStoryLogConfig(source) {
             allowPlayerPosts: false,
             scribeIds: [],
             webhookConfigured: false,
+            botTokenConfigured: false,
             pollIntervalMs: DEFAULT_STORY_POLL_MS,
         };
     }
@@ -2976,6 +2978,7 @@ function normalizeStoryLogConfig(source) {
         allowPlayerPosts: !!source.allowPlayerPosts,
         scribeIds: ids,
         webhookConfigured: !!(source.webhookConfigured || source.webhookUrl),
+        botTokenConfigured: !!source.botTokenConfigured,
         pollIntervalMs: Number(source.pollIntervalMs) || DEFAULT_STORY_POLL_MS,
     };
 }
@@ -2988,6 +2991,7 @@ function normalizeStoryLogConfig(source) {
  *   channelId: string,
  *   guildId: string,
  *   webhookUrl: string,
+ *   botToken: string,
  *   allowPlayerPosts: boolean,
  *   scribeIds: string[]
  * }}
@@ -2998,6 +3002,7 @@ function normalizeStorySettings(story) {
             channelId: "",
             guildId: "",
             webhookUrl: "",
+            botToken: "",
             allowPlayerPosts: false,
             scribeIds: [],
         };
@@ -3009,6 +3014,7 @@ function normalizeStorySettings(story) {
         channelId: story.channelId || "",
         guildId: story.guildId || "",
         webhookUrl: story.webhookUrl || "",
+        botToken: typeof story.botToken === "string" ? story.botToken : "",
         allowPlayerPosts: !!story.allowPlayerPosts,
         scribeIds: ids,
     };
@@ -3359,7 +3365,9 @@ function StoryLogsTab({ game, me }) {
     const lastSynced = status.lastSyncAt || data.fetchedAt;
     const lastSyncedRelative = formatRelative(lastSynced);
     const lastSyncedAbsolute = formatTimestamp(lastSynced);
-    const showErrorBanner = error && phase === 'error';
+    const showErrorBanner = Boolean(
+        error && (phase === 'error' || phase === 'missing_token')
+    );
     const hasMessages = data.messages.length > 0;
     const composerVisible = canPost && personaOptions.length > 0;
     const playerPostingDisabled = !isDM && !config.allowPlayerPosts;
@@ -6007,6 +6015,23 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
                             updates.
                         </p>
                         <label className="field" style={{ display: "grid", gap: 4 }}>
+                            <span className="text-small">Bot token</span>
+                            <input
+                                type="password"
+                                value={storyForm.botToken}
+                                onChange={(e) =>
+                                    setStoryForm((prev) => ({ ...prev, botToken: e.target.value }))
+                                }
+                                placeholder="Paste the Discord bot token for this campaign"
+                                autoComplete="off"
+                                spellCheck={false}
+                                disabled={storySaving}
+                            />
+                            <span className="text-muted text-small">
+                                Each campaign can use its own bot token. The bot must have access to the configured channel.
+                            </span>
+                        </label>
+                        <label className="field" style={{ display: "grid", gap: 4 }}>
                             <span className="text-small">Channel ID</span>
                             <input
                                 type="text"
@@ -6117,6 +6142,7 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
                                             channelId: storyForm.channelId.trim(),
                                             guildId: storyForm.guildId.trim(),
                                             webhookUrl: storyForm.webhookUrl.trim(),
+                                            botToken: storyForm.botToken.trim(),
                                             allowPlayerPosts: storyForm.allowPlayerPosts,
                                             scribeIds: storyForm.scribeIds,
                                         };
