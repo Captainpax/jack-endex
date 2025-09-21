@@ -455,6 +455,12 @@ export const Items = {
     premade: () => api('/api/items/premade', { cache: 10_000 }),
 };
 
+export const Help = {
+    docs: () => api('/api/help/docs', { cache: 10_000 }),
+    getDoc: (filename) =>
+        api(`/txtdocs/${encodeURIComponent(filename)}`, { expect: 'text' }),
+};
+
 export const Personas = {
     search: (q) => api('/api/personas/search', { query: { q }, cache: 5000 }),
     get: (slug) => api(`/api/personas/${encodeURIComponent(slug)}`, { cache: 5000 }),
