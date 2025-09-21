@@ -661,11 +661,15 @@ function ItemsTab({ game, me, onUpdate }) {
         });
     }, [isDM, playerOptions]);
 
-    const visiblePlayers = isDM
-        ? playerOptions
-              .filter((opt) => selectedPlayerId && opt.value === selectedPlayerId)
-              .map((opt) => opt.data)
-        : players;
+    const visiblePlayers = useMemo(() => {
+        if (isDM) {
+            if (!selectedPlayerId) return [];
+            const match = playerOptions.find((opt) => opt.value === selectedPlayerId);
+            return match ? [match.data] : [];
+        }
+        const self = players.find((p) => p.userId === me.id);
+        return self ? [self] : [];
+    }, [isDM, me.id, playerOptions, players, selectedPlayerId]);
 
     return (
         <div className="col" style={{ display: "grid", gap: 16 }}>
@@ -796,7 +800,11 @@ function ItemsTab({ game, me, onUpdate }) {
                 {players.length === 0 ? (
                     <div style={{ opacity: 0.7 }}>No players have joined yet.</div>
                 ) : visiblePlayers.length === 0 ? (
-                    <div style={{ opacity: 0.7 }}>Select a player to view their inventory.</div>
+                    <div style={{ opacity: 0.7 }}>
+                        {isDM
+                            ? "Select a player to view their inventory."
+                            : "No inventory available for your character yet."}
+                    </div>
                 ) : (
                     <div className="list" style={{ gap: 12 }}>
                         {visiblePlayers.map((p) => (
@@ -1432,11 +1440,15 @@ function GearTab({ game, me, onUpdate }) {
         });
     }, [isDM, playerOptions]);
 
-    const visiblePlayers = isDM
-        ? playerOptions
-              .filter((opt) => selectedPlayerId && opt.value === selectedPlayerId)
-              .map((opt) => opt.data)
-        : players;
+    const visiblePlayers = useMemo(() => {
+        if (isDM) {
+            if (!selectedPlayerId) return [];
+            const match = playerOptions.find((opt) => opt.value === selectedPlayerId);
+            return match ? [match.data] : [];
+        }
+        const self = players.find((p) => p.userId === me.id);
+        return self ? [self] : [];
+    }, [isDM, me.id, playerOptions, players, selectedPlayerId]);
 
     return (
         <div className="col" style={{ display: "grid", gap: 16 }}>
@@ -1568,7 +1580,11 @@ function GearTab({ game, me, onUpdate }) {
                 {players.length === 0 ? (
                     <div style={{ opacity: 0.7 }}>No players have joined yet.</div>
                 ) : visiblePlayers.length === 0 ? (
-                    <div style={{ opacity: 0.7 }}>Select a player to manage their gear.</div>
+                    <div style={{ opacity: 0.7 }}>
+                        {isDM
+                            ? "Select a player to manage their gear."
+                            : "No gear assigned to your character yet."}
+                    </div>
                 ) : (
                     <div className="list" style={{ gap: 12 }}>
                         {visiblePlayers.map((p) => (
