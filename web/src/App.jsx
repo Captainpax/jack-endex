@@ -68,6 +68,159 @@ const PLAYER_NAV = [
     },
 ];
 
+const ABILITY_DEFS = [
+    {
+        key: "STR",
+        label: "Strength",
+        summary: "HP+, melee strikes, physical prowess",
+    },
+    {
+        key: "DEX",
+        label: "Dexterity",
+        summary: "TP++, guns, reflexes, acting first",
+    },
+    {
+        key: "CON",
+        label: "Constitution",
+        summary: "HP++, TP+, grit against ailments",
+    },
+    {
+        key: "INT",
+        label: "Intelligence",
+        summary: "MP++, SP++, offensive spellcraft",
+    },
+    {
+        key: "WIS",
+        label: "Wisdom",
+        summary: "MP+, restorative and support focus",
+    },
+    {
+        key: "CHA",
+        label: "Charisma",
+        summary: "SP+, negotiations, social leverage",
+    },
+];
+
+const ARCANA_DATA = [
+    { key: "fool", label: "Fool", bonus: "+1 SP on level", penalty: "No bonus stats on creation" },
+    { key: "magician", label: "Magician", bonus: "+2 INT", penalty: "-2 STR" },
+    { key: "emperor", label: "Emperor", bonus: "+1 CHA, +1 STR", penalty: "-2 DEX" },
+    { key: "empress", label: "Empress", bonus: "+1 CHA, +1 DEX", penalty: "-2 STR" },
+    { key: "chariot", label: "Chariot", bonus: "+2 CON", penalty: "-1 DEX, -1 WIS" },
+    { key: "hermit", label: "Hermit", bonus: "+2 WIS", penalty: "-2 CON" },
+    { key: "fortune", label: "Fortune", bonus: "+1 CHA, +1 DEX", penalty: "-2 WIS" },
+    { key: "strength", label: "Strength", bonus: "+2 STR", penalty: "-2 INT" },
+    { key: "temperance", label: "Temperance", bonus: "+2 CHA", penalty: "-1 INT, -1 WIS" },
+    { key: "tower", label: "Tower", bonus: "+2 WIS", penalty: "-1 STR, -1 DEX" },
+    { key: "star", label: "Star", bonus: "+2 DEX", penalty: "-1 INT, -1 CHA" },
+    { key: "moon", label: "Moon", bonus: "+1 STR, +1 WIS", penalty: "-2 DEX" },
+    { key: "sun", label: "Sun", bonus: "+2 INT", penalty: "-2 WIS" },
+    { key: "knight", label: "Knight", bonus: "+1 DEX, +1 STR", penalty: "-1 CHA, -1 CON" },
+];
+
+const WORLD_SKILLS = [
+    { key: "balance", label: "Balance", ability: "DEX" },
+    { key: "bluff", label: "Bluff", ability: "CHA" },
+    { key: "climb", label: "Climb", ability: "STR" },
+    { key: "concentration", label: "Concentration", ability: "CON" },
+    { key: "craftGeneral", label: "Craft (General)", ability: "INT" },
+    { key: "craftKnowledge", label: "Craft (Knowledge)", ability: "INT" },
+    { key: "craftMagic", label: "Craft (Magic)", ability: "INT" },
+    { key: "diplomacy", label: "Diplomacy", ability: "CHA" },
+    { key: "disableDevice", label: "Disable Device", ability: "DEX" },
+    { key: "disguise", label: "Disguise", ability: "CHA" },
+    { key: "escapeArtist", label: "Escape Artist", ability: "DEX" },
+    { key: "gatherInformation", label: "Gather Information", ability: "CHA" },
+    { key: "handleAnimal", label: "Handle Animal", ability: "CHA" },
+    { key: "heal", label: "Heal", ability: "WIS" },
+    { key: "hide", label: "Hide", ability: "DEX" },
+    { key: "intimidate", label: "Intimidate", ability: "CHA" },
+    { key: "jump", label: "Jump", ability: "STR" },
+    { key: "knowledgeArcana", label: "Knowledge (Arcana)", ability: "INT" },
+    { key: "knowledgeReligion", label: "Knowledge (Religion)", ability: "INT" },
+    { key: "knowledgePlanes", label: "Knowledge (The Planes)", ability: "INT" },
+    { key: "listen", label: "Listen", ability: "WIS" },
+    { key: "moveSilently", label: "Move Silently", ability: "DEX" },
+    { key: "negotiation", label: "Negotiation", ability: "CHA" },
+    { key: "perform", label: "Perform", ability: "CHA" },
+    { key: "ride", label: "Ride", ability: "DEX" },
+    { key: "senseMotive", label: "Sense Motive", ability: "WIS" },
+    { key: "sleightOfHand", label: "Sleight of Hand", ability: "DEX" },
+    { key: "spellcraft", label: "Spellcraft", ability: "INT" },
+    { key: "spot", label: "Spot", ability: "WIS" },
+    { key: "survival", label: "Survival", ability: "WIS" },
+    { key: "swim", label: "Swim", ability: "STR" },
+    { key: "useRope", label: "Use Rope", ability: "DEX" },
+];
+
+const SAVE_DEFS = [
+    { key: "fortitude", label: "Fortitude", ability: "CON" },
+    { key: "reflex", label: "Reflex", ability: "DEX" },
+    { key: "will", label: "Will", ability: "WIS" },
+];
+
+const ROLE_ARCHETYPES = [
+    {
+        key: "tank",
+        title: "Tank",
+        stats: "CON+++ · STR++ · DEX+",
+        pros: "Tough as nails, absorbs punishment",
+        cons: "Slow and often simple-minded",
+    },
+    {
+        key: "fighter",
+        title: "Fighter",
+        stats: "STR+++ · DEX++ · CON+",
+        pros: "Versatile weapon expert",
+        cons: "Needs support versus magic",
+    },
+    {
+        key: "gunner",
+        title: "Gunner",
+        stats: "DEX+++ · STR++ · CON+",
+        pros: "Dominates from range",
+        cons: "Fragile up close",
+    },
+    {
+        key: "mage",
+        title: "Mage",
+        stats: "INT+++ · WIS++ · CHA+",
+        pros: "Devastating spells & AoEs",
+        cons: "Low physical defenses",
+    },
+    {
+        key: "healer",
+        title: "Healer",
+        stats: "WIS+++ · INT++ · CHA+",
+        pros: "Sustain & buffs",
+        cons: "Lower personal damage",
+    },
+    {
+        key: "negotiator",
+        title: "Negotiator",
+        stats: "CHA+++ · WIS++ · INT+",
+        pros: "Best at demon diplomacy",
+        cons: "Weak alone if cornered",
+    },
+];
+
+function abilityModifier(score) {
+    const value = Number(score);
+    if (!Number.isFinite(value)) return 0;
+    return Math.floor((value - 10) / 2);
+}
+
+function formatModifier(mod) {
+    const value = Number(mod) || 0;
+    return value >= 0 ? `+${value}` : String(value);
+}
+
+function clampNonNegative(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num) || num < 0) return 0;
+    return num;
+}
+
 // ---------- App Root ----------
 export default function App() {
     const [me, setMe] = useState(null);
@@ -1018,7 +1171,7 @@ function JoinByCode({ onJoined }) {
     );
 }
 
-function MathField({ label, value, onCommit, className }) {
+function MathField({ label, value, onCommit, className, disabled = false }) {
     const [draft, setDraft] = useState(formatNumber(value));
     const [dirty, setDirty] = useState(false);
     const [error, setError] = useState(null);
@@ -1085,6 +1238,7 @@ function MathField({ label, value, onCommit, className }) {
                 autoCapitalize="off"
                 title="Supports +, -, ×, ÷, and parentheses"
                 aria-invalid={error ? true : undefined}
+                disabled={disabled}
             />
             {error && <span className="text-error text-small">{error}</span>}
         </div>
@@ -1128,140 +1282,548 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     const selectedPlayerId = isDM ? targetUserId : me.id;
     const slot = useMemo(
         () =>
-            (selectedPlayerId
-                ? (game.players || []).find((p) => p.userId === selectedPlayerId)
-                : null) || {},
+            (
+                selectedPlayerId
+                    ? (game.players || []).find((p) => p.userId === selectedPlayerId)
+                    : null
+            ) || {},
         [game.players, selectedPlayerId]
     );
     const slotCharacter = slot?.character;
-    const [ch, setCh] = useState(slotCharacter || {});
+    const [ch, setCh] = useState(() => normalizeCharacter(slotCharacter));
     const [saving, setSaving] = useState(false);
+    const [showWizard, setShowWizard] = useState(false);
 
     useEffect(() => {
-        setCh(slotCharacter || {});
+        setCh(normalizeCharacter(slotCharacter));
     }, [game.id, selectedPlayerId, slotCharacter]);
 
     const set = useCallback((path, value) => {
         setCh((prev) => {
             const next = deepClone(prev || {});
-            let o = next;
+            let ref = next;
             const seg = path.split(".");
             for (let i = 0; i < seg.length - 1; i++) {
-                o[seg[i]] = o[seg[i]] ?? {};
-                o = o[seg[i]];
+                const key = seg[i];
+                if (ref[key] == null || typeof ref[key] !== "object") {
+                    ref[key] = {};
+                }
+                ref = ref[key];
             }
-            o[seg.at(-1)] = value;
-            return next;
+            ref[seg.at(-1)] = value;
+            return normalizeCharacter(next);
         });
     }, []);
 
-    const field = (label, path, type = "text") => {
-        if (type === "number") {
-            return (
-                <MathField
-                    label={label}
-                    value={get(ch, path)}
-                    onCommit={(val) => set(path, val)}
-                />
-            );
-        }
-        return (
-            <div className="col">
-                <label>{label}</label>
-                <input
-                    type="text"
-                    value={get(ch, path) ?? ""}
-                    onChange={(e) => set(path, e.target.value)}
-                />
-            </div>
-        );
-    };
-
     const hasSelection = !isDM || (!!selectedPlayerId && slot && slot.userId);
     const noPlayers = isDM && selectablePlayers.length === 0;
-    const isEditingOther = isDM && selectedPlayerId && selectedPlayerId !== me.id;
-    const disableSave =
-        saving || (!isDM && !game.permissions?.canEditStats) || (isDM && !hasSelection);
+    const canEditSheet = (isDM && hasSelection) || (!isDM && !!game.permissions?.canEditStats);
+    const disableInputs = !canEditSheet;
+    const disableSave = saving || !canEditSheet;
+
+    const abilityInfo = useMemo(() => {
+        const stats = ch?.stats || {};
+        return ABILITY_DEFS.map((entry) => {
+            const raw = stats?.[entry.key];
+            const modifier = abilityModifier(raw);
+            const num = Number(raw);
+            const score = raw === undefined || raw === null || raw === ""
+                ? ""
+                : Number.isFinite(num)
+                ? num
+                : raw;
+            return {
+                ...entry,
+                score,
+                modifier,
+            };
+        });
+    }, [ch?.stats]);
+
+    const abilityMap = useMemo(() => {
+        const map = {};
+        for (const ability of abilityInfo) map[ability.key] = ability;
+        return map;
+    }, [abilityInfo]);
+
+    const getMod = useCallback(
+        (abilityKey) => abilityMap[abilityKey]?.modifier ?? 0,
+        [abilityMap]
+    );
+
+    const level = clampNonNegative(get(ch, "resources.level")) || 1;
+    const hp = clampNonNegative(get(ch, "resources.hp"));
+    const maxHP = clampNonNegative(get(ch, "resources.maxHP"));
+    const mp = clampNonNegative(get(ch, "resources.mp"));
+    const maxMP = clampNonNegative(get(ch, "resources.maxMP"));
+    const tp = clampNonNegative(get(ch, "resources.tp"));
+    const spRaw = get(ch, "resources.sp");
+    const spValue = clampNonNegative(spRaw);
+    const resourceMode = get(ch, "resources.useTP") ? "TP" : "MP";
+
+    const suggestedHP = Math.max(1, Math.ceil(17 + getMod("CON") + getMod("STR") / 2));
+    const suggestedMP = Math.max(0, Math.ceil(17 + getMod("INT") + getMod("WIS") / 2));
+    const suggestedTP = Math.max(0, Math.ceil(7 + getMod("DEX") + getMod("CON") / 2));
+    const suggestedSP = Math.max(0, Math.ceil((5 + getMod("INT")) * 2 + getMod("CHA")));
+
+    const resourceSuggestions = useMemo(() => {
+        const rows = [
+            {
+                key: "hp",
+                label: "Suggested HP",
+                value: suggestedHP,
+                detail: "17 + CON + (STR ÷ 2)",
+                actual: hp,
+            },
+            {
+                key: resourceMode === "TP" ? "tp" : "mp",
+                label: resourceMode === "TP" ? "Suggested TP" : "Suggested MP",
+                value: resourceMode === "TP" ? suggestedTP : suggestedMP,
+                detail: resourceMode === "TP" ? "7 + DEX + (CON ÷ 2)" : "17 + INT + (WIS ÷ 2)",
+                actual: resourceMode === "TP" ? tp : mp,
+            },
+            {
+                key: "sp",
+                label: "Suggested SP",
+                value: suggestedSP,
+                detail: "((5 + INT) × 2) + CHA",
+                actual: spValue,
+            },
+            {
+                key: "rank",
+                label: "Max skill rank",
+                value: Math.max(4, level * 2 + 2),
+                detail: "(Level × 2) + 2",
+            },
+        ];
+        return rows;
+    }, [hp, level, mp, resourceMode, spValue, suggestedHP, suggestedMP, suggestedSP, suggestedTP, tp]);
+
+    const skillRows = useMemo(() => {
+        const skills = ch?.skills || {};
+        return WORLD_SKILLS.map((skill) => {
+            const ranks = clampNonNegative(get(skills, `${skill.key}.ranks`));
+            const miscRaw = Number(get(skills, `${skill.key}.misc`));
+            const misc = Number.isFinite(miscRaw) ? miscRaw : 0;
+            const abilityMod = getMod(skill.ability);
+            const total = abilityMod + ranks + misc;
+            return { ...skill, ranks, misc, abilityMod, total };
+        });
+    }, [ch?.skills, getMod]);
+
+    const spentSP = skillRows.reduce((sum, row) => sum + row.ranks, 0);
+    const availableSP =
+        spRaw === undefined || spRaw === null || spRaw === ""
+            ? suggestedSP
+            : spValue;
+    const maxSkillRank = Math.max(4, level * 2 + 2);
+    const overSpent = spentSP > availableSP;
+    const rankIssues = skillRows.filter((row) => row.ranks > maxSkillRank).map((row) => row.label);
+
+    const saveRows = useMemo(() => {
+        const saves = ch?.resources?.saves || {};
+        return SAVE_DEFS.map((save) => {
+            const total = clampNonNegative(get(saves, `${save.key}.total`));
+            const abilityMod = getMod(save.ability);
+            const fallback = abilityMod;
+            return {
+                ...save,
+                abilityMod,
+                total: total || total === 0 ? total : fallback,
+            };
+        });
+    }, [ch?.resources?.saves, getMod]);
+
+    const handleWizardApply = useCallback(
+        (payload) => {
+            setCh(normalizeCharacter(payload || {}));
+            setShowWizard(false);
+        },
+        []
+    );
+
+    const textField = (label, path, props = {}) => (
+        <label className="field">
+            <span className="field__label">{label}</span>
+            <input
+                type={props.type || "text"}
+                placeholder={props.placeholder || ""}
+                value={get(ch, path) ?? ""}
+                onChange={(e) => set(path, e.target.value)}
+                disabled={disableInputs || props.disabled}
+                autoComplete="off"
+            />
+        </label>
+    );
+
+    const selectField = (label, path, options, props = {}) => (
+        <label className="field">
+            <span className="field__label">{label}</span>
+            <select
+                value={get(ch, path) ?? ""}
+                onChange={(e) => set(path, e.target.value)}
+                disabled={disableInputs || props.disabled}
+            >
+                <option value="">—</option>
+                {options.map((opt) => (
+                    <option key={opt.key || opt.value || opt.label} value={opt.value ?? opt.key}>
+                        {opt.label}
+                    </option>
+                ))}
+            </select>
+        </label>
+    );
+
+    const textareaField = (label, path, props = {}) => (
+        <label className="field">
+            <span className="field__label">{label}</span>
+            <textarea
+                rows={props.rows || 3}
+                placeholder={props.placeholder || ""}
+                value={get(ch, path) ?? ""}
+                onChange={(e) => set(path, e.target.value)}
+                disabled={disableInputs || props.disabled}
+            />
+        </label>
+    );
+
+    const updateSkill = useCallback(
+        (skillKey, field, value) => {
+            const max = field === "ranks" ? maxSkillRank : undefined;
+            const raw = Number(value);
+            const sanitized =
+                field === "misc"
+                    ? Number.isFinite(raw)
+                        ? raw
+                        : 0
+                    : clampNonNegative(raw);
+            const finalValue = max !== undefined ? Math.min(sanitized, max) : sanitized;
+            set(`skills.${skillKey}.${field}`, finalValue);
+        },
+        [maxSkillRank, set]
+    );
 
     return (
-        <div className="card">
-            <h3>Character Sheet</h3>
+        <div className="card sheet-card">
+            <div className="sheet-header">
+                <div>
+                    <h3>Character sheet</h3>
+                    <p className="text-muted text-small">
+                        Keep your AntiMatter Zone adventurer organised with modern tools inspired by the old spreadsheets.
+                    </p>
+                </div>
+                <div className="sheet-header__actions">
+                    <button
+                        type="button"
+                        className="btn secondary"
+                        onClick={() => setShowWizard(true)}
+                        disabled={!hasSelection || disableInputs}
+                    >
+                        Launch setup wizard
+                    </button>
+                </div>
+            </div>
 
             {isDM && (
-                <div className="col" style={{ gap: 8, marginBottom: 12 }}>
-                    <label>Player</label>
-                    <select
-                        value={selectedPlayerId ?? ""}
-                        onChange={(e) => onChangePlayer?.(e.target.value || null)}
-                        disabled={selectablePlayers.length === 0}
-                    >
-                        <option value="">Select a player…</option>
-                        {selectablePlayers.map((p) => (
-                            <option key={p.userId} value={p.userId}>
-                                {p.character?.name || "Unnamed Player"}
-                            </option>
-                        ))}
-                    </select>
+                <div className="sheet-toolbar">
+                    <label className="field">
+                        <span className="field__label">Player</span>
+                        <select
+                            value={selectedPlayerId ?? ""}
+                            onChange={(e) => onChangePlayer?.(e.target.value || null)}
+                            disabled={selectablePlayers.length === 0}
+                        >
+                            <option value="">Select a player…</option>
+                            {selectablePlayers.map((p) => (
+                                <option key={p.userId} value={p.userId}>
+                                    {p.character?.name || p.username || "Unnamed player"}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
                 </div>
             )}
 
             {noPlayers && (
-                <p style={{ color: "var(--muted)", marginTop: 0 }}>
+                <p className="text-muted" style={{ marginTop: 0 }}>
                     Invite players to your campaign to view their character sheets.
                 </p>
             )}
 
             {!hasSelection ? (
                 !noPlayers && (
-                    <p style={{ color: "var(--muted)", marginTop: 0 }}>
+                    <p className="text-muted" style={{ marginTop: 0 }}>
                         Select a player to review and edit their sheet.
                     </p>
                 )
             ) : (
                 <>
-                    <div className="row">
-                        {field("Name", "name")}
-                        {field("Class", "profile.class")}
-                        {field("Level", "resources.level", "number")}
-                        {field("EXP", "resources.exp", "number")}
-                    </div>
-
-                    <div className="row">
-                        {field("HP", "resources.hp", "number")}
-                        {field("Max HP", "resources.maxHP", "number")}
-                        <div className="col">
-                            <label>Resource</label>
-                            <select
-                                value={get(ch, "resources.useTP") ? "TP" : "MP"}
-                                onChange={(e) => set("resources.useTP", e.target.value === "TP")}
-                            >
-                                <option>MP</option>
-                                <option>TP</option>
-                            </select>
+                    <section className="sheet-section">
+                        <div className="section-header">
+                            <h4>Adventurer profile</h4>
+                            <p className="text-muted text-small">
+                                Capture the essentials, from pronouns to alignment and arcana.
+                            </p>
                         </div>
-                        {get(ch, "resources.useTP")
-                            ? field("TP", "resources.tp", "number")
-                            : (
-                                <>
-                                    {field("MP", "resources.mp", "number")}
-                                    {field("Max MP", "resources.maxMP", "number")}
-                                </>
-                            )
-                        }
-                    </div>
+                        <div className="sheet-grid">
+                            {textField("Character name", "name")}
+                            {textField("Player / handler", "profile.player", { placeholder: slot?.username || me.username })}
+                            {textField("Pronouns", "profile.pronouns")}
+                            {textField("Concept / class", "profile.class")}
+                            {selectField(
+                                "Arcana",
+                                "profile.arcana",
+                                ARCANA_DATA.map((opt) => ({ ...opt, value: opt.label }))
+                            )}
+                            {textField("Negotiator title", "profile.negotiator")}
+                            {textField("Alignment", "profile.alignment")}
+                            {textField("Race / origin", "profile.race")}
+                            {textField("Age", "profile.age")}
+                            {textField("Gender", "profile.gender")}
+                            {textField("Height", "profile.height")}
+                            {textField("Weight", "profile.weight")}
+                            {textField("Eye colour", "profile.eye")}
+                            {textField("Hair", "profile.hair")}
+                        </div>
+                        <div className="sheet-grid sheet-grid--stretch">
+                            {textareaField("Background & hooks", "profile.background", { rows: 3 })}
+                            {textareaField("Notes", "profile.notes", { rows: 3 })}
+                        </div>
+                    </section>
 
-                    <div className="row">
-                        {["STR", "DEX", "CON", "INT", "WIS", "CHA"].map((s) => (
+                    <section className="sheet-section">
+                        <div className="section-header">
+                            <h4>Progress & resources</h4>
+                            <p className="text-muted text-small">
+                                Base formulas assume modifiers: adjust manually if your table uses variants.
+                            </p>
+                        </div>
+                        <div className="sheet-grid sheet-grid--resources">
                             <MathField
-                                key={s}
-                                label={s}
-                                value={get(ch, `stats.${s}`)}
-                                onCommit={(val) => set(`stats.${s}`, val)}
+                                label="Level"
+                                value={get(ch, "resources.level")}
+                                onCommit={(val) => set("resources.level", clampNonNegative(val))}
+                                className="math-inline"
+                                disabled={disableInputs}
                             />
-                        ))}
-                    </div>
+                            <MathField
+                                label="EXP"
+                                value={get(ch, "resources.exp")}
+                                onCommit={(val) => set("resources.exp", clampNonNegative(val))}
+                                className="math-inline"
+                                disabled={disableInputs}
+                            />
+                            <MathField
+                                label="HP"
+                                value={hp}
+                                onCommit={(val) => set("resources.hp", clampNonNegative(val))}
+                                className="math-inline"
+                                disabled={disableInputs}
+                            />
+                            <MathField
+                                label="Max HP"
+                                value={maxHP}
+                                onCommit={(val) => set("resources.maxHP", clampNonNegative(val))}
+                                className="math-inline"
+                                disabled={disableInputs}
+                            />
+                            <label className="field">
+                                <span className="field__label">Resource type</span>
+                                <select
+                                    value={resourceMode}
+                                    onChange={(e) => set("resources.useTP", e.target.value === "TP")}
+                                    disabled={disableInputs}
+                                >
+                                    <option value="MP">MP</option>
+                                    <option value="TP">TP</option>
+                                </select>
+                            </label>
+                            {resourceMode === "TP" ? (
+                                <MathField
+                                    label="TP"
+                                    value={tp}
+                                    onCommit={(val) => set("resources.tp", clampNonNegative(val))}
+                                    className="math-inline"
+                                    disabled={disableInputs}
+                                />
+                            ) : (
+                                <>
+                                    <MathField
+                                        label="MP"
+                                        value={mp}
+                                        onCommit={(val) => set("resources.mp", clampNonNegative(val))}
+                                        className="math-inline"
+                                        disabled={disableInputs}
+                                    />
+                                    <MathField
+                                        label="Max MP"
+                                        value={maxMP}
+                                        onCommit={(val) => set("resources.maxMP", clampNonNegative(val))}
+                                        className="math-inline"
+                                        disabled={disableInputs}
+                                    />
+                                </>
+                            )}
+                            <MathField
+                                label="SP (earned)"
+                                value={get(ch, "resources.sp")}
+                                onCommit={(val) => set("resources.sp", clampNonNegative(val))}
+                                className="math-inline"
+                                disabled={disableInputs}
+                            />
+                            <MathField
+                                label="Initiative bonus"
+                                value={get(ch, "resources.initiative")}
+                                onCommit={(val) => set("resources.initiative", Number(val))}
+                                className="math-inline"
+                                disabled={disableInputs}
+                            />
+                        </div>
+                        <div className="sheet-hints">
+                            {resourceSuggestions.map((row) => {
+                                const mismatched =
+                                    row.actual !== undefined && Number(row.actual) !== row.value;
+                                return (
+                                    <div
+                                        key={row.key}
+                                        className={`sheet-hint${mismatched ? " warn" : ""}`}
+                                    >
+                                        <span className="sheet-hint__label">{row.label}</span>
+                                        <span className="sheet-hint__value">{row.value}</span>
+                                        <span className="sheet-hint__meta">{row.detail}</span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        <div className="save-grid">
+                            {saveRows.map((save) => (
+                                <div key={save.key} className="save-card">
+                                    <div className="save-card__header">
+                                        <span>{save.label}</span>
+                                        <span className="pill light">
+                                            {save.ability} mod {formatModifier(save.abilityMod)}
+                                        </span>
+                                    </div>
+                                    <MathField
+                                        label="Total save"
+                                        value={save.total}
+                                        onCommit={(val) => set(`resources.saves.${save.key}.total`, Number(val))}
+                                        className="math-inline"
+                                        disabled={disableInputs}
+                                    />
+                                    <p className="text-muted text-small">
+                                        Add class, gear, and situational bonuses here.
+                                    </p>
+                                </div>
+                            ))}
+                        </div>
+                    </section>
 
-                    <div className="row" style={{ justifyContent: "flex-end" }}>
+                    <section className="sheet-section">
+                        <div className="section-header">
+                            <h4>Ability scores</h4>
+                            <p className="text-muted text-small">
+                                Every formula references these modifiers. Even numbers step the modifier.
+                            </p>
+                        </div>
+                        <div className="ability-grid">
+                            {abilityInfo.map((ability) => (
+                                <div key={ability.key} className="ability-card">
+                                    <div className="ability-card__heading">
+                                        <span className="ability-card__abbr">{ability.key}</span>
+                                        <span className="ability-card__title">{ability.label}</span>
+                                    </div>
+                                    <MathField
+                                        label="Score"
+                                        value={ability.score}
+                                        onCommit={(val) => set(`stats.${ability.key}`, Number(val))}
+                                        disabled={disableInputs}
+                                    />
+                                    <div className="ability-card__mod">
+                                        <span>Modifier</span>
+                                        <span className="ability-card__mod-value">
+                                            {formatModifier(ability.modifier)}
+                                        </span>
+                                    </div>
+                                    <p className="ability-card__summary">{ability.summary}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </section>
+
+                    <section className="sheet-section">
+                        <div className="section-header">
+                            <h4>World skills</h4>
+                            <p className="text-muted text-small">
+                                Spend SP immediately. Max rank at level {level} is {maxSkillRank}.
+                            </p>
+                        </div>
+                        <div className={`sp-summary${overSpent ? " warn" : ""}`}>
+                            <span>SP spent: {spentSP}</span>
+                            <span>Suggested pool: {availableSP}</span>
+                            <span>Max rank: {maxSkillRank}</span>
+                            {rankIssues.length > 0 && (
+                                <span className="sp-summary__warning">
+                                    Over cap: {rankIssues.join(", ")}
+                                </span>
+                            )}
+                        </div>
+                        <div className="sheet-table-wrapper">
+                            <table className="sheet-table skill-table">
+                                <thead>
+                                    <tr>
+                                        <th>Skill</th>
+                                        <th>Ability</th>
+                                        <th>Ability mod</th>
+                                        <th>Ranks</th>
+                                        <th>Misc</th>
+                                        <th>Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {skillRows.map((row) => (
+                                        <tr key={row.key}>
+                                            <th scope="row">
+                                                <span className="skill-name">{row.label}</span>
+                                            </th>
+                                            <td>{row.ability}</td>
+                                            <td>
+                                                <span className="pill light">{formatModifier(row.abilityMod)}</span>
+                                            </td>
+                                            <td>
+                                                <MathField
+                                                    label="Ranks"
+                                                    value={row.ranks}
+                                                    onCommit={(val) => updateSkill(row.key, "ranks", val)}
+                                                    className="math-inline"
+                                                    disabled={disableInputs}
+                                                />
+                                            </td>
+                                            <td>
+                                                <MathField
+                                                    label="Misc"
+                                                    value={row.misc}
+                                                    onCommit={(val) => updateSkill(row.key, "misc", val)}
+                                                    className="math-inline"
+                                                    disabled={disableInputs}
+                                                />
+                                            </td>
+                                            <td>
+                                                <span className="skill-total">{formatModifier(row.total)}</span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <div className="sheet-footer">
+                        {!canEditSheet && (
+                            <span className="text-muted text-small">
+                                You have read-only access. Ask your DM for edit permissions.
+                            </span>
+                        )}
                         <button
                             className="btn"
                             disabled={disableSave}
@@ -1269,9 +1831,10 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                                 if (!hasSelection) return;
                                 try {
                                     setSaving(true);
-                                    const payload = isEditingOther
-                                        ? { userId: selectedPlayerId, character: ch }
-                                        : ch;
+                                    const payload =
+                                        isDM && selectedPlayerId !== me.id
+                                            ? { userId: selectedPlayerId, character: ch }
+                                            : ch;
                                     await onSave(payload);
                                 } catch (e) {
                                     alert(e.message);
@@ -1280,13 +1843,840 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                                 }
                             }}
                         >
-                            {saving ? "Saving…" : "Save"}
+                            {saving ? "Saving…" : "Save changes"}
                         </button>
                     </div>
                 </>
             )}
+
+            {showWizard && (
+                <PlayerSetupWizard
+                    open={showWizard}
+                    onClose={() => setShowWizard(false)}
+                    onApply={handleWizardApply}
+                    baseCharacter={ch}
+                    playerName={slot?.username || me.username}
+                />
+            )}
         </div>
     );
+}
+
+function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName }) {
+    const steps = useMemo(
+        () => [
+            {
+                key: "concept",
+                title: "Concept & role",
+                blurb: "Align on the basics before you roll any dice.",
+            },
+            {
+                key: "abilities",
+                title: "Roll ability points",
+                blurb: "Generate six scores (6d20 by default) and place them where you like.",
+            },
+            {
+                key: "arcana",
+                title: "Choose an Arcana",
+                blurb: "Arcana grant permanent bonuses and penalties on creation.",
+            },
+            {
+                key: "resources",
+                title: "Resources & world skills",
+                blurb: "Calculate HP/MP/TP/SP and spend skill ranks immediately.",
+            },
+            {
+                key: "review",
+                title: "Review & apply",
+                blurb: "Double-check your hero, then send everything to the sheet.",
+            },
+        ],
+        []
+    );
+
+    const initial = useMemo(
+        () => buildInitialWizardState(baseCharacter, playerName),
+        [baseCharacter, playerName]
+    );
+
+    const [step, setStep] = useState(0);
+    const [concept, setConcept] = useState(initial.concept);
+    const [abilities, setAbilities] = useState(initial.abilities);
+    const [resources, setResources] = useState(initial.resources);
+    const [skills, setSkills] = useState(initial.skills);
+    const [rolled, setRolled] = useState([]);
+
+    useEffect(() => {
+        if (!open) return;
+        setStep(0);
+        setConcept(initial.concept);
+        setAbilities(initial.abilities);
+        setResources(initial.resources);
+        setSkills(initial.skills);
+        setRolled([]);
+    }, [open, initial]);
+
+    const abilityRows = useMemo(
+        () =>
+            ABILITY_DEFS.map((entry) => {
+                const score = clampNonNegative(abilities?.[entry.key]);
+                const modifier = abilityModifier(score);
+                return {
+                    ...entry,
+                    score,
+                    modifier,
+                };
+            }),
+        [abilities]
+    );
+
+    const abilityMods = useMemo(() => {
+        const map = {};
+        for (const row of abilityRows) map[row.key] = row.modifier;
+        return map;
+    }, [abilityRows]);
+
+    const level = clampNonNegative(resources.level) || 1;
+    const suggestedHP = Math.max(1, Math.ceil(17 + (abilityMods.CON ?? 0) + (abilityMods.STR ?? 0) / 2));
+    const suggestedMP = Math.max(0, Math.ceil(17 + (abilityMods.INT ?? 0) + (abilityMods.WIS ?? 0) / 2));
+    const suggestedTP = Math.max(0, Math.ceil(7 + (abilityMods.DEX ?? 0) + (abilityMods.CON ?? 0) / 2));
+    const suggestedSP = Math.max(
+        0,
+        Math.ceil((5 + (abilityMods.INT ?? 0)) * 2 + (abilityMods.CHA ?? 0))
+    );
+    const maxSkillRank = Math.max(4, level * 2 + 2);
+
+    const wizardSkillRows = useMemo(() => {
+        return WORLD_SKILLS.map((skill) => {
+            const entry = skills?.[skill.key] || { ranks: 0, misc: 0 };
+            const ranks = clampNonNegative(entry.ranks);
+            const miscRaw = Number(entry.misc);
+            const misc = Number.isFinite(miscRaw) ? miscRaw : 0;
+            const abilityMod = abilityMods[skill.ability] ?? 0;
+            const total = abilityMod + ranks + misc;
+            return { ...skill, ranks, misc, abilityMod, total };
+        });
+    }, [abilityMods, skills]);
+
+    const spentSP = wizardSkillRows.reduce((sum, row) => sum + row.ranks, 0);
+    const availableSP =
+        resources.sp === undefined || resources.sp === null
+            ? suggestedSP
+            : clampNonNegative(resources.sp);
+    const overSpent = spentSP > availableSP;
+    const rankIssues = wizardSkillRows.filter((row) => row.ranks > maxSkillRank).map((row) => row.label);
+
+    const setConceptField = useCallback((field, value) => {
+        setConcept((prev) => ({ ...prev, [field]: value }));
+    }, []);
+
+    const setAbilityField = useCallback((key, value) => {
+        setAbilities((prev) => ({
+            ...prev,
+            [key]: clampNonNegative(value),
+        }));
+    }, []);
+
+    const setResourceField = useCallback((field, value) => {
+        setResources((prev) => {
+            if (field === "mode") {
+                return { ...prev, mode: value === "TP" ? "TP" : "MP" };
+            }
+            if (field === "notes") {
+                return { ...prev, notes: value };
+            }
+            const num = Number(value);
+            if (field === "initiative") {
+                return { ...prev, initiative: Number.isFinite(num) ? num : 0 };
+            }
+            return { ...prev, [field]: clampNonNegative(num) };
+        });
+    }, []);
+
+    const updateSkillField = useCallback(
+        (key, field, value) => {
+            setSkills((prev) => {
+                const next = { ...prev };
+                const current = next[key] || { ranks: 0, misc: 0 };
+                const num = Number(value);
+                const sanitized =
+                    field === "misc"
+                        ? Number.isFinite(num)
+                            ? num
+                            : 0
+                        : Math.min(Math.max(0, Number.isFinite(num) ? num : 0), maxSkillRank);
+                next[key] = { ...current, [field]: sanitized };
+                return next;
+            });
+        },
+        [maxSkillRank]
+    );
+
+    const assignValuesToAbilities = useCallback((values) => {
+        setAbilities((prev) => {
+            const next = { ...prev };
+            ABILITY_DEFS.forEach((ability, index) => {
+                if (values[index] !== undefined) {
+                    next[ability.key] = clampNonNegative(values[index]);
+                }
+            });
+            return next;
+        });
+    }, []);
+
+    const rollStats = useCallback(
+        (mode) => {
+            const values = [];
+            for (let i = 0; i < 6; i++) {
+                if (mode === "alt") {
+                    values.push(Math.floor(Math.random() * 12) + 1 + 4);
+                } else {
+                    values.push(Math.floor(Math.random() * 20) + 1);
+                }
+            }
+            setRolled(values);
+            assignValuesToAbilities(values);
+        },
+        [assignValuesToAbilities]
+    );
+
+    const autoFillResources = useCallback(() => {
+        setResources((prev) => {
+            const useTP = prev.mode === "TP";
+            return {
+                ...prev,
+                hp: suggestedHP,
+                maxHP: suggestedHP,
+                mp: useTP ? prev.mp : suggestedMP,
+                maxMP: useTP ? prev.maxMP : suggestedMP,
+                tp: useTP ? suggestedTP : prev.tp,
+                sp: suggestedSP,
+            };
+        });
+    }, [suggestedHP, suggestedMP, suggestedSP, suggestedTP]);
+
+    const goNext = useCallback(() => {
+        setStep((prev) => Math.min(prev + 1, steps.length - 1));
+    }, [steps.length]);
+    const goBack = useCallback(() => {
+        setStep((prev) => Math.max(prev - 1, 0));
+    }, []);
+
+    const canAdvance = useMemo(() => {
+        const current = steps[step]?.key;
+        if (current === "concept") {
+            return !!concept.name.trim();
+        }
+        if (current === "resources") {
+            return !overSpent && rankIssues.length === 0;
+        }
+        return true;
+    }, [concept.name, overSpent, rankIssues.length, step, steps]);
+
+    const canApply = !overSpent && rankIssues.length === 0;
+
+    const handleApply = useCallback(() => {
+        if (!canApply) return;
+        const payload = buildCharacterFromWizard(
+            { concept, abilities, resources, skills },
+            baseCharacter
+        );
+        onApply?.(payload);
+    }, [abilities, baseCharacter, canApply, concept, onApply, resources, skills]);
+
+    const conceptField = (label, field, opts = {}) => (
+        <label className="field">
+            <span className="field__label">{label}</span>
+            <input
+                type="text"
+                value={concept[field] ?? ""}
+                onChange={(e) => setConceptField(field, e.target.value)}
+                placeholder={opts.placeholder || ""}
+                autoComplete="off"
+            />
+        </label>
+    );
+
+    const conceptArea = (label, field, opts = {}) => (
+        <label className="field">
+            <span className="field__label">{label}</span>
+            <textarea
+                rows={opts.rows || 3}
+                value={concept[field] ?? ""}
+                onChange={(e) => setConceptField(field, e.target.value)}
+                placeholder={opts.placeholder || ""}
+            />
+        </label>
+    );
+
+    const resourceField = (label, field, opts = {}) => (
+        <label className="field">
+            <span className="field__label">{label}</span>
+            <input
+                type="number"
+                value={resources[field] ?? 0}
+                onChange={(e) => setResourceField(field, e.target.value)}
+                min={opts.allowNegative ? undefined : 0}
+                step={opts.step || 1}
+            />
+        </label>
+    );
+
+    const renderConcept = () => (
+        <div className="wizard-stack">
+            <p>
+                Collaborate with your table on tone and party balance. Mix and match archetypes, and
+                remember that demon allies can round out any gaps.
+            </p>
+            <div className="wizard-grid">
+                {conceptField("Character name", "name")}
+                {conceptField("Player / handler", "player", { placeholder: playerName || "" })}
+                {conceptField("Pronouns", "pronouns")}
+                {conceptField("Concept / class", "class")}
+                {conceptField("Alignment", "alignment")}
+                {conceptField("Negotiator title", "negotiator")}
+                {conceptField("Race / origin", "race")}
+                {conceptField("Age", "age")}
+                {conceptField("Gender", "gender")}
+                {conceptField("Height", "height")}
+                {conceptField("Weight", "weight")}
+                {conceptField("Eye colour", "eye")}
+                {conceptField("Hair", "hair")}
+            </div>
+            <div className="wizard-archetypes">
+                {ROLE_ARCHETYPES.map((role) => (
+                    <div key={role.key} className="wizard-role-card">
+                        <h5>{role.title}</h5>
+                        <div className="wizard-role-meta">{role.stats}</div>
+                        <div className="wizard-role-row">
+                            <span className="pill success">Pros</span>
+                            <span>{role.pros}</span>
+                        </div>
+                        <div className="wizard-role-row">
+                            <span className="pill warn">Cons</span>
+                            <span>{role.cons}</span>
+                        </div>
+                    </div>
+                ))}
+            </div>
+            <div className="wizard-grid wizard-grid--stretch">
+                {conceptArea("Background & hooks", "background", { rows: 3 })}
+                {conceptArea("Notes", "notes", { rows: 3 })}
+            </div>
+        </div>
+    );
+
+    const renderAbilities = () => (
+        <div className="wizard-stack">
+            <p>
+                Roll six ability points using 6d20. The brave can try multiple sets and pick their
+                favourite, or use the alternate 6d12+4 method for a flatter 5–16 spread. Even numbers
+                bump your modifier; odds are for gear prerequisites.
+            </p>
+            <div className="wizard-roller">
+                <button type="button" className="btn" onClick={() => rollStats("d20")}>Roll 6d20</button>
+                <button type="button" className="btn" onClick={() => rollStats("alt")}>Roll 6d12 + 4</button>
+                {rolled.length > 0 && (
+                    <div className="wizard-rolled" role="status">
+                        <span>Latest roll: {rolled.join(", ")}</span>
+                        <button
+                            type="button"
+                            className="btn ghost"
+                            onClick={() => assignValuesToAbilities(rolled)}
+                        >
+                            Reapply to abilities
+                        </button>
+                    </div>
+                )}
+            </div>
+            <div className="ability-grid ability-grid--wizard">
+                {abilityRows.map((ability) => (
+                    <div key={ability.key} className="ability-card ability-card--wizard">
+                        <div className="ability-card__heading">
+                            <span className="ability-card__abbr">{ability.key}</span>
+                            <span className="ability-card__title">{ability.label}</span>
+                        </div>
+                        <label className="field">
+                            <span className="field__label">Score</span>
+                            <input
+                                type="number"
+                                value={ability.score}
+                                min={0}
+                                onChange={(e) => setAbilityField(ability.key, e.target.value)}
+                            />
+                        </label>
+                        <div className="ability-card__mod">
+                            <span>Modifier</span>
+                            <span className="ability-card__mod-value">{formatModifier(ability.modifier)}</span>
+                        </div>
+                        <p className="ability-card__summary">{ability.summary}</p>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+
+    const renderArcana = () => (
+        <div className="wizard-stack">
+            <p>
+                Arcana act like races—permanent stat tweaks applied once during creation. Keep the total
+                adjustment within four points and remember to update your ability scores if your table
+                applies them immediately.
+            </p>
+            <div className="wizard-arcana-grid">
+                {ARCANA_DATA.map((arcana) => {
+                    const selected = concept.arcana === arcana.label;
+                    return (
+                        <label
+                            key={arcana.key}
+                            className={`wizard-arcana-card${selected ? " is-selected" : ""}`}
+                        >
+                            <input
+                                type="radio"
+                                name="wizard-arcana"
+                                value={arcana.label}
+                                checked={selected}
+                                onChange={() => setConceptField("arcana", arcana.label)}
+                            />
+                            <div className="wizard-arcana-card__body">
+                                <span className="wizard-arcana-card__title">{arcana.label}</span>
+                                <div className="wizard-arcana-card__row">
+                                    <span className="pill success">Bonus</span>
+                                    <span>{arcana.bonus}</span>
+                                </div>
+                                <div className="wizard-arcana-card__row">
+                                    <span className="pill warn">Penalty</span>
+                                    <span>{arcana.penalty}</span>
+                                </div>
+                            </div>
+                        </label>
+                    );
+                })}
+            </div>
+            <p className="text-muted text-small">
+                Need a custom Arcana? Keep the math fair—no more than ±4 total across all stats.
+            </p>
+        </div>
+    );
+
+    const renderResources = () => (
+        <div className="wizard-stack">
+            <p>
+                HP uses <b>17 + CON + (STR ÷ 2)</b>. MP uses <b>17 + INT + (WIS ÷ 2)</b>. TP uses
+                <b>7 + DEX + (CON ÷ 2)</b> and regens one per round. SP uses <b>((5 + INT) × 2) + CHA</b>
+                and must be spent immediately on world skills. Round up and never let gains drop below 1.
+            </p>
+            <div className="wizard-grid wizard-grid--resources">
+                {resourceField("Level", "level")}
+                {resourceField("EXP", "exp")}
+                <label className="field">
+                    <span className="field__label">Resource type</span>
+                    <select
+                        value={resources.mode}
+                        onChange={(e) => setResourceField("mode", e.target.value)}
+                    >
+                        <option value="MP">MP</option>
+                        <option value="TP">TP</option>
+                    </select>
+                </label>
+                {resourceField("HP", "hp")}
+                {resourceField("Max HP", "maxHP")}
+                {resources.mode === "TP" ? (
+                    resourceField("TP", "tp")
+                ) : (
+                    <>
+                        {resourceField("MP", "mp")}
+                        {resourceField("Max MP", "maxMP")}
+                    </>
+                )}
+                {resourceField("SP (earned)", "sp")}
+                {resourceField("Initiative bonus", "initiative", { allowNegative: true })}
+            </div>
+            <div className="wizard-hints">
+                <div className="sheet-hint">
+                    <span className="sheet-hint__label">Suggested HP</span>
+                    <span className="sheet-hint__value">{suggestedHP}</span>
+                    <span className="sheet-hint__meta">17 + CON + (STR ÷ 2)</span>
+                </div>
+                <div className="sheet-hint">
+                    <span className="sheet-hint__label">
+                        {resources.mode === "TP" ? "Suggested TP" : "Suggested MP"}
+                    </span>
+                    <span className="sheet-hint__value">
+                        {resources.mode === "TP" ? suggestedTP : suggestedMP}
+                    </span>
+                    <span className="sheet-hint__meta">
+                        {resources.mode === "TP"
+                            ? "7 + DEX + (CON ÷ 2)"
+                            : "17 + INT + (WIS ÷ 2)"}
+                    </span>
+                </div>
+                <div className="sheet-hint">
+                    <span className="sheet-hint__label">Suggested SP</span>
+                    <span className="sheet-hint__value">{suggestedSP}</span>
+                    <span className="sheet-hint__meta">((5 + INT) × 2) + CHA</span>
+                </div>
+                <div className="sheet-hint">
+                    <span className="sheet-hint__label">Max skill rank</span>
+                    <span className="sheet-hint__value">{maxSkillRank}</span>
+                    <span className="sheet-hint__meta">(Level × 2) + 2</span>
+                </div>
+            </div>
+            <div className="wizard-actions">
+                <button type="button" className="btn ghost" onClick={autoFillResources}>
+                    Use suggested totals
+                </button>
+            </div>
+            <p className="text-muted text-small">
+                Optional variants: Cats halve HP (9 + CON + (STR ÷ 2)). Psychic babies double MP (33 + INT + (WIS ÷ 2)).
+            </p>
+            <h4>World skills</h4>
+            <p>
+                Spend SP now—unused points vanish. TP regens on its own, MP usually requires rest or items.
+            </p>
+            <div className={`wizard-sp-summary${overSpent ? " warn" : ""}`}>
+                <span>SP spent: {spentSP}</span>
+                <span>Available: {availableSP}</span>
+                <span>Max rank: {maxSkillRank}</span>
+            </div>
+            {overSpent && (
+                <div className="wizard-warning">You have spent more SP than available.</div>
+            )}
+            {rankIssues.length > 0 && (
+                <div className="wizard-warning">
+                    Over the rank cap: {rankIssues.join(", ")}
+                </div>
+            )}
+            <div className="sheet-table-wrapper">
+                <table className="sheet-table skill-table">
+                    <thead>
+                        <tr>
+                            <th>Skill</th>
+                            <th>Ability</th>
+                            <th>Ability mod</th>
+                            <th>Ranks</th>
+                            <th>Misc</th>
+                            <th>Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {wizardSkillRows.map((row) => (
+                            <tr key={row.key}>
+                                <th scope="row">{row.label}</th>
+                                <td>{row.ability}</td>
+                                <td>
+                                    <span className="pill light">{formatModifier(row.abilityMod)}</span>
+                                </td>
+                                <td>
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        max={maxSkillRank}
+                                        value={row.ranks}
+                                        onChange={(e) => updateSkillField(row.key, "ranks", e.target.value)}
+                                    />
+                                </td>
+                                <td>
+                                    <input
+                                        type="number"
+                                        value={row.misc}
+                                        onChange={(e) => updateSkillField(row.key, "misc", e.target.value)}
+                                    />
+                                </td>
+                                <td>
+                                    <span className="skill-total">{formatModifier(row.total)}</span>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+
+    const renderReview = () => {
+        const summarySkills = wizardSkillRows.filter((row) => row.ranks || row.misc);
+        return (
+            <div className="wizard-stack">
+                <p>
+                    One last look before committing. Level-ups require <b>Level × 1,000 EXP</b>. On a level
+                    gain: +1 AP, HP +1d4+CON+(STR ÷ 2), MP +1d4+INT+(WIS ÷ 2) or TP +1d4+((DEX+CON) ÷ 2),
+                    and SP equal to (INT + CHA) ÷ 2—spend it immediately.
+                </p>
+                <div className="wizard-summary">
+                    <div className="wizard-summary__section">
+                        <h4>Profile</h4>
+                        <dl>
+                            <div>
+                                <dt>Name</dt>
+                                <dd>{concept.name || "—"}</dd>
+                            </div>
+                            <div>
+                                <dt>Arcana</dt>
+                                <dd>{concept.arcana || "—"}</dd>
+                            </div>
+                            <div>
+                                <dt>Alignment</dt>
+                                <dd>{concept.alignment || "Neutral"}</dd>
+                            </div>
+                            <div>
+                                <dt>Pronouns</dt>
+                                <dd>{concept.pronouns || "—"}</dd>
+                            </div>
+                            <div>
+                                <dt>Origin</dt>
+                                <dd>{concept.race || "—"}</dd>
+                            </div>
+                        </dl>
+                    </div>
+                    <div className="wizard-summary__section">
+                        <h4>Ability scores</h4>
+                        <ul>
+                            {abilityRows.map((row) => (
+                                <li key={row.key}>
+                                    {row.key}: {row.score} ({formatModifier(row.modifier)})
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                    <div className="wizard-summary__section">
+                        <h4>Resources</h4>
+                        <ul>
+                            <li>Level {level} · EXP {resources.exp}</li>
+                            <li>HP {resources.hp}/{resources.maxHP}</li>
+                            {resources.mode === "TP" ? (
+                                <li>TP {resources.tp}</li>
+                            ) : (
+                                <li>MP {resources.mp}/{resources.maxMP}</li>
+                            )}
+                            <li>SP {resources.sp}</li>
+                        </ul>
+                    </div>
+                    <div className="wizard-summary__section">
+                        <h4>World skills</h4>
+                        {summarySkills.length === 0 ? (
+                            <p className="text-muted text-small">No ranks allocated yet.</p>
+                        ) : (
+                            <ul>
+                                {summarySkills.map((row) => (
+                                    <li key={row.key}>
+                                        {row.label}: {row.ranks} ranks ({formatModifier(row.total)})
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </div>
+                </div>
+                <div className="wizard-info">
+                    <h4>Scaling new high-level characters or demons</h4>
+                    <ol>
+                        <li>Roll 6 ability scores and apply Arcana adjustments.</li>
+                        <li>Set base HP/MP/TP/SP using the level 1 formulas above.</li>
+                        <li>Add X AP into stats (3–5 recommended) for each batch of levels.</li>
+                        <li>For each batch, add level-up gains: HP (1d4+CON+(STR ÷ 2)) × X, MP (1d4+INT+(WIS ÷ 2)) × X, TP (1d4+((DEX+CON) ÷ 2)) × X, SP ((INT+CHA) ÷ 2) × X.</li>
+                        <li>Repeat until you cover every level beyond 1; use smaller X for precise RNG.</li>
+                    </ol>
+                </div>
+            </div>
+        );
+    };
+
+    if (!open) return null;
+
+    const activeKey = steps[step]?.key;
+    let content = null;
+    if (activeKey === "concept") content = renderConcept();
+    else if (activeKey === "abilities") content = renderAbilities();
+    else if (activeKey === "arcana") content = renderArcana();
+    else if (activeKey === "resources") content = renderResources();
+    else content = renderReview();
+
+    return (
+        <div className="wizard-backdrop" role="dialog" aria-modal="true">
+            <div className="wizard-panel">
+                <header className="wizard-header">
+                    <div>
+                        <h3>New player setup</h3>
+                        <p className="text-muted text-small">{steps[step]?.blurb || ""}</p>
+                    </div>
+                    <button type="button" className="btn ghost" onClick={onClose}>
+                        Close
+                    </button>
+                </header>
+                <div className="wizard-stepper">
+                    {steps.map((item, index) => (
+                        <button
+                            key={item.key}
+                            type="button"
+                            className={`wizard-step${
+                                index === step
+                                    ? " is-active"
+                                    : index < step
+                                    ? " is-complete"
+                                    : ""
+                            }`}
+                            onClick={() => setStep(index)}
+                            disabled={index > step}
+                        >
+                            <span className="wizard-step__label">{item.title}</span>
+                        </button>
+                    ))}
+                </div>
+                <div className="wizard-content">{content}</div>
+                <footer className="wizard-footer">
+                    <button type="button" className="btn ghost" onClick={onClose}>
+                        Cancel
+                    </button>
+                    <div className="wizard-footer__actions">
+                        <button type="button" className="btn secondary" onClick={goBack} disabled={step === 0}>
+                            Back
+                        </button>
+                        {step < steps.length - 1 ? (
+                            <button type="button" className="btn" onClick={goNext} disabled={!canAdvance}>
+                                Next
+                            </button>
+                        ) : (
+                            <button type="button" className="btn" onClick={handleApply} disabled={!canApply}>
+                                Apply to sheet
+                            </button>
+                        )}
+                    </div>
+                </footer>
+            </div>
+        </div>
+    );
+}
+
+function buildInitialWizardState(character, playerName) {
+    const normalized = normalizeCharacter(character);
+    const abilityDefaults = ABILITY_DEFS.reduce((acc, ability) => {
+        const value = clampNonNegative(normalized.stats?.[ability.key]);
+        acc[ability.key] = value || 0;
+        return acc;
+    }, {});
+    const resources = {
+        level: clampNonNegative(normalized.resources?.level) || 1,
+        exp: clampNonNegative(normalized.resources?.exp),
+        hp: clampNonNegative(normalized.resources?.hp),
+        maxHP: clampNonNegative(normalized.resources?.maxHP),
+        mp: clampNonNegative(normalized.resources?.mp),
+        maxMP: clampNonNegative(normalized.resources?.maxMP),
+        tp: clampNonNegative(normalized.resources?.tp),
+        sp: clampNonNegative(normalized.resources?.sp),
+        initiative: Number(normalized.resources?.initiative) || 0,
+        mode: normalized.resources?.useTP ? "TP" : "MP",
+        notes: normalized.resources?.notes || "",
+    };
+    const concept = {
+        name: normalized.name || "",
+        player: normalized.profile?.player || playerName || "",
+        pronouns: normalized.profile?.pronouns || "",
+        class: normalized.profile?.class || "",
+        arcana: normalized.profile?.arcana || "",
+        alignment: normalized.profile?.alignment || "",
+        negotiator: normalized.profile?.negotiator || "",
+        race: normalized.profile?.race || "",
+        age: normalized.profile?.age || "",
+        gender: normalized.profile?.gender || "",
+        height: normalized.profile?.height || "",
+        weight: normalized.profile?.weight || "",
+        eye: normalized.profile?.eye || "",
+        hair: normalized.profile?.hair || "",
+        background: normalized.profile?.background || "",
+        notes: normalized.profile?.notes || "",
+    };
+    return {
+        concept,
+        abilities: abilityDefaults,
+        resources,
+        skills: normalizeSkills(normalized.skills),
+    };
+}
+
+function buildCharacterFromWizard(state, base) {
+    const normalized = normalizeCharacter(base);
+    const merged = deepClone(normalized);
+    merged.name = state.concept.name?.trim() || "";
+    merged.profile = {
+        ...normalized.profile,
+        player: state.concept.player || normalized.profile?.player || "",
+        pronouns: state.concept.pronouns || "",
+        class: state.concept.class || "",
+        arcana: state.concept.arcana || "",
+        alignment: state.concept.alignment || "",
+        negotiator: state.concept.negotiator || "",
+        race: state.concept.race || "",
+        age: state.concept.age || "",
+        gender: state.concept.gender || "",
+        height: state.concept.height || "",
+        weight: state.concept.weight || "",
+        eye: state.concept.eye || "",
+        hair: state.concept.hair || "",
+        background: state.concept.background || "",
+        notes: state.concept.notes || "",
+    };
+    merged.stats = ABILITY_DEFS.reduce((acc, ability) => {
+        acc[ability.key] = clampNonNegative(state.abilities?.[ability.key]);
+        return acc;
+    }, {});
+    const useTP = state.resources.mode === "TP";
+    merged.resources = {
+        ...normalized.resources,
+        level: clampNonNegative(state.resources.level) || 1,
+        exp: clampNonNegative(state.resources.exp),
+        hp: clampNonNegative(state.resources.hp),
+        maxHP: clampNonNegative(state.resources.maxHP),
+        mp: useTP ? 0 : clampNonNegative(state.resources.mp),
+        maxMP: useTP ? 0 : clampNonNegative(state.resources.maxMP),
+        tp: useTP ? clampNonNegative(state.resources.tp) : 0,
+        sp: clampNonNegative(state.resources.sp),
+        initiative: Number(state.resources.initiative) || 0,
+        notes: state.resources.notes || normalized.resources?.notes || "",
+        useTP,
+    };
+    merged.skills = normalizeSkills(state.skills);
+    return merged;
+}
+
+function normalizeCharacter(raw) {
+    if (!raw || typeof raw !== "object") {
+        return {
+            name: "",
+            profile: {},
+            stats: {},
+            resources: { useTP: false },
+            skills: normalizeSkills({}),
+        };
+    }
+    const clone = deepClone(raw);
+    clone.name = typeof clone.name === "string" ? clone.name : "";
+    clone.profile = clone.profile && typeof clone.profile === "object" ? { ...clone.profile } : {};
+    clone.stats = clone.stats && typeof clone.stats === "object" ? { ...clone.stats } : {};
+    clone.resources = clone.resources && typeof clone.resources === "object" ? { ...clone.resources } : {};
+    if (clone.resources.useTP === undefined) {
+        clone.resources.useTP = !!clone.resources.tp && !clone.resources.mp;
+    } else {
+        clone.resources.useTP = !!clone.resources.useTP;
+    }
+    clone.skills = normalizeSkills(clone.skills);
+    return clone;
+}
+
+function normalizeSkills(raw) {
+    const out = {};
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+        for (const [key, value] of Object.entries(raw)) {
+            if (!value || typeof value !== "object") continue;
+            const ranks = clampNonNegative(value.ranks);
+            const miscRaw = Number(value.misc);
+            const misc = Number.isFinite(miscRaw) ? miscRaw : 0;
+            out[key] = { ranks, misc };
+        }
+    }
+    for (const skill of WORLD_SKILLS) {
+        if (!out[skill.key]) out[skill.key] = { ranks: 0, misc: 0 };
+    }
+    return out;
 }
 
 // ---------- Party ----------
