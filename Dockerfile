@@ -30,5 +30,10 @@ COPY --from=build /app/dist ./dist
 # Expose the port the app runs on
 EXPOSE 3000
 
+# Drop privileges to a non-root user
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+RUN chown -R appuser:appgroup /app
+USER appuser
+
 # Start the server
 CMD ["npm", "start"]

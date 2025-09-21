@@ -8,6 +8,12 @@ import { fileURLToPath } from 'url';
 const r = Router();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEMON_PATH = path.join(__dirname, '..', 'data', 'demons.json');
+const SEARCH_QUERY_REGEX = /^[\p{L}\p{N}\s'-]+$/u;
+const SLUG_REGEX = /^[a-z0-9-]+$/i;
+
+function safeTrim(value) {
+    return typeof value === 'string' ? value.trim() : String(value ?? '').trim();
+}
 
 let cache = null;
 async function loadDemons() {
@@ -18,11 +24,40 @@ async function loadDemons() {
     return cache;
 }
 
+function parseSearchQuery(value) {
+    const raw = safeTrim(value);
+    if (!raw) {
+        return { isEmpty: true };
+    }
+    if (raw.length > 64) {
+        return { error: 'invalid query length' };
+    }
+    if (!SEARCH_QUERY_REGEX.test(raw)) {
+        return { error: 'invalid query format' };
+    }
+    return { value: raw.toLowerCase() };
+}
+
+function normalizeSlug(value) {
+    const raw = safeTrim(value);
+    if (!raw || raw.length > 64) {
+        return null;
+    }
+    if (!SLUG_REGEX.test(raw)) {
+        return null;
+    }
+    return raw.toLowerCase();
+}
+
 // GET /api/personas/search?q=jack
 r.get('/search', async (req, res) => {
     try {
-        const q = String(req.query.q || '').trim().toLowerCase();
-        if (!q) return res.json([]);
+        const parsed = parseSearchQuery(req.query.q);
+        if (parsed?.isEmpty) return res.json([]);
+        if (parsed?.error) {
+            return res.status(400).json({ error: parsed.error });
+        }
+        const q = parsed.value;
         const demons = await loadDemons();
         const hits = demons
             .filter(d =>
@@ -41,8 +76,12 @@ r.get('/search', async (req, res) => {
 // GET /api/personas/:slug
 r.get('/:slug', async (req, res) => {
     try {
+        const slug = normalizeSlug(req.params.slug);
+        if (!slug) {
+            return res.status(400).json({ error: 'invalid persona identifier' });
+        }
         const demons = await loadDemons();
-        const demon = demons.find(d => String(d.query) === req.params.slug);
+        const demon = demons.find(d => String(d.query ?? '').toLowerCase() === slug);
         if (!demon) return res.status(404).json({ error: 'persona not found' });
         res.json(demon);
     } catch (e) {
