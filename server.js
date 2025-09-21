@@ -59,6 +59,29 @@ function ensureInventoryItem(item) {
     return normalized;
 }
 
+const GEAR_SLOTS = ['weapon', 'armor', 'accessory'];
+
+function ensureGearEntry(item) {
+    if (!item || typeof item !== 'object') return null;
+    const name = sanitizeText(item.name).trim();
+    if (!name) return null;
+    return {
+        id: typeof item.id === 'string' && item.id ? item.id : uuid(),
+        name,
+        type: sanitizeText(item.type),
+        desc: sanitizeText(item.desc),
+    };
+}
+
+function ensureGearSlots(player) {
+    const raw = player && typeof player.gear === 'object' ? player.gear : {};
+    const normalized = {};
+    for (const slot of GEAR_SLOTS) {
+        normalized[slot] = ensureGearEntry(raw?.[slot]) ?? null;
+    }
+    return normalized;
+}
+
 function ensurePlayerShape(player) {
     if (!player || typeof player !== 'object') return null;
     const out = { ...player };
@@ -69,6 +92,7 @@ function ensurePlayerShape(player) {
     } else {
         out.inventory = [];
     }
+    out.gear = ensureGearSlots(out);
     return out;
 }
 
@@ -116,6 +140,18 @@ function canEditInventory(game, actingUserId, targetUserId) {
     if (isDM(game, actingUserId)) return true;
     if (actingUserId !== targetUserId) return false;
     return !!game.permissions?.canEditItems;
+}
+
+function ensureGearMap(player) {
+    if (!player || typeof player !== 'object') return { weapon: null, armor: null, accessory: null };
+    player.gear = ensureGearSlots(player);
+    return player.gear;
+}
+
+function canEditGear(game, actingUserId, targetUserId) {
+    if (isDM(game, actingUserId)) return true;
+    if (actingUserId !== targetUserId) return false;
+    return !!game.permissions?.canEditGear;
 }
 
 function generateInviteCode(existing) {
@@ -257,7 +293,13 @@ app.post('/api/games', requireAuth, async (req, res) => {
         id: uuid(),
         name,
         dmId: req.session.userId,
-        players: [{ userId: req.session.userId, role: 'dm', character: null, inventory: [] }],
+        players: [{
+            userId: req.session.userId,
+            role: 'dm',
+            character: null,
+            inventory: [],
+            gear: { weapon: null, armor: null, accessory: null },
+        }],
         items: { custom: [] },
         gear: { custom: [] },
         demons: [],
@@ -330,7 +372,13 @@ app.post('/api/games/join/:code', requireAuth, async (req, res) => {
     if (!game) return res.status(404).json({ error: 'not_found' });
 
     if (!isMember(game, req.session.userId)) {
-        game.players.push({ userId: req.session.userId, role: 'player', character: null, inventory: [] });
+        game.players.push({
+            userId: req.session.userId,
+            role: 'player',
+            character: null,
+            inventory: [],
+            gear: { weapon: null, armor: null, accessory: null },
+        });
     }
 
     game.invites = game.invites.map((inv) => inv && inv.code === code
@@ -577,6 +625,86 @@ app.delete('/api/games/:id/players/:playerId/items/:itemId', requireAuth, async 
         return res.status(404).json({ error: 'item_not_found' });
     }
     target.inventory = next;
+    saveGame(db, game);
+    await writeDB(db);
+    res.json({ ok: true });
+});
+
+app.put('/api/games/:id/players/:playerId/gear/:slot', requireAuth, async (req, res) => {
+    const { id, playerId } = req.params || {};
+    const slot = (req.params?.slot || '').toLowerCase();
+    if (!GEAR_SLOTS.includes(slot)) {
+        return res.status(400).json({ error: 'invalid_slot' });
+    }
+
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
+    const target = findPlayer(game, playerId);
+    if (!target) return res.status(404).json({ error: 'player_not_found' });
+    if ((target.role || '').toLowerCase() === 'dm') {
+        return res.status(400).json({ error: 'dm_has_no_gear' });
+    }
+
+    const actor = req.session.userId;
+    if (!canEditGear(game, actor, playerId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const payload = req.body?.item || req.body || {};
+    const name = sanitizeText(payload.name).trim();
+    if (!name) return res.status(400).json({ error: 'missing name' });
+    const type = sanitizeText(payload.type).trim();
+    const desc = sanitizeText(payload.desc);
+
+    const gear = ensureGearMap(target);
+    const current = gear?.[slot];
+    const entry = {
+        id: typeof payload.id === 'string' && payload.id ? payload.id : current?.id || uuid(),
+        name,
+        type,
+        desc,
+    };
+
+    gear[slot] = entry;
+    saveGame(db, game);
+    await writeDB(db);
+    res.json(entry);
+});
+
+app.delete('/api/games/:id/players/:playerId/gear/:slot', requireAuth, async (req, res) => {
+    const { id, playerId } = req.params || {};
+    const slot = (req.params?.slot || '').toLowerCase();
+    if (!GEAR_SLOTS.includes(slot)) {
+        return res.status(400).json({ error: 'invalid_slot' });
+    }
+
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
+    const target = findPlayer(game, playerId);
+    if (!target) return res.status(404).json({ error: 'player_not_found' });
+    if ((target.role || '').toLowerCase() === 'dm') {
+        return res.status(400).json({ error: 'dm_has_no_gear' });
+    }
+
+    const actor = req.session.userId;
+    if (!canEditGear(game, actor, playerId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const gear = ensureGearMap(target);
+    if (!gear?.[slot]) {
+        return res.status(404).json({ error: 'gear_not_found' });
+    }
+
+    gear[slot] = null;
     saveGame(db, game);
     await writeDB(db);
     res.json({ ok: true });

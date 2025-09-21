@@ -1030,6 +1030,305 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems }
     );
 }
 
+const PLAYER_GEAR_SLOTS = ["weapon", "armor", "accessory"];
+const PLAYER_GEAR_LABELS = {
+    weapon: "Weapon",
+    armor: "Armor",
+    accessory: "Accessory",
+};
+
+function PlayerGearCard({ player, canEdit, gameId, onUpdate, libraryGear }) {
+    const slotOptions = useMemo(
+        () => PLAYER_GEAR_SLOTS.map((value) => ({ value, label: PLAYER_GEAR_LABELS[value] || value })),
+        []
+    );
+    const defaultSlot = slotOptions[0]?.value || "weapon";
+    const [form, setForm] = useState(() => ({ slot: defaultSlot, name: "", type: "", desc: "" }));
+    const [busySave, setBusySave] = useState(false);
+    const [busySlot, setBusySlot] = useState(null);
+    const [picker, setPicker] = useState("");
+
+    const slotSet = useMemo(() => new Set(slotOptions.map((opt) => opt.value)), [slotOptions]);
+
+    const normalizeSlot = useCallback(
+        (slot) => {
+            const value = String(slot || "").toLowerCase();
+            return slotSet.has(value) ? value : defaultSlot;
+        },
+        [slotSet, defaultSlot]
+    );
+
+    const gearMap = useMemo(() => {
+        const source = player?.gear && typeof player.gear === "object" ? player.gear : {};
+        const map = {};
+        for (const opt of slotOptions) {
+            const entry = source?.[opt.value];
+            map[opt.value] = entry && typeof entry === "object" ? entry : null;
+        }
+        return map;
+    }, [player.gear, slotOptions]);
+
+    const playerId = player?.userId || "";
+    const prevPlayer = useRef(playerId);
+
+    useEffect(() => {
+        if (prevPlayer.current !== playerId) {
+            prevPlayer.current = playerId;
+            const entry = gearMap[defaultSlot];
+            setForm({
+                slot: defaultSlot,
+                name: entry?.name || "",
+                type: entry?.type || "",
+                desc: entry?.desc || "",
+            });
+            setPicker((prev) => (prev ? "" : prev));
+            return;
+        }
+        setForm((prev) => {
+            const slot = normalizeSlot(prev.slot);
+            const entry = gearMap[slot];
+            const next = {
+                slot,
+                name: entry?.name || "",
+                type: entry?.type || "",
+                desc: entry?.desc || "",
+            };
+            if (
+                next.slot === prev.slot &&
+                next.name === prev.name &&
+                next.type === prev.type &&
+                next.desc === prev.desc
+            ) {
+                return prev;
+            }
+            return next;
+        });
+        setPicker((prev) => (prev ? "" : prev));
+    }, [defaultSlot, gearMap, normalizeSlot, playerId]);
+
+    const available = Array.isArray(libraryGear) ? libraryGear : [];
+
+    const inferSlot = useCallback((type) => {
+        const lower = (type || "").toLowerCase();
+        if (lower.startsWith("weapon")) return "weapon";
+        if (lower.startsWith("armor")) return "armor";
+        if (lower.startsWith("accessory")) return "accessory";
+        return null;
+    }, []);
+
+    const startEdit = useCallback(
+        (slot) => {
+            const next = normalizeSlot(slot);
+            const entry = gearMap[next];
+            setForm({
+                slot: next,
+                name: entry?.name || "",
+                type: entry?.type || "",
+                desc: entry?.desc || "",
+            });
+            setPicker("");
+        },
+        [gearMap, normalizeSlot]
+    );
+
+    const resetForm = useCallback(() => {
+        startEdit(form.slot);
+    }, [form.slot, startEdit]);
+
+    const save = useCallback(async () => {
+        if (!canEdit) return;
+        const slot = normalizeSlot(form.slot);
+        const name = form.name.trim();
+        if (!name) return alert("Gear needs a name");
+        const payload = {
+            name,
+            type: form.type.trim(),
+            desc: form.desc.trim(),
+        };
+        try {
+            setBusySave(true);
+            await Games.setPlayerGear(gameId, player.userId, slot, payload);
+            await onUpdate();
+        } catch (e) {
+            alert(e.message);
+        } finally {
+            setBusySave(false);
+        }
+    }, [canEdit, form.name, form.type, form.desc, form.slot, normalizeSlot, gameId, player.userId, onUpdate]);
+
+    const remove = useCallback(
+        async (slot) => {
+            if (!canEdit) return;
+            const normalized = normalizeSlot(slot);
+            if (!gearMap[normalized]) return;
+            if (!confirm("Remove this gear from the slot?")) return;
+            try {
+                setBusySlot(normalized);
+                await Games.clearPlayerGear(gameId, player.userId, normalized);
+                await onUpdate();
+            } catch (e) {
+                alert(e.message);
+            } finally {
+                setBusySlot(null);
+            }
+        },
+        [canEdit, gearMap, normalizeSlot, gameId, player.userId, onUpdate]
+    );
+
+    const playerLabel = player.character?.name || `Player ${player.userId?.slice?.(0, 6) || ""}`;
+    const subtitleParts = [];
+    if (player.character?.profile?.class) subtitleParts.push(player.character.profile.class);
+    if (player.character?.resources?.level) subtitleParts.push(`LV ${player.character.resources.level}`);
+    const subtitle = subtitleParts.join(" · ");
+
+    const activeSlot = normalizeSlot(form.slot);
+    const currentEntry = gearMap[activeSlot];
+    const equippedCount = slotOptions.reduce(
+        (count, opt) => (gearMap[opt.value] ? count + 1 : count),
+        0
+    );
+    const hasChanges = currentEntry
+        ? form.name !== (currentEntry.name || "") ||
+          form.type !== (currentEntry.type || "") ||
+          form.desc !== (currentEntry.desc || "")
+        : !!(form.name || form.type || form.desc);
+
+    return (
+        <div className="card" style={{ padding: 12 }}>
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                <div>
+                    <div><b>{playerLabel || "Unnamed Player"}</b></div>
+                    {subtitle && <div style={{ opacity: 0.75, fontSize: 12 }}>{subtitle}</div>}
+                </div>
+                <span className="pill">Equipped: {equippedCount}/{slotOptions.length}</span>
+            </div>
+
+            <div className="row" style={{ gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                <select
+                    value={activeSlot}
+                    onChange={(e) => startEdit(e.target.value)}
+                    disabled={!canEdit}
+                    style={{ minWidth: 140 }}
+                >
+                    {slotOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                        </option>
+                    ))}
+                </select>
+                <select
+                    value={picker}
+                    onChange={(e) => {
+                        const value = e.target.value;
+                        if (!value) {
+                            setPicker("");
+                            return;
+                        }
+                        const idx = Number(value);
+                        if (!Number.isNaN(idx) && available[idx]) {
+                            const chosen = available[idx];
+                            const guessed = normalizeSlot(inferSlot(chosen.type) || activeSlot);
+                            setForm({
+                                slot: guessed,
+                                name: chosen.name || "",
+                                type: chosen.type || "",
+                                desc: chosen.desc || "",
+                            });
+                        }
+                        setPicker("");
+                    }}
+                    disabled={!canEdit || available.length === 0}
+                    style={{ minWidth: 180 }}
+                >
+                    <option value="">Copy from library…</option>
+                    {available.map((it, idx) => (
+                        <option key={`${it.id ?? it.name ?? idx}-${idx}`} value={String(idx)}>
+                            {(it.name || "Untitled").slice(0, 40)}
+                            {it.type ? ` · ${it.type}` : ""}
+                        </option>
+                    ))}
+                </select>
+            </div>
+
+            <div className="row" style={{ gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                <input
+                    placeholder="Gear name"
+                    value={form.name}
+                    onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+                    disabled={!canEdit}
+                    style={{ flex: 2, minWidth: 180 }}
+                />
+                <input
+                    placeholder="Type"
+                    value={form.type}
+                    onChange={(e) => setForm((prev) => ({ ...prev, type: e.target.value }))}
+                    disabled={!canEdit}
+                    style={{ flex: 1, minWidth: 160 }}
+                />
+                <input
+                    placeholder="Description"
+                    value={form.desc}
+                    onChange={(e) => setForm((prev) => ({ ...prev, desc: e.target.value }))}
+                    disabled={!canEdit}
+                    style={{ flex: 3, minWidth: 220 }}
+                />
+                <div className="row" style={{ gap: 8 }}>
+                    <button className="btn" onClick={save} disabled={!canEdit || busySave || !form.name.trim()}>
+                        {busySave ? "…" : currentEntry ? "Update" : "Assign"}
+                    </button>
+                    {hasChanges && (
+                        <button className="btn" onClick={resetForm} disabled={busySave}>
+                            Cancel
+                        </button>
+                    )}
+                </div>
+            </div>
+
+            <div className="list" style={{ marginTop: 12 }}>
+                {slotOptions.map((opt) => {
+                    const entry = gearMap[opt.value];
+                    return (
+                        <div key={opt.value} className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                            <div style={{ flex: 1 }}>
+                                <div style={{ fontWeight: 600 }}>{opt.label}</div>
+                                {entry ? (
+                                    <>
+                                        <div className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 4 }}>
+                                            <b>{entry.name}</b>
+                                            {entry.type && <span className="pill">{entry.type}</span>}
+                                        </div>
+                                        {entry.desc && (
+                                            <div style={{ opacity: 0.75, fontSize: 12, marginTop: 4 }}>{entry.desc}</div>
+                                        )}
+                                    </>
+                                ) : (
+                                    <div style={{ opacity: 0.7, fontSize: 12, marginTop: 4 }}>Empty slot.</div>
+                                )}
+                            </div>
+                            {canEdit && (
+                                <div className="row" style={{ gap: 6 }}>
+                                    <button className="btn" onClick={() => startEdit(opt.value)} disabled={busySave}>
+                                        {entry ? "Edit" : "Assign"}
+                                    </button>
+                                    {entry && (
+                                        <button
+                                            className="btn"
+                                            onClick={() => remove(opt.value)}
+                                            disabled={busySlot === opt.value}
+                                        >
+                                            {busySlot === opt.value ? "…" : "Remove"}
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
 // ---------- Gear ----------
 function GearTab({ game, me, onUpdate }) {
     const [premade, setPremade] = useState([]);
@@ -1037,6 +1336,7 @@ function GearTab({ game, me, onUpdate }) {
     const [editing, setEditing] = useState(null);
     const [busySave, setBusySave] = useState(false);
     const [busyRow, setBusyRow] = useState(null);
+    const [selectedPlayerId, setSelectedPlayerId] = useState("");
     const gearTypes = ["weapon", "armor", "accessory"];
 
     const isDM = game.dmId === me.id;
@@ -1101,22 +1401,59 @@ function GearTab({ game, me, onUpdate }) {
     const gearList = premade.filter((it) =>
         gearTypes.some((t) => it.type?.toLowerCase().startsWith(t))
     );
+    const customGear = Array.isArray(game.gear?.custom) ? game.gear.custom : [];
+    const libraryGear = [...customGear, ...gearList];
+    const players = (game.players || []).filter(
+        (p) => (p?.role || "").toLowerCase() !== "dm"
+    );
+
+    const playerOptions = useMemo(
+        () =>
+            players.map((p, idx) => ({
+                data: p,
+                value: p.userId || `player-${idx}`,
+                label:
+                    p.character?.name?.trim() ||
+                    `Player ${p.userId?.slice?.(0, 6) || ""}` ||
+                    "Unnamed Player",
+            })),
+        [players]
+    );
+
+    useEffect(() => {
+        if (!isDM) {
+            setSelectedPlayerId("");
+            return;
+        }
+        setSelectedPlayerId((prev) => {
+            if (playerOptions.some((opt) => opt.value === prev)) return prev;
+            const next = playerOptions[0]?.value || "";
+            return prev === next ? prev : next;
+        });
+    }, [isDM, playerOptions]);
+
+    const visiblePlayers = isDM
+        ? playerOptions
+              .filter((opt) => selectedPlayerId && opt.value === selectedPlayerId)
+              .map((opt) => opt.data)
+        : players;
 
     return (
-        <div className="row" style={{ gap: 16 }}>
-            <div className="card" style={{ flex: 1 }}>
-                <h3>{editing ? "Edit Gear" : "Custom Gear"}</h3>
-                <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-                    <input
-                        placeholder="Name"
-                        value={form.name}
-                        onChange={(e) => setForm({ ...form, name: e.target.value })}
-                        style={{ flex: 1, minWidth: 180 }}
-                    />
-                    <input
-                        placeholder="Type"
-                        value={form.type}
-                        onChange={(e) => setForm({ ...form, type: e.target.value })}
+        <div className="col" style={{ display: "grid", gap: 16 }}>
+            <div className="row" style={{ gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
+                <div className="card" style={{ flex: 1, minWidth: 320 }}>
+                    <h3>{editing ? "Edit Gear" : "Custom Gear"}</h3>
+                    <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                        <input
+                            placeholder="Name"
+                            value={form.name}
+                            onChange={(e) => setForm({ ...form, name: e.target.value })}
+                            style={{ flex: 1, minWidth: 180 }}
+                        />
+                        <input
+                            placeholder="Type"
+                            value={form.type}
+                            onChange={(e) => setForm({ ...form, type: e.target.value })}
                         style={{ flex: 1, minWidth: 160 }}
                     />
                     <input
@@ -1133,50 +1470,50 @@ function GearTab({ game, me, onUpdate }) {
                         >
                             {busySave ? "…" : editing ? "Save" : "Add"}
                         </button>
-                        {editing && (
-                            <button className="btn" onClick={resetForm} disabled={busySave}>
-                                Cancel
-                            </button>
+                            {editing && (
+                                <button className="btn" onClick={resetForm} disabled={busySave}>
+                                    Cancel
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
+                    <h4 style={{ marginTop: 16 }}>Game Custom Gear</h4>
+                    <div className="list">
+                        {customGear.map((it) => (
+                            <div key={it.id} className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
+                                <div>
+                                    <b>{it.name}</b> — {it.type || "—"}
+                                    <div style={{ opacity: 0.85, fontSize: 12 }}>{it.desc}</div>
+                                </div>
+                                {canEdit && (
+                                    <div className="row" style={{ gap: 6 }}>
+                                        <button
+                                            className="btn"
+                                            onClick={() => {
+                                                setEditing(it);
+                                                setForm({ name: it.name || "", type: it.type || "", desc: it.desc || "" });
+                                            }}
+                                            disabled={busySave}
+                                        >
+                                            Edit
+                                        </button>
+                                        <button
+                                            className="btn"
+                                            onClick={() => remove(it.id)}
+                                            disabled={busyRow === it.id}
+                                        >
+                                            {busyRow === it.id ? "…" : "Remove"}
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                        {customGear.length === 0 && (
+                            <div style={{ opacity: 0.7 }}>No custom gear yet.</div>
                         )}
                     </div>
                 </div>
-
-                <h4 style={{ marginTop: 16 }}>Game Custom Gear</h4>
-                <div className="list">
-                    {(game.gear?.custom ?? []).map((it) => (
-                        <div key={it.id} className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-                            <div>
-                                <b>{it.name}</b> — {it.type || "—"}
-                                <div style={{ opacity: 0.85, fontSize: 12 }}>{it.desc}</div>
-                            </div>
-                            {canEdit && (
-                                <div className="row" style={{ gap: 6 }}>
-                                    <button
-                                        className="btn"
-                                        onClick={() => {
-                                            setEditing(it);
-                                            setForm({ name: it.name || "", type: it.type || "", desc: it.desc || "" });
-                                        }}
-                                        disabled={busySave}
-                                    >
-                                        Edit
-                                    </button>
-                                    <button
-                                        className="btn"
-                                        onClick={() => remove(it.id)}
-                                        disabled={busyRow === it.id}
-                                    >
-                                        {busyRow === it.id ? "…" : "Remove"}
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-                    ))}
-                    {(game.gear?.custom ?? []).length === 0 && (
-                        <div style={{ opacity: 0.7 }}>No custom gear yet.</div>
-                    )}
-                </div>
-            </div>
 
             <div className="card" style={{ width: 380 }}>
                 <h3>Premade Gear</h3>
@@ -1202,6 +1539,53 @@ function GearTab({ game, me, onUpdate }) {
                     ))}
                     {gearList.length === 0 && <div style={{ opacity: 0.7 }}>No premade gear.</div>}
                 </div>
+            </div>
+
+            </div>
+
+            <div className="card">
+                <h3>Player Gear</h3>
+                {isDM && players.length > 0 && (
+                    <div className="row" style={{ gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+                        <label htmlFor="player-gear-picker" style={{ fontWeight: 600 }}>
+                            Select player:
+                        </label>
+                        <select
+                            id="player-gear-picker"
+                            value={selectedPlayerId}
+                            onChange={(e) => setSelectedPlayerId(e.target.value)}
+                            style={{ minWidth: 200 }}
+                        >
+                            {!selectedPlayerId && <option value="">Choose a player…</option>}
+                            {playerOptions.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                    {opt.label}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                )}
+                {players.length === 0 ? (
+                    <div style={{ opacity: 0.7 }}>No players have joined yet.</div>
+                ) : visiblePlayers.length === 0 ? (
+                    <div style={{ opacity: 0.7 }}>Select a player to manage their gear.</div>
+                ) : (
+                    <div className="list" style={{ gap: 12 }}>
+                        {visiblePlayers.map((p) => (
+                            <PlayerGearCard
+                                key={p.userId}
+                                player={p}
+                                canEdit={
+                                    isDM ||
+                                    (game.permissions?.canEditGear && me.id === p.userId)
+                                }
+                                gameId={game.id}
+                                onUpdate={onUpdate}
+                                libraryGear={libraryGear}
+                            />
+                        ))}
+                    </div>
+                )}
             </div>
         </div>
     );
