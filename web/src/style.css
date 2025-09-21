@@ -1723,6 +1723,11 @@ label {
 
 .world-skill-manager { display: grid; gap: 16px; }
 .world-skill-manager__header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.world-skill-manager__header-actions { display: grid; gap: 8px; justify-items: end; align-items: center; }
+.world-skill-manager__tools { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.world-skill-manager__search { min-width: 200px; }
+.world-skill-manager__sort { display: grid; gap: 4px; text-align: right; font-weight: 600; color: var(--muted); }
+.world-skill-manager__sort select { min-width: 170px; }
 .world-skill-manager__status { color: var(--brand-600); font-weight: 600; letter-spacing: 0.04em; }
 .world-skill-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 .world-skill-card { position: relative; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--surface-2); display: grid; gap: 12px; min-height: 180px; transition: border-color var(--trans-fast), box-shadow var(--trans-fast), transform var(--trans-fast); }
