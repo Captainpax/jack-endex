@@ -395,9 +395,9 @@ export const Auth = {
 };
 
 export const Games = {
-    list: (query) => api('/api/games', { query, cache: 2000 }),
+    list: (query) => api('/api/games', { query }),
     create: (name) => api('/api/games', { method: 'POST', body: { name } }),
-    get: (id) => api(`/api/games/${encodeURIComponent(id)}`, { cache: 2000 }),
+    get: (id) => api(`/api/games/${encodeURIComponent(id)}`),
     invite: (id) => api(`/api/games/${encodeURIComponent(id)}/invites`, { method: 'POST' }),
     delete: (id) => api(`/api/games/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     joinByCode: (code) => api(`/api/games/join/${encodeURIComponent(code)}`, { method: 'POST' }),
