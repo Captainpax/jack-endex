@@ -107,12 +107,14 @@ function saveGame(db, updated) {
     db.games[idx] = updated;
 }
 
-function isMember(game, userId) {
-    return Array.isArray(game.players) && game.players.some((p) => p && p.userId === userId);
-}
-
 function isDM(game, userId) {
     return game.dmId === userId;
+}
+
+function isMember(game, userId) {
+    if (!userId) return false;
+    if (isDM(game, userId)) return true;
+    return Array.isArray(game.players) && game.players.some((p) => p && p.userId === userId);
 }
 
 function ensureInviteList(game) {
