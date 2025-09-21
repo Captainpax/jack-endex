@@ -2,6 +2,72 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Auth, Games, Items, Personas } from "./api";
 
+const DM_NAV = [
+    {
+        key: "overview",
+        label: "DM Overview",
+        description: "Monitor the party at a glance",
+    },
+    {
+        key: "sheet",
+        label: "Character Sheets",
+        description: "Review and update any adventurer",
+    },
+    {
+        key: "party",
+        label: "Party Roster",
+        description: "Health, levels, and quick switches",
+    },
+    {
+        key: "items",
+        label: "Item Library",
+        description: "Craft and assign loot",
+    },
+    {
+        key: "gear",
+        label: "Gear Locker",
+        description: "Track equipped slots",
+    },
+    {
+        key: "demons",
+        label: "Demon Codex",
+        description: "Summoned allies and spirits",
+    },
+    {
+        key: "settings",
+        label: "Campaign Settings",
+        description: "Permissions and dangerous actions",
+    },
+];
+
+const PLAYER_NAV = [
+    {
+        key: "sheet",
+        label: "My Character",
+        description: "Update your stats and background",
+    },
+    {
+        key: "party",
+        label: "Party View",
+        description: "See who fights beside you",
+    },
+    {
+        key: "items",
+        label: "Shared Items",
+        description: "Treasures the party can access",
+    },
+    {
+        key: "gear",
+        label: "My Gear",
+        description: "Weapons, armor, and accessories",
+    },
+    {
+        key: "demons",
+        label: "Demon Companions",
+        description: "Track your summoned allies",
+    },
+];
+
 // ---------- App Root ----------
 export default function App() {
     const [me, setMe] = useState(null);
@@ -73,7 +139,7 @@ export default function App() {
                             (p) => (p?.role || "").toLowerCase() !== "dm"
                         );
                         setDmSheetPlayerId(firstPlayer ? firstPlayer.userId : null);
-                        setTab("party");
+                        setTab("overview");
                     } else {
                         setDmSheetPlayerId(null);
                         setTab("sheet");
@@ -110,178 +176,18 @@ export default function App() {
         );
     }
 
-    if (!active) {
-        return (
-            <Home
-                me={me}
-                games={games}
-                onOpen={async (g) => {
-                    const full = await Games.get(g.id);
-                    setActive(full);
-                    if (full.dmId === me.id) {
-                        const firstPlayer = (full.players || []).find(
-                            (p) => (p?.role || "").toLowerCase() !== "dm"
-                        );
-                        setDmSheetPlayerId(firstPlayer ? firstPlayer.userId : null);
-                    } else {
-                        setDmSheetPlayerId(null);
-                    }
-                    setTab(full.dmId === me.id ? "party" : "sheet");
-                }}
-                onCreate={async (name) => {
-                    await Games.create(name);
-                    setGames(await Games.list());
-                }}
-                onDelete={async (game) => {
-                    if (!confirm(`Delete the game "${game.name}"? This cannot be undone.`)) return;
-                    try {
-                        await Games.delete(game.id);
-                        setGames(await Games.list());
-                        alert("Game deleted");
-                    } catch (e) {
-                        alert(e.message);
-                    }
-                }}
-            />
-        );
-    }
-
-    const isDM = active.dmId === me.id;
-
     return (
-        <div style={{ padding: 20, display: "grid", gap: 16 }}>
-            <header className="row" style={{ alignItems: "center", justifyContent: "space-between" }}>
-                <h2>{active.name}</h2>
-                <div className="row" style={{ gap: 8 }}>
-                    <InviteButton gameId={active.id} />
-                    <button
-                        className="btn"
-                        onClick={() => {
-                            setActive(null);
-                            setDmSheetPlayerId(null);
-                        }}
-                    >
-                        Back
-                    </button>
-                </div>
-            </header>
-
-            {(() => {
-                const tabs = isDM
-                    ? ["party", "sheet", "items", "gear", "demons", "settings"]
-                    : ["sheet", "party", "items", "gear", "demons", "settings"];
-                return (
-                    <div className="tabs">
-                        {tabs.map((k) => (
-                            <div
-                                key={k}
-                                className={"tab" + (tab === k ? " active" : "")}
-                                onClick={() => setTab(k)}
-                            >
-                                {k.toUpperCase()}
-                            </div>
-                        ))}
-                    </div>
-                );
-            })()}
-
-            {tab === "sheet" && (
-                <Sheet
-                    me={me}
-                    game={active}
-                    targetUserId={active.dmId === me.id ? dmSheetPlayerId : undefined}
-                    onChangePlayer={active.dmId === me.id ? setDmSheetPlayerId : undefined}
-                    onSave={async (ch) => {
-                        await Games.saveCharacter(active.id, ch);
-                        const full = await Games.get(active.id);
-                        setActive(full);
-                    }}
-                />
-            )}
-
-            {tab === "party" && (
-                <Party
-                    game={active}
-                    selectedPlayerId={isDM ? dmSheetPlayerId : null}
-                    onSelectPlayer={
-                        isDM
-                            ? (player) => {
-                                  if (!player?.userId) return;
-                                  setDmSheetPlayerId(player.userId);
-                                  setTab("sheet");
-                              }
-                            : undefined
-                    }
-                />
-            )}
-
-            {tab === "items" && (
-                <ItemsTab
-                    game={active}
-                    me={me}
-                    onUpdate={async () => {
-                        const full = await Games.get(active.id);
-                        setActive(full);
-                    }}
-                />
-            )}
-
-            {tab === "gear" && (
-                <GearTab
-                    game={active}
-                    me={me}
-                    onUpdate={async () => {
-                        const full = await Games.get(active.id);
-                        setActive(full);
-                    }}
-                />
-            )}
-
-            {tab === "demons" && (
-                <DemonTab
-                    game={active}
-                    me={me}
-                    onUpdate={async () => {
-                        const full = await Games.get(active.id);
-                        setActive(full);
-                    }}
-                />
-            )}
-
-            {tab === "settings" && (
-                <SettingsTab
-                    game={active}
-                    me={me}
-                    onUpdate={async (per) => {
-                        await Games.setPerms(active.id, per);
-                        const full = await Games.get(active.id);
-                        setActive(full);
-                    }}
-                    onDelete={
-                        isDM
-                            ? async () => {
-                                  if (
-                                      !confirm(
-                                          `Delete the game "${active.name}"? This cannot be undone.`
-                                      )
-                                  ) {
-                                      return;
-                                  }
-                                  try {
-                                      await Games.delete(active.id);
-                                      setActive(null);
-                                      setDmSheetPlayerId(null);
-                                      setGames(await Games.list());
-                                      alert("Game deleted");
-                                  } catch (e) {
-                                      alert(e.message);
-                                  }
-                              }
-                            : undefined
-                    }
-                />
-            )}
-        </div>
+        <AuthenticatedApp
+            me={me}
+            games={games}
+            active={active}
+            setActive={setActive}
+            setGames={setGames}
+            tab={tab}
+            setTab={setTab}
+            dmSheetPlayerId={dmSheetPlayerId}
+            setDmSheetPlayerId={setDmSheetPlayerId}
+        />
     );
 }
 
@@ -536,6 +442,551 @@ function Home({ me, games, onOpen, onCreate, onDelete }) {
     );
 }
 
+function AuthenticatedApp({
+    me,
+    games,
+    active,
+    setActive,
+    setGames,
+    tab,
+    setTab,
+    dmSheetPlayerId,
+    setDmSheetPlayerId,
+}) {
+    if (!active) {
+        return (
+            <Home
+                me={me}
+                games={games}
+                onOpen={async (g) => {
+                    const full = await Games.get(g.id);
+                    setActive(full);
+                    if (full.dmId === me.id) {
+                        const firstPlayer = (full.players || []).find(
+                            (p) => (p?.role || "").toLowerCase() !== "dm"
+                        );
+                        setDmSheetPlayerId(firstPlayer ? firstPlayer.userId : null);
+                    } else {
+                        setDmSheetPlayerId(null);
+                    }
+                    setTab(full.dmId === me.id ? "overview" : "sheet");
+                }}
+                onCreate={async (name) => {
+                    await Games.create(name);
+                    setGames(await Games.list());
+                }}
+                onDelete={async (game) => {
+                    if (!confirm(`Delete the game "${game.name}"? This cannot be undone.`)) return;
+                    try {
+                        await Games.delete(game.id);
+                        setGames(await Games.list());
+                        alert("Game deleted");
+                    } catch (e) {
+                        alert(e.message);
+                    }
+                }}
+            />
+        );
+    }
+
+    return (
+        <GameView
+            me={me}
+            game={active}
+            setActive={setActive}
+            setGames={setGames}
+            tab={tab}
+            setTab={setTab}
+            dmSheetPlayerId={dmSheetPlayerId}
+            setDmSheetPlayerId={setDmSheetPlayerId}
+        />
+    );
+}
+
+function GameView({
+    me,
+    game,
+    setActive,
+    setGames,
+    tab,
+    setTab,
+    dmSheetPlayerId,
+    setDmSheetPlayerId,
+}) {
+    const isDM = game.dmId === me.id;
+
+    const navItems = useMemo(() => (isDM ? DM_NAV : PLAYER_NAV), [isDM]);
+
+    useEffect(() => {
+        if (navItems.length === 0) return;
+        if (!navItems.some((item) => item.key === tab)) {
+            setTab(navItems[0].key);
+        }
+    }, [navItems, tab, setTab]);
+
+    const activeNav = navItems.find((item) => item.key === tab) || navItems[0] || null;
+
+    const campaignPlayers = useMemo(
+        () =>
+            (game.players || []).filter(
+                (p) => (p?.role || "").toLowerCase() !== "dm"
+            ),
+        [game.players]
+    );
+
+    const myEntry = useMemo(
+        () => campaignPlayers.find((p) => p.userId === me.id) || null,
+        [campaignPlayers, me.id]
+    );
+
+    const demonCount = Array.isArray(game.demons) ? game.demons.length : 0;
+
+    const headerPills = useMemo(() => {
+        if (isDM) {
+            return [
+                { label: `Players ${campaignPlayers.length}` },
+                { label: `Demons ${demonCount}` },
+            ];
+        }
+        if (!myEntry) return [];
+        const hpRaw = Number(myEntry.character?.resources?.hp ?? 0);
+        const maxRaw = Number(myEntry.character?.resources?.maxHP ?? 0);
+        const hp = Number.isFinite(hpRaw) ? hpRaw : 0;
+        const maxHP = Number.isFinite(maxRaw) ? maxRaw : 0;
+        const lvlRaw = Number(myEntry.character?.resources?.level);
+        const level = Number.isFinite(lvlRaw) ? lvlRaw : null;
+        const tone =
+            maxHP > 0
+                ? hp <= 0
+                    ? "danger"
+                    : hp / maxHP < 0.35
+                    ? "warn"
+                    : "success"
+                : hp <= 0
+                ? "danger"
+                : undefined;
+        const hpLabel = maxHP > 0 ? `${hp}/${maxHP}` : String(hp);
+        const pills = [];
+        if (level !== null) pills.push({ label: `Level ${level}` });
+        pills.push({
+            label: `HP ${hpLabel}`,
+            tone,
+        });
+        return pills;
+    }, [campaignPlayers.length, demonCount, isDM, myEntry]);
+
+    return (
+        <div className="app-shell">
+            <aside className="app-sidebar">
+                <div className="sidebar__header">
+                    <span className="sidebar__mode">
+                        {isDM ? "Dungeon Master Mode" : "Player Mode"}
+                    </span>
+                    <h2 className="sidebar__title">{game.name}</h2>
+                    <p className="sidebar__summary">
+                        {isDM
+                            ? "Share quick links, manage characters, and keep your table organized."
+                            : "Track your hero, review the party, and stay aligned with your DM."}
+                    </p>
+                </div>
+                <nav className="sidebar__nav">
+                    {navItems.map((item) => (
+                        <button
+                            key={item.key}
+                            type="button"
+                            className={`sidebar__nav-button${tab === item.key ? " is-active" : ""}`}
+                            onClick={() => setTab(item.key)}
+                        >
+                            <span className="sidebar__nav-label">{item.label}</span>
+                            <span className="sidebar__nav-desc">{item.description}</span>
+                        </button>
+                    ))}
+                </nav>
+                <div className="sidebar__footer">
+                    {isDM && <InviteButton gameId={game.id} />}
+                    <button
+                        type="button"
+                        className="btn ghost"
+                        onClick={() => {
+                            setActive(null);
+                            setDmSheetPlayerId(null);
+                        }}
+                    >
+                        Back to games
+                    </button>
+                </div>
+            </aside>
+            <main className="app-main">
+                <header className="app-main__header">
+                    <div>
+                        <span className="eyebrow">
+                            {isDM ? "Dungeon Master" : "Player"} View
+                        </span>
+                        <h1>{activeNav?.label || ""}</h1>
+                        {activeNav?.description && (
+                            <p className="text-muted">{activeNav.description}</p>
+                        )}
+                    </div>
+                    <div className="app-main__header-meta">
+                        <div className="header-pills">
+                            {headerPills.map((pill, idx) => (
+                                <span
+                                    key={idx}
+                                    className={`pill${pill.tone ? ` ${pill.tone}` : ""}`}
+                                >
+                                    {pill.label}
+                                </span>
+                            ))}
+                        </div>
+                        {!isDM && myEntry && (
+                            <div className="header-player">
+                                <span className="text-muted text-small">Character</span>
+                                <strong>{myEntry.character?.name || me.username}</strong>
+                            </div>
+                        )}
+                    </div>
+                </header>
+
+                <div className="app-content">
+                    {tab === "overview" && isDM && (
+                        <DMOverview
+                            game={game}
+                            onInspectPlayer={(player) => {
+                                if (!player?.userId) return;
+                                setDmSheetPlayerId(player.userId);
+                                setTab("sheet");
+                            }}
+                        />
+                    )}
+
+                    {tab === "sheet" && (
+                        <Sheet
+                            me={me}
+                            game={game}
+                            targetUserId={isDM ? dmSheetPlayerId : undefined}
+                            onChangePlayer={isDM ? setDmSheetPlayerId : undefined}
+                            onSave={async (ch) => {
+                                await Games.saveCharacter(game.id, ch);
+                                const full = await Games.get(game.id);
+                                setActive(full);
+                            }}
+                        />
+                    )}
+
+                    {tab === "party" && (
+                        <Party
+                            mode={isDM ? "dm" : "player"}
+                            game={game}
+                            selectedPlayerId={isDM ? dmSheetPlayerId : null}
+                            currentUserId={me.id}
+                            onSelectPlayer={
+                                isDM
+                                    ? (player) => {
+                                          if (!player?.userId) return;
+                                          setDmSheetPlayerId(player.userId);
+                                          setTab("sheet");
+                                      }
+                                    : undefined
+                            }
+                        />
+                    )}
+
+                    {tab === "items" && (
+                        <ItemsTab
+                            game={game}
+                            me={me}
+                            onUpdate={async () => {
+                                const full = await Games.get(game.id);
+                                setActive(full);
+                            }}
+                        />
+                    )}
+
+                    {tab === "gear" && (
+                        <GearTab
+                            game={game}
+                            me={me}
+                            onUpdate={async () => {
+                                const full = await Games.get(game.id);
+                                setActive(full);
+                            }}
+                        />
+                    )}
+
+                    {tab === "demons" && (
+                        <DemonTab
+                            game={game}
+                            me={me}
+                            onUpdate={async () => {
+                                const full = await Games.get(game.id);
+                                setActive(full);
+                            }}
+                        />
+                    )}
+
+                    {tab === "settings" && isDM && (
+                        <SettingsTab
+                            game={game}
+                            me={me}
+                            onUpdate={async (per) => {
+                                await Games.setPerms(game.id, per);
+                                const full = await Games.get(game.id);
+                                setActive(full);
+                            }}
+                            onDelete={
+                                isDM
+                                    ? async () => {
+                                          if (
+                                              !confirm(
+                                                  `Delete the game "${game.name}"? This cannot be undone.`
+                                              )
+                                          ) {
+                                              return;
+                                          }
+                                          try {
+                                              await Games.delete(game.id);
+                                              setActive(null);
+                                              setDmSheetPlayerId(null);
+                                              setGames(await Games.list());
+                                              alert("Game deleted");
+                                          } catch (e) {
+                                              alert(e.message);
+                                          }
+                                      }
+                                    : undefined
+                            }
+                        />
+                    )}
+                </div>
+            </main>
+        </div>
+    );
+}
+
+// ---------- DM Overview ----------
+function DMOverview({ game, onInspectPlayer }) {
+    const players = useMemo(
+        () =>
+            (game.players || []).filter(
+                (p) => (p?.role || "").toLowerCase() !== "dm"
+            ),
+        [game.players]
+    );
+
+    const averageLevel = useMemo(() => {
+        if (players.length === 0) return null;
+        const total = players.reduce((sum, player) => {
+            const lvlRaw = Number(player.character?.resources?.level);
+            const lvl = Number.isFinite(lvlRaw) ? lvlRaw : 0;
+            return sum + lvl;
+        }, 0);
+        const avg = total / players.length;
+        return Number.isFinite(avg) ? avg : null;
+    }, [players]);
+
+    const stabilizedCount = useMemo(
+        () =>
+            players.filter((player) => {
+                const hpRaw = Number(player.character?.resources?.hp ?? 0);
+                const hp = Number.isFinite(hpRaw) ? hpRaw : 0;
+                return hp > 0;
+            }).length,
+        [players]
+    );
+
+    const demonCount = Array.isArray(game.demons) ? game.demons.length : 0;
+    const sharedItemCount = Array.isArray(game.items?.shared)
+        ? game.items.shared.length
+        : 0;
+    const customItemCount = Array.isArray(game.items?.custom)
+        ? game.items.custom.length
+        : 0;
+    const customGearCount = Array.isArray(game.gear?.custom)
+        ? game.gear.custom.length
+        : 0;
+
+    const metrics = [
+        {
+            label: "Adventurers",
+            value: String(players.length),
+            description: "Players currently in your campaign",
+        },
+        {
+            label: "Average level",
+            value:
+                players.length > 0 && averageLevel !== null
+                    ? averageLevel.toFixed(1)
+                    : "—",
+            description:
+                players.length > 0
+                    ? "Across all active character sheets"
+                    : "Awaiting character data",
+        },
+        {
+            label: "Ready for battle",
+            value: `${stabilizedCount}/${players.length || 0}`,
+            description: "Members above zero hit points",
+        },
+        {
+            label: "Codex entries",
+            value: String(demonCount),
+            description: "Demons recorded in the pool",
+        },
+    ];
+
+    const resourceRows = [
+        {
+            label: "Shared loot",
+            value: sharedItemCount,
+            hint: "Items visible to the entire party",
+        },
+        {
+            label: "Custom item templates",
+            value: customItemCount,
+            hint: "Crafted specifically for this campaign",
+        },
+        {
+            label: "Custom gear templates",
+            value: customGearCount,
+            hint: "Equipment ready to assign",
+        },
+        {
+            label: "Demons in codex",
+            value: demonCount,
+            hint: "Summoned allies on standby",
+        },
+    ];
+
+    const canInspect = typeof onInspectPlayer === "function";
+
+    return (
+        <div className="stack-lg dm-overview">
+            <section className="overview-metrics">
+                {metrics.map((metric) => (
+                    <div key={metric.label} className="metric-card">
+                        <span className="text-muted text-small">{metric.label}</span>
+                        <strong className="metric-card__value">{metric.value}</strong>
+                        <span className="text-muted text-small">{metric.description}</span>
+                    </div>
+                ))}
+            </section>
+
+            <section className="card">
+                <div className="header">
+                    <div>
+                        <h3>Party status</h3>
+                        <p className="text-muted text-small">
+                            {canInspect
+                                ? "Select a player to jump directly to their sheet."
+                                : "Player information at a glance."}
+                        </p>
+                    </div>
+                </div>
+                <div className="list overview-roster">
+                    {players.length === 0 ? (
+                        <div className="text-muted">No players have joined yet.</div>
+                    ) : (
+                        players.map((player, index) => {
+                            const key = player.userId || `player-${index}`;
+                            const name =
+                                player.character?.name?.trim() ||
+                                player.username ||
+                                `Player ${index + 1}`;
+                            const subtitleParts = [];
+                            if (player.character?.profile?.class) {
+                                subtitleParts.push(player.character.profile.class);
+                            }
+                            const lvlRaw = Number(player.character?.resources?.level);
+                            const level = Number.isFinite(lvlRaw) ? lvlRaw : null;
+                            if (level !== null) subtitleParts.push(`LV ${level}`);
+                            const subtitle = subtitleParts.join(" · ");
+
+                            const hpRaw = Number(player.character?.resources?.hp ?? 0);
+                            const hp = Number.isFinite(hpRaw) ? hpRaw : 0;
+                            const maxRaw = Number(player.character?.resources?.maxHP ?? 0);
+                            const maxHP = Number.isFinite(maxRaw) ? maxRaw : 0;
+                            const hpLabel = maxHP > 0 ? `${hp}/${maxHP}` : String(hp);
+                            const ratio = maxHP > 0 ? hp / maxHP : hp > 0 ? 1 : 0;
+                            let tone = "success";
+                            if (hp <= 0) tone = "danger";
+                            else if (ratio < 0.35) tone = "warn";
+
+                            const inventoryCount = Array.isArray(player.inventory)
+                                ? player.inventory.length
+                                : 0;
+
+                            return (
+                                <div
+                                    key={key}
+                                    className={`overview-player${canInspect ? " is-clickable" : ""}`}
+                                    role={canInspect ? "button" : undefined}
+                                    tabIndex={canInspect ? 0 : undefined}
+                                    onClick={() => {
+                                        if (!canInspect) return;
+                                        onInspectPlayer(player);
+                                    }}
+                                    onKeyDown={(evt) => {
+                                        if (!canInspect) return;
+                                        if (evt.key === "Enter" || evt.key === " ") {
+                                            evt.preventDefault();
+                                            onInspectPlayer(player);
+                                        }
+                                    }}
+                                >
+                                    <div className="overview-player__info">
+                                        <span className="overview-player__name">{name}</span>
+                                        {subtitle && (
+                                            <span className="text-muted text-small">
+                                                {subtitle}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="overview-player__meta">
+                                        <span className={`pill ${tone}`}>HP {hpLabel}</span>
+                                        <span className="pill">Items {inventoryCount}</span>
+                                        {canInspect && (
+                                            <button
+                                                type="button"
+                                                className="btn ghost btn-small"
+                                                onClick={(evt) => {
+                                                    evt.stopPropagation();
+                                                    onInspectPlayer(player);
+                                                }}
+                                            >
+                                                Open sheet
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })
+                    )}
+                </div>
+            </section>
+
+            <section className="card overview-resources">
+                <div className="header">
+                    <div>
+                        <h3>Campaign resources</h3>
+                        <p className="text-muted text-small">
+                            A quick look at shared pools across the table.
+                        </p>
+                    </div>
+                </div>
+                <div className="resource-grid">
+                    {resourceRows.map((row) => (
+                        <div key={row.label} className="resource-chip">
+                            <span className="text-muted text-small">{row.label}</span>
+                            <strong>{row.value}</strong>
+                            <span className="text-muted text-small">{row.hint}</span>
+                        </div>
+                    ))}
+                </div>
+            </section>
+        </div>
+    );
+}
+
 function JoinByCode({ onJoined }) {
     const [code, setCode] = useState("");
     const [busy, setBusy] = useState(false);
@@ -734,48 +1185,105 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
 }
 
 // ---------- Party ----------
-function Party({ game, selectedPlayerId, onSelectPlayer }) {
+function Party({ game, selectedPlayerId, onSelectPlayer, mode = "player", currentUserId }) {
+    const players = useMemo(
+        () =>
+            (game.players || []).filter(
+                (entry) => (entry?.role || "").toLowerCase() !== "dm"
+            ),
+        [game.players]
+    );
+
+    const canSelect = typeof onSelectPlayer === "function";
+    const title = mode === "dm" ? "Party roster" : "Party lineup";
+    const subtitle =
+        mode === "dm"
+            ? "Tap a player to open their character sheet."
+            : "Everyone currently adventuring alongside you.";
+
     return (
         <div className="card">
-            <h3>Party</h3>
-            <div className="list">
-                {game.players.map((p) => {
-                    const lvl = p.character?.resources?.level ?? 1;
-                    const hp = p.character?.resources?.hp ?? 0;
-                    const maxHP = p.character?.resources?.maxHP ?? 0;
-                    const role = (p.role || "").toLowerCase();
-                    const isDMEntry = role === "dm";
-                    const isSelected = selectedPlayerId && p.userId === selectedPlayerId;
-                    const clickable = typeof onSelectPlayer === "function" && !isDMEntry;
-                    return (
-                        <div
-                            key={p.userId}
-                            className="row"
-                            style={{
-                                justifyContent: "space-between",
-                                alignItems: "center",
-                                padding: "8px",
-                                borderRadius: "var(--radius-sm)",
-                                border: isSelected ? `1px solid var(--border)` : "1px solid transparent",
-                                background: isSelected ? "var(--surface-2)" : undefined,
-                                cursor: clickable ? "pointer" : "default",
-                                transition: "background var(--trans-fast), border var(--trans-fast)",
-                            }}
-                            onClick={() => {
-                                if (!clickable) return;
-                                onSelectPlayer(p);
-                            }}
-                        >
-                            <div>
-                                <b>{p.role?.toUpperCase()}</b> · {p.character?.name ?? "—"}
+            <div className="header">
+                <div>
+                    <h3>{title}</h3>
+                    <p className="text-muted text-small">{subtitle}</p>
+                </div>
+            </div>
+            <div className="list party-roster">
+                {players.length === 0 ? (
+                    <div className="text-muted">No players have joined yet.</div>
+                ) : (
+                    players.map((p, index) => {
+                        const key = p.userId || `player-${index}`;
+                        const name =
+                            p.character?.name?.trim() ||
+                            p.username ||
+                            `Player ${index + 1}`;
+                        const lvlRaw = Number(p.character?.resources?.level);
+                        const level = Number.isFinite(lvlRaw) ? lvlRaw : null;
+                        const hpRaw = Number(p.character?.resources?.hp ?? 0);
+                        const hp = Number.isFinite(hpRaw) ? hpRaw : 0;
+                        const maxRaw = Number(p.character?.resources?.maxHP ?? 0);
+                        const maxHP = Number.isFinite(maxRaw) ? maxRaw : 0;
+                        const hpLabel = maxHP > 0 ? `${hp}/${maxHP}` : String(hp);
+                        const ratio = maxHP > 0 ? hp / maxHP : hp > 0 ? 1 : 0;
+                        let tone = "success";
+                        if (hp <= 0) tone = "danger";
+                        else if (ratio < 0.35) tone = "warn";
+                        const isSelected = !!selectedPlayerId && p.userId === selectedPlayerId;
+                        const isSelf = currentUserId && p.userId === currentUserId;
+                        const roleLabel = (p.role || "").trim();
+                        const showRole = roleLabel && roleLabel.toLowerCase() !== "player";
+
+                        const subtitleParts = [];
+                        if (p.character?.profile?.class) {
+                            subtitleParts.push(p.character.profile.class);
+                        }
+                        if (level !== null) subtitleParts.push(`LV ${level}`);
+                        const subtitleText = subtitleParts.join(" · ");
+
+                        return (
+                            <div
+                                key={key}
+                                className={`party-row${isSelected ? " is-active" : ""}${
+                                    canSelect ? " is-clickable" : ""
+                                }`}
+                                role={canSelect ? "button" : undefined}
+                                tabIndex={canSelect ? 0 : undefined}
+                                onClick={() => {
+                                    if (!canSelect || !p.userId) return;
+                                    onSelectPlayer(p);
+                                }}
+                                onKeyDown={(evt) => {
+                                    if (!canSelect) return;
+                                    if (evt.key === "Enter" || evt.key === " ") {
+                                        evt.preventDefault();
+                                        if (p.userId) onSelectPlayer(p);
+                                    }
+                                }}
+                            >
+                                <div className="party-row__info">
+                                    <span className="party-row__name">{name}</span>
+                                    {subtitleText && (
+                                        <span className="text-muted text-small">
+                                            {subtitleText}
+                                        </span>
+                                    )}
+                                </div>
+                                <div className="party-row__metrics">
+                                    <span className={`pill ${tone}`}>HP {hpLabel}</span>
+                                    {mode !== "dm" && level !== null && (
+                                        <span className="pill">LV {level}</span>
+                                    )}
+                                    {mode === "dm" && showRole && (
+                                        <span className="pill">{roleLabel.toUpperCase()}</span>
+                                    )}
+                                    {isSelf && <span className="pill success">You</span>}
+                                </div>
                             </div>
-                            <div className="row" style={{ gap: 8 }}>
-                                <span className="pill">LV {lvl}</span>
-                                <span className="pill">HP {hp}/{maxHP}</span>
-                            </div>
-                        </div>
-                    );
-                })}
+                        );
+                    })
+                )}
             </div>
         </div>
     );
