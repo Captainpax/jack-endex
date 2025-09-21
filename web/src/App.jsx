@@ -606,6 +606,134 @@ const DEFAULT_WORLD_SKILLS = [
 
 const ABILITY_KEY_SET = new Set(ABILITY_DEFS.map((ability) => ability.key));
 
+function makeCustomSkillId(label, existing = new Set()) {
+    const base = String(label || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    const fallback = base ? `custom-${base}` : `custom-${Math.random().toString(36).slice(2, 8)}`;
+    let id = fallback;
+    let attempt = 1;
+    while (existing.has(id)) {
+        attempt += 1;
+        id = `${fallback}-${attempt}`;
+    }
+    existing.add(id);
+    return id;
+}
+
+function normalizeCustomSkills(raw) {
+    const source = Array.isArray(raw) ? raw : [];
+    const seen = new Set();
+    const normalized = [];
+    for (const entry of source) {
+        if (!entry || typeof entry !== 'object') continue;
+        const label = typeof entry.label === 'string' ? entry.label.trim() : '';
+        if (!label) continue;
+        const abilityRaw = typeof entry.ability === 'string' ? entry.ability.trim().toUpperCase() : '';
+        const ability = ABILITY_KEY_SET.has(abilityRaw) ? abilityRaw : 'INT';
+        const ranks = clampNonNegative(entry.ranks);
+        const miscRaw = Number(entry.misc);
+        const misc = Number.isFinite(miscRaw) ? miscRaw : 0;
+        let id = typeof entry.id === 'string' ? entry.id.trim() : '';
+        if (!id || seen.has(id)) {
+            id = makeCustomSkillId(label, seen);
+        } else {
+            seen.add(id);
+        }
+        normalized.push({ id, label, ability, ranks, misc });
+    }
+    return normalized;
+}
+
+function serializeSkills(map) {
+    const out = {};
+    if (!map || typeof map !== 'object') return out;
+    for (const [key, value] of Object.entries(map)) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+        const ranks = clampNonNegative(value.ranks);
+        const miscRaw = Number(value.misc);
+        const misc = Number.isFinite(miscRaw) ? miscRaw : 0;
+        out[key] = { ranks, misc };
+    }
+    return out;
+}
+
+function serializeCustomSkills(list) {
+    if (!Array.isArray(list)) return [];
+    const seen = new Set();
+    const normalized = [];
+    for (const entry of list) {
+        if (!entry || typeof entry !== 'object') continue;
+        const label = typeof entry.label === 'string' ? entry.label.trim() : '';
+        if (!label) continue;
+        const abilityRaw = typeof entry.ability === 'string' ? entry.ability.trim().toUpperCase() : '';
+        const ability = ABILITY_KEY_SET.has(abilityRaw) ? abilityRaw : 'INT';
+        const ranks = clampNonNegative(entry.ranks);
+        const miscRaw = Number(entry.misc);
+        const misc = Number.isFinite(miscRaw) ? miscRaw : 0;
+        let id = typeof entry.id === 'string' ? entry.id.trim() : '';
+        if (!id || seen.has(id)) {
+            id = makeCustomSkillId(label, seen);
+        } else {
+            seen.add(id);
+        }
+        normalized.push({ id, label, ability, ranks, misc });
+    }
+    return normalized;
+}
+
+function createAbilityMap(initial = 0) {
+    return ABILITY_DEFS.reduce((acc, ability) => {
+        acc[ability.key] = initial;
+        return acc;
+    }, {});
+}
+
+function normalizeAbilityState(source) {
+    const map = createAbilityMap(0);
+    for (const ability of ABILITY_DEFS) {
+        const raw = source?.[ability.key];
+        const num = Number(raw);
+        map[ability.key] = Number.isFinite(num) ? num : 0;
+    }
+    return map;
+}
+
+function resolveAbilityState(source) {
+    if (!source || typeof source !== 'object') {
+        return createAbilityMap(0);
+    }
+    const hasModernKeys = ABILITY_DEFS.every((ability) => source[ability.key] !== undefined);
+    if (hasModernKeys) {
+        return normalizeAbilityState(source);
+    }
+    const legacy = {
+        STR: source.STR ?? source.strength,
+        DEX: source.DEX ?? source.agility,
+        CON: source.CON ?? source.endurance,
+        INT: source.INT ?? source.magic,
+        CHA: source.CHA ?? source.luck,
+    };
+    const wisGuess =
+        source.WIS ??
+        source.wisdom ??
+        Math.round(((Number(source.magic) || 0) + (Number(source.luck) || 0)) / 2);
+    legacy.WIS = wisGuess;
+    return normalizeAbilityState(legacy);
+}
+
+function formatResistanceList(primary, fallback) {
+    const source = primary ?? fallback;
+    if (Array.isArray(source)) {
+        return source.length > 0 ? source.join(', ') : '—';
+    }
+    if (typeof source === 'string' && source.trim()) {
+        return source;
+    }
+    return '—';
+}
+
 function makeWorldSkillId(label, seen) {
     const base = label
         .toLowerCase()
@@ -2100,6 +2228,16 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
         });
     }, [worldSkills]);
 
+    const abilityDefault = ABILITY_DEFS[0]?.key || "INT";
+    const [customDraft, setCustomDraft] = useState({ label: "", ability: abilityDefault });
+
+    useEffect(() => {
+        setCustomDraft((prev) => ({
+            label: prev.label,
+            ability: ABILITY_KEY_SET.has(prev.ability) ? prev.ability : abilityDefault,
+        }));
+    }, [abilityDefault]);
+
     const hasSelection = !isDM || (!!selectedPlayerId && slot && slot.userId);
     const noPlayers = isDM && selectablePlayers.length === 0;
     const canEditSheet = (isDM && hasSelection) || (!isDM && !!game.permissions?.canEditStats);
@@ -2196,14 +2334,86 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
         });
     }, [ch?.skills, getMod, worldSkills]);
 
-    const spentSP = skillRows.reduce((sum, row) => sum + row.ranks, 0);
+    const customSkillRows = useMemo(() => {
+        const list = Array.isArray(ch?.customSkills) ? ch.customSkills : [];
+        return list.map((entry, index) => {
+            const ranks = clampNonNegative(entry.ranks);
+            const miscRaw = Number(entry.misc);
+            const misc = Number.isFinite(miscRaw) ? miscRaw : 0;
+            const ability = ABILITY_KEY_SET.has(entry.ability) ? entry.ability : abilityDefault;
+            const abilityMod = getMod(ability);
+            const total = abilityMod + ranks + misc;
+            return { ...entry, index, ability, ranks, misc, abilityMod, total };
+        });
+    }, [abilityDefault, ch?.customSkills, getMod]);
+
+    const spentSP = useMemo(() => {
+        const base = skillRows.reduce((sum, row) => sum + row.ranks, 0);
+        const extras = customSkillRows.reduce((sum, row) => sum + row.ranks, 0);
+        return base + extras;
+    }, [customSkillRows, skillRows]);
     const availableSP =
         spRaw === undefined || spRaw === null || spRaw === ""
             ? suggestedSP
             : spValue;
     const maxSkillRank = Math.max(4, level * 2 + 2);
     const overSpent = spentSP > availableSP;
-    const rankIssues = skillRows.filter((row) => row.ranks > maxSkillRank).map((row) => row.label);
+    const rankIssues = useMemo(() => {
+        const standard = skillRows.filter((row) => row.ranks > maxSkillRank).map((row) => row.label);
+        const extras = customSkillRows
+            .filter((row) => row.ranks > maxSkillRank)
+            .map((row) => row.label);
+        return [...standard, ...extras];
+    }, [customSkillRows, maxSkillRank, skillRows]);
+
+    const updateCustomSkillField = useCallback(
+        (index, field, value) => {
+            if (field === 'ranks') {
+                const num = Number(value);
+                const sanitized = Math.min(clampNonNegative(num), maxSkillRank);
+                set(`customSkills.${index}.ranks`, sanitized);
+                return;
+            }
+            if (field === 'misc') {
+                const num = Number(value);
+                set(`customSkills.${index}.misc`, Number.isFinite(num) ? num : 0);
+                return;
+            }
+            set(`customSkills.${index}.${field}`, value);
+        },
+        [maxSkillRank, set]
+    );
+
+    const removeCustomSkill = useCallback(
+        (index) => {
+            setCh((prev) => {
+                const next = deepClone(prev || {});
+                if (!Array.isArray(next.customSkills)) return prev;
+                next.customSkills.splice(index, 1);
+                return normalizeCharacter(next, worldSkills);
+            });
+        },
+        [setCh, worldSkills]
+    );
+
+    const addCustomSkill = useCallback(() => {
+        const label = customDraft.label.trim();
+        if (!label) return;
+        const abilityRaw =
+            typeof customDraft.ability === 'string'
+                ? customDraft.ability.trim().toUpperCase()
+                : abilityDefault;
+        const ability = ABILITY_KEY_SET.has(abilityRaw) ? abilityRaw : abilityDefault;
+        setCh((prev) => {
+            const next = deepClone(prev || {});
+            if (!Array.isArray(next.customSkills)) next.customSkills = [];
+            const ids = new Set(next.customSkills.map((entry) => entry.id));
+            const id = makeCustomSkillId(label, ids);
+            next.customSkills.push({ id, label, ability, ranks: 0, misc: 0 });
+            return normalizeCharacter(next, worldSkills);
+        });
+        setCustomDraft({ label: '', ability });
+    }, [abilityDefault, customDraft, setCh, worldSkills]);
 
     const saveRows = useMemo(() => {
         const saves = ch?.resources?.saves || {};
@@ -2600,6 +2810,151 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                                     ))}
                                 </tbody>
                             </table>
+                        </div>
+
+                        <div style={{ marginTop: 16, display: "grid", gap: 8 }}>
+                            <div>
+                                <h5 style={{ margin: 0 }}>Custom skills</h5>
+                                <p className="text-muted text-small" style={{ margin: 0 }}>
+                                    Unique proficiencies unlocked through play. Managed by the DM.
+                                </p>
+                            </div>
+                            {customSkillRows.length === 0 ? (
+                                <div className="text-muted">No custom skills recorded.</div>
+                            ) : (
+                                <div className="sheet-table-wrapper">
+                                    <table className="sheet-table skill-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Skill</th>
+                                                <th>Ability</th>
+                                                <th>Ability mod</th>
+                                                <th>Ranks</th>
+                                                <th>Misc</th>
+                                                <th>Total</th>
+                                                {canEditSheet && <th aria-label="Actions" />}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {customSkillRows.map((row) => (
+                                                <tr key={row.id || row.index}>
+                                                    <th scope="row">
+                                                        <input
+                                                            type="text"
+                                                            value={row.label}
+                                                            onChange={(e) =>
+                                                                updateCustomSkillField(row.index, 'label', e.target.value)
+                                                            }
+                                                            disabled={disableInputs}
+                                                            placeholder="Skill name"
+                                                            style={{ width: '100%' }}
+                                                        />
+                                                    </th>
+                                                    <td>
+                                                        <select
+                                                            value={row.ability}
+                                                            onChange={(e) =>
+                                                                updateCustomSkillField(
+                                                                    row.index,
+                                                                    'ability',
+                                                                    e.target.value
+                                                                )
+                                                            }
+                                                            disabled={disableInputs}
+                                                        >
+                                                            {ABILITY_DEFS.map((ability) => (
+                                                                <option key={ability.key} value={ability.key}>
+                                                                    {ability.key} · {ability.label}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                    </td>
+                                                    <td>
+                                                        <span className="pill light">{formatModifier(row.abilityMod)}</span>
+                                                    </td>
+                                                    <td>
+                                                        <MathField
+                                                            label="Ranks"
+                                                            value={row.ranks}
+                                                            onCommit={(val) =>
+                                                                updateCustomSkillField(row.index, 'ranks', val)
+                                                            }
+                                                            className="math-inline"
+                                                            disabled={disableInputs}
+                                                        />
+                                                    </td>
+                                                    <td>
+                                                        <MathField
+                                                            label="Misc"
+                                                            value={row.misc}
+                                                            onCommit={(val) =>
+                                                                updateCustomSkillField(row.index, 'misc', val)
+                                                            }
+                                                            className="math-inline"
+                                                            disabled={disableInputs}
+                                                        />
+                                                    </td>
+                                                    <td>
+                                                        <span className="skill-total">{formatModifier(row.total)}</span>
+                                                    </td>
+                                                    {canEditSheet && (
+                                                        <td>
+                                                            <button
+                                                                className="btn ghost"
+                                                                onClick={() => removeCustomSkill(row.index)}
+                                                                disabled={disableInputs}
+                                                            >
+                                                                Remove
+                                                            </button>
+                                                        </td>
+                                                    )}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+
+                            {canEditSheet && (
+                                <div
+                                    className="row"
+                                    style={{ gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}
+                                >
+                                    <input
+                                        placeholder="Add new custom skill"
+                                        value={customDraft.label}
+                                        onChange={(e) => setCustomDraft((prev) => ({ ...prev, label: e.target.value }))}
+                                        style={{ flex: 2, minWidth: 200 }}
+                                        disabled={disableInputs}
+                                    />
+                                    <label className="field" style={{ minWidth: 160 }}>
+                                        <span className="field__label">Ability</span>
+                                        <select
+                                            value={customDraft.ability}
+                                            onChange={(e) =>
+                                                setCustomDraft((prev) => ({
+                                                    ...prev,
+                                                    ability: e.target.value,
+                                                }))
+                                            }
+                                            disabled={disableInputs}
+                                        >
+                                            {ABILITY_DEFS.map((ability) => (
+                                                <option key={ability.key} value={ability.key}>
+                                                    {ability.key} · {ability.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </label>
+                                    <button
+                                        className="btn"
+                                        onClick={addCustomSkill}
+                                        disabled={disableInputs || !customDraft.label.trim()}
+                                    >
+                                        Add custom skill
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     </section>
 
@@ -3382,6 +3737,7 @@ function buildInitialWizardState(character, playerName, worldSkills = DEFAULT_WO
         abilities: abilityDefaults,
         resources,
         skills: normalizeSkills(normalized.skills, worldSkills),
+        customSkills: normalizeCustomSkills(normalized.customSkills),
     };
 }
 
@@ -3427,38 +3783,67 @@ function buildCharacterFromWizard(state, base, worldSkills = DEFAULT_WORLD_SKILL
         useTP,
     };
     merged.skills = normalizeSkills(state.skills, worldSkills);
+    merged.customSkills = normalizeCustomSkills(state.customSkills ?? normalized.customSkills);
     return merged;
 }
 
 function normalizeCharacter(raw, worldSkills = DEFAULT_WORLD_SKILLS) {
-    if (!raw || typeof raw !== "object") {
+    if (!raw || typeof raw !== 'object') {
         return {
-            name: "",
+            name: '',
             profile: {},
             stats: {},
             resources: { useTP: false },
             skills: normalizeSkills({}, worldSkills),
+            customSkills: [],
         };
     }
     const clone = deepClone(raw);
-    clone.name = typeof clone.name === "string" ? clone.name : "";
-    clone.profile = clone.profile && typeof clone.profile === "object" ? { ...clone.profile } : {};
-    clone.stats = clone.stats && typeof clone.stats === "object" ? { ...clone.stats } : {};
-    clone.resources = clone.resources && typeof clone.resources === "object" ? { ...clone.resources } : {};
+    clone.name = typeof clone.name === 'string' ? clone.name : '';
+    clone.profile = clone.profile && typeof clone.profile === 'object' ? { ...clone.profile } : {};
+    clone.stats = clone.stats && typeof clone.stats === 'object' ? { ...clone.stats } : {};
+    clone.resources = clone.resources && typeof clone.resources === 'object' ? { ...clone.resources } : {};
     if (clone.resources.useTP === undefined) {
         clone.resources.useTP = !!clone.resources.tp && !clone.resources.mp;
     } else {
         clone.resources.useTP = !!clone.resources.useTP;
     }
-    clone.skills = normalizeSkills(clone.skills, worldSkills);
+    const skillSource =
+        clone.skills && typeof clone.skills === 'object' && !Array.isArray(clone.skills)
+            ? { ...clone.skills }
+            : {};
+    const embeddedCustom = [];
+    if (Array.isArray(skillSource.customSkills)) embeddedCustom.push(...skillSource.customSkills);
+    if (Array.isArray(skillSource._custom)) embeddedCustom.push(...skillSource._custom);
+    delete skillSource.customSkills;
+    delete skillSource._custom;
+    const demoted = [];
+    for (const [key, value] of Object.entries(skillSource)) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+        const label = typeof value.label === 'string' ? value.label.trim() : '';
+        const abilityRaw = typeof value.ability === 'string' ? value.ability.trim().toUpperCase() : '';
+        if (label && ABILITY_KEY_SET.has(abilityRaw)) {
+            demoted.push({
+                id: key,
+                label,
+                ability: abilityRaw,
+                ranks: value.ranks,
+                misc: value.misc,
+            });
+            delete skillSource[key];
+        }
+    }
+    clone.skills = normalizeSkills(skillSource, worldSkills);
+    const rawCustom = clone.customSkills ?? [...embeddedCustom, ...demoted];
+    clone.customSkills = normalizeCustomSkills(rawCustom);
     return clone;
 }
 
 function normalizeSkills(raw, worldSkills = DEFAULT_WORLD_SKILLS) {
     const out = {};
-    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
         for (const [key, value] of Object.entries(raw)) {
-            if (!value || typeof value !== "object") continue;
+            if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
             const ranks = clampNonNegative(value.ranks);
             const miscRaw = Number(value.misc);
             const misc = Number.isFinite(miscRaw) ? miscRaw : 0;
@@ -5295,6 +5680,20 @@ function WorldSkillsTab({ game, me, onUpdate }) {
         setSkills(normalizeSkills(character.skills, worldSkills));
     }, [character, worldSkills]);
 
+    const [customSkills, setCustomSkills] = useState(() => normalizeCustomSkills(character.customSkills));
+    const [customDraft, setCustomDraft] = useState(() => ({ label: "", ability: abilityDefault }));
+
+    useEffect(() => {
+        setCustomSkills(normalizeCustomSkills(character.customSkills));
+    }, [character.customSkills]);
+
+    useEffect(() => {
+        setCustomDraft((prev) => ({
+            label: prev.label.trim() ? prev.label : "",
+            ability: ABILITY_KEY_SET.has(prev.ability) ? prev.ability : abilityDefault,
+        }));
+    }, [abilityDefault]);
+
     const abilityMods = useMemo(() => {
         return ABILITY_DEFS.reduce((acc, ability) => {
             acc[ability.key] = abilityModifier(character.stats?.[ability.key]);
@@ -5371,18 +5770,80 @@ function WorldSkillsTab({ game, me, onUpdate }) {
         });
     }, [abilityMods, skills, worldSkills]);
 
-    const spentSP = useMemo(
-        () => skillRows.reduce((sum, row) => sum + row.ranks, 0),
-        [skillRows]
-    );
+    const customSkillRows = useMemo(() => {
+        return customSkills.map((skill) => {
+            const ranks = clampNonNegative(skill.ranks);
+            const miscRaw = Number(skill.misc);
+            const misc = Number.isFinite(miscRaw) ? miscRaw : 0;
+            const abilityMod = abilityMods[skill.ability] ?? 0;
+            const total = abilityMod + ranks + misc;
+            return { ...skill, ranks, misc, abilityMod, total };
+        });
+    }, [abilityMods, customSkills]);
+
+    const spentSP = useMemo(() => {
+        const base = skillRows.reduce((sum, row) => sum + row.ranks, 0);
+        const extras = customSkillRows.reduce((sum, row) => sum + row.ranks, 0);
+        return base + extras;
+    }, [customSkillRows, skillRows]);
     const overSpent = spentSP > availableSP;
-    const rankIssues = useMemo(
-        () =>
-            skillRows
-                .filter((row) => row.ranks > maxSkillRank)
-                .map((row) => row.label),
-        [maxSkillRank, skillRows]
+    const rankIssues = useMemo(() => {
+        const standard = skillRows
+            .filter((row) => row.ranks > maxSkillRank)
+            .map((row) => row.label);
+        const extras = customSkillRows
+            .filter((row) => row.ranks > maxSkillRank)
+            .map((row) => row.label);
+        return [...standard, ...extras];
+    }, [customSkillRows, maxSkillRank, skillRows]);
+
+    const addCustomSkill = useCallback(() => {
+        const label = customDraft.label.trim();
+        if (!label) return;
+        const abilityRaw =
+            typeof customDraft.ability === 'string'
+                ? customDraft.ability.trim().toUpperCase()
+                : abilityDefault;
+        const ability = ABILITY_KEY_SET.has(abilityRaw) ? abilityRaw : abilityDefault;
+        setCustomSkills((prev) => {
+            const ids = new Set(prev.map((entry) => entry.id));
+            const id = makeCustomSkillId(label, ids);
+            return [...prev, { id, label, ability, ranks: 0, misc: 0 }];
+        });
+        setCustomDraft({ label: '', ability });
+    }, [abilityDefault, customDraft]);
+
+    const updateCustomSkill = useCallback(
+        (id, field, value) => {
+            setCustomSkills((prev) =>
+                prev.map((entry) => {
+                    if (entry.id !== id) return entry;
+                    if (field === 'label') {
+                        return { ...entry, label: String(value) };
+                    }
+                    if (field === 'ability') {
+                        const abilityRaw = typeof value === 'string' ? value.trim().toUpperCase() : '';
+                        if (!ABILITY_KEY_SET.has(abilityRaw)) return entry;
+                        return { ...entry, ability: abilityRaw };
+                    }
+                    const num = Number(value);
+                    if (field === 'ranks') {
+                        const sanitized = Math.min(clampNonNegative(num), maxSkillRank);
+                        return { ...entry, ranks: sanitized };
+                    }
+                    if (field === 'misc') {
+                        return { ...entry, misc: Number.isFinite(num) ? num : 0 };
+                    }
+                    return entry;
+                })
+            );
+        },
+        [maxSkillRank]
     );
+
+    const removeCustomSkill = useCallback((id) => {
+        setCustomSkills((prev) => prev.filter((entry) => entry.id !== id));
+    }, []);
 
     const saveRows = useMemo(() => {
         const saves = character.resources?.saves || {};
@@ -5487,7 +5948,8 @@ function WorldSkillsTab({ game, me, onUpdate }) {
             setSaving(true);
             const base = normalizeCharacter(activePlayer.character, worldSkills);
             const nextCharacter = deepClone(base);
-            nextCharacter.skills = normalizeSkills(skills, worldSkills);
+            nextCharacter.skills = serializeSkills(skills);
+            nextCharacter.customSkills = serializeCustomSkills(customSkills);
             if (isDM && activePlayer.userId && activePlayer.userId !== me.id) {
                 await Games.saveCharacter(game.id, {
                     userId: activePlayer.userId,
@@ -5502,7 +5964,7 @@ function WorldSkillsTab({ game, me, onUpdate }) {
         } finally {
             setSaving(false);
         }
-    }, [activePlayer, game.id, isDM, me.id, onUpdate, saving, skills, worldSkills]);
+    }, [activePlayer, customSkills, game.id, isDM, me.id, onUpdate, saving, skills, worldSkills]);
 
     return (
         <div className="col" style={{ display: "grid", gap: 16 }}>
@@ -5847,6 +6309,153 @@ function WorldSkillsTab({ game, me, onUpdate }) {
                                 </table>
                             </div>
                         )}
+
+                        <div style={{ marginTop: 16, display: "grid", gap: 8 }}>
+                            <div>
+                                <h4 style={{ margin: 0 }}>Custom skills</h4>
+                                <p className="text-muted text-small" style={{ margin: 0 }}>
+                                    DM-awarded or trained talents unique to {playerLabel || "this hero"}.
+                                </p>
+                            </div>
+                            {customSkillRows.length === 0 ? (
+                                <div className="text-muted">No custom skills yet.</div>
+                            ) : (
+                                <div className="sheet-table-wrapper">
+                                    <table className="sheet-table skill-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Skill</th>
+                                                <th>Ability</th>
+                                                <th>Ability mod</th>
+                                                <th>Ranks</th>
+                                                <th>Misc</th>
+                                                <th>Total</th>
+                                                {canEdit && <th aria-label="Actions" />}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {customSkillRows.map((row) => (
+                                                <tr key={row.id}>
+                                                    <th scope="row">
+                                                        <input
+                                                            type="text"
+                                                            value={row.label}
+                                                            onChange={(e) =>
+                                                                updateCustomSkill(row.id, 'label', e.target.value)
+                                                            }
+                                                            disabled={disableInputs}
+                                                            placeholder="Skill name"
+                                                            style={{ width: '100%' }}
+                                                        />
+                                                    </th>
+                                                    <td>
+                                                        <select
+                                                            value={row.ability}
+                                                            onChange={(e) =>
+                                                                updateCustomSkill(row.id, 'ability', e.target.value)
+                                                            }
+                                                            disabled={disableInputs}
+                                                        >
+                                                            {ABILITY_DEFS.map((ability) => (
+                                                                <option key={ability.key} value={ability.key}>
+                                                                    {ability.key} · {ability.label}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                    </td>
+                                                    <td>
+                                                        <span className="pill light">
+                                                            {formatModifier(row.abilityMod)}
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        <MathField
+                                                            label="Ranks"
+                                                            value={row.ranks}
+                                                            onCommit={(val) =>
+                                                                updateCustomSkill(row.id, 'ranks', val)
+                                                            }
+                                                            className="math-inline"
+                                                            disabled={disableInputs}
+                                                        />
+                                                    </td>
+                                                    <td>
+                                                        <MathField
+                                                            label="Misc"
+                                                            value={row.misc}
+                                                            onCommit={(val) =>
+                                                                updateCustomSkill(row.id, 'misc', val)
+                                                            }
+                                                            className="math-inline"
+                                                            disabled={disableInputs}
+                                                        />
+                                                    </td>
+                                                    <td>
+                                                        <span className="skill-total">
+                                                            {formatModifier(row.total)}
+                                                        </span>
+                                                    </td>
+                                                    {canEdit && (
+                                                        <td>
+                                                            <button
+                                                                className="btn ghost"
+                                                                onClick={() => removeCustomSkill(row.id)}
+                                                                disabled={disableInputs}
+                                                            >
+                                                                Remove
+                                                            </button>
+                                                        </td>
+                                                    )}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+
+                            {canEdit && (
+                                <div
+                                    className="row"
+                                    style={{ gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}
+                                >
+                                    <input
+                                        placeholder="Custom skill name"
+                                        value={customDraft.label}
+                                        onChange={(e) =>
+                                            setCustomDraft((prev) => ({ ...prev, label: e.target.value }))
+                                        }
+                                        style={{ flex: 2, minWidth: 200 }}
+                                        disabled={disableInputs}
+                                    />
+                                    <label className="field" style={{ minWidth: 160 }}>
+                                        <span className="field__label">Ability</span>
+                                        <select
+                                            value={customDraft.ability}
+                                            onChange={(e) =>
+                                                setCustomDraft((prev) => ({
+                                                    ...prev,
+                                                    ability: e.target.value,
+                                                }))
+                                            }
+                                            disabled={disableInputs}
+                                        >
+                                            {ABILITY_DEFS.map((ability) => (
+                                                <option key={ability.key} value={ability.key}>
+                                                    {ability.key} · {ability.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </label>
+                                    <button
+                                        className="btn"
+                                        onClick={addCustomSkill}
+                                        disabled={disableInputs || !customDraft.label.trim()}
+                                    >
+                                        Add custom skill
+                                    </button>
+                                </div>
+                            )}
+                        </div>
 
                         <div className="sheet-footer">
                             {!canEdit && (
@@ -7317,13 +7926,15 @@ function DemonTab({ game, me, onUpdate }) {
     const [arcana, setArc] = useState("");
     const [align, setAlign] = useState("");
     const [level, setLevel] = useState(1);
-    const [stats, setStats] = useState({ strength: 0, magic: 0, endurance: 0, agility: 0, luck: 0 });
+    const [stats, setStats] = useState(() => createAbilityMap(0));
     const [resist, setResist] = useState({ weak: "", resist: "", null: "", absorb: "", reflect: "" });
     const [skills, setSkills] = useState("");
     const [notes, setNotes] = useState("");
     const [q, setQ] = useState("");
     const [results, setResults] = useState([]);
     const [selected, setSelected] = useState(null);
+    const previewStats = useMemo(() => resolveAbilityState(selected?.stats ?? selected), [selected]);
+    const previewMods = useMemo(() => (selected?.mods && typeof selected.mods === "object" ? selected.mods : {}), [selected]);
     const [editing, setEditing] = useState(null);
     const [busySave, setBusySave] = useState(false);
     const [busySearch, setBusySearch] = useState(false);
@@ -7337,7 +7948,7 @@ function DemonTab({ game, me, onUpdate }) {
         setArc("");
         setAlign("");
         setLevel(1);
-        setStats({ strength: 0, magic: 0, endurance: 0, agility: 0, luck: 0 });
+        setStats(createAbilityMap(0));
         setResist({ weak: "", resist: "", null: "", absorb: "", reflect: "" });
         setSkills("");
         setNotes("");
@@ -7432,19 +8043,20 @@ function DemonTab({ game, me, onUpdate }) {
             setArc(p.arcana || "");
             setAlign(p.alignment || "");
             setLevel(p.level || 1);
-            setStats({
-                strength: p.strength ?? 0,
-                magic: p.magic ?? 0,
-                endurance: p.endurance ?? 0,
-                agility: p.agility ?? 0,
-                luck: p.luck ?? 0,
-            });
+            setStats(resolveAbilityState(p.stats ?? p));
+            const resist = p.resistances || {};
+            const formatList = (value, fallback) => {
+                const list = value ?? fallback;
+                if (Array.isArray(list)) return list.join(', ');
+                if (typeof list === 'string') return list;
+                return '';
+            };
             setResist({
-                weak: (p.weak || []).join(', '),
-                resist: (p.resists || []).join(', '),
-                null: (p.nullifies || []).join(', '),
-                absorb: (p.absorbs || []).join(', '),
-                reflect: (p.reflects || []).join(', '),
+                weak: formatList(resist.weak, p.weak),
+                resist: formatList(resist.resist, p.resists),
+                null: formatList(resist.null, p.nullifies),
+                absorb: formatList(resist.absorb, p.absorbs),
+                reflect: formatList(resist.reflect, p.reflects),
             });
             setSkills(Array.isArray(p.skills) ? p.skills.join('\n') : "");
             setNotes(p.description || "");
@@ -7459,19 +8071,17 @@ function DemonTab({ game, me, onUpdate }) {
         setArc(demon.arcana || "");
         setAlign(demon.alignment || "");
         setLevel(demon.level ?? 0);
-        setStats({
-            strength: demon.stats?.strength ?? 0,
-            magic: demon.stats?.magic ?? 0,
-            endurance: demon.stats?.endurance ?? 0,
-            agility: demon.stats?.agility ?? 0,
-            luck: demon.stats?.luck ?? 0,
-        });
+        setStats(resolveAbilityState(demon.stats));
+        const listToText = (primary, fallback) => {
+            const formatted = formatResistanceList(primary, fallback);
+            return formatted === '—' ? '' : formatted;
+        };
         setResist({
-            weak: (demon.resistances?.weak || []).join(', '),
-            resist: (demon.resistances?.resist || []).join(', '),
-            null: (demon.resistances?.null || []).join(', '),
-            absorb: (demon.resistances?.absorb || []).join(', '),
-            reflect: (demon.resistances?.reflect || []).join(', '),
+            weak: listToText(demon.resistances?.weak, demon.weak),
+            resist: listToText(demon.resistances?.resist, demon.resists),
+            null: listToText(demon.resistances?.null, demon.nullifies),
+            absorb: listToText(demon.resistances?.absorb, demon.absorbs),
+            reflect: listToText(demon.resistances?.reflect, demon.reflects),
         });
         setSkills(Array.isArray(demon.skills) ? demon.skills.join('\n') : "");
         setNotes(demon.notes || "");
@@ -7516,22 +8126,28 @@ function DemonTab({ game, me, onUpdate }) {
             </div>
 
             <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                {[
-                    ["strength", "STR"],
-                    ["magic", "MAG"],
-                    ["endurance", "END"],
-                    ["agility", "AGI"],
-                    ["luck", "LUC"],
-                ].map(([key, label]) => (
-                    <label key={key} className="col" style={{ minWidth: 90 }}>
-                        <span>{label}</span>
-                        <input
-                            type="number"
-                            value={stats[key] ?? 0}
-                            onChange={(e) => setStats((prev) => ({ ...prev, [key]: Number(e.target.value || 0) }))}
-                        />
-                    </label>
-                ))}
+                {ABILITY_DEFS.map((ability) => {
+                    const value = Number(stats[ability.key]) || 0;
+                    const mod = abilityModifier(value);
+                    return (
+                        <label key={ability.key} className="col" style={{ minWidth: 110 }}>
+                            <span>{ability.key}</span>
+                            <input
+                                type="number"
+                                value={value}
+                                onChange={(e) =>
+                                    setStats((prev) => ({
+                                        ...prev,
+                                        [ability.key]: Number(e.target.value || 0),
+                                    }))
+                                }
+                            />
+                            <span className="text-small" style={{ color: 'var(--muted)' }}>
+                                Mod {formatModifier(mod)}
+                            </span>
+                        </label>
+                    );
+                })}
             </div>
 
             <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
@@ -7631,23 +8247,23 @@ function DemonTab({ game, me, onUpdate }) {
                             <div
                                 style={{
                                     display: "grid",
-                                    gridTemplateColumns: "repeat(5, 1fr)",
+                                    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
                                     gap: 6,
                                     marginTop: 8,
                                 }}
                             >
-                                <span className="pill">STR {selected.strength}</span>
-                                <span className="pill">MAG {selected.magic}</span>
-                                <span className="pill">END {selected.endurance}</span>
-                                <span className="pill">AGI {selected.agility}</span>
-                                <span className="pill">LUC {selected.luck}</span>
+                                {ABILITY_DEFS.map((ability) => (
+                                    <span key={ability.key} className="pill">
+                                        {ability.key} {previewStats[ability.key]} ({formatModifier(previewMods[ability.key] ?? abilityModifier(previewStats[ability.key]))})
+                                    </span>
+                                ))}
                             </div>
                             <div style={{ marginTop: 8, fontSize: 12 }}>
-                                <div><b>Weak:</b> {selected.weak?.join(', ') || '—'}</div>
-                                <div><b>Resist:</b> {selected.resists?.join(', ') || '—'}</div>
-                                <div><b>Null:</b> {selected.nullifies?.join(', ') || '—'}</div>
-                                <div><b>Absorb:</b> {selected.absorbs?.join(', ') || '—'}</div>
-                                <div><b>Reflect:</b> {selected.reflects?.join(', ') || '—'}</div>
+                                <div><b>Weak:</b> {formatResistanceList(selected.resistances?.weak, selected.weak)}</div>
+                                <div><b>Resist:</b> {formatResistanceList(selected.resistances?.resist, selected.resists)}</div>
+                                <div><b>Null:</b> {formatResistanceList(selected.resistances?.null, selected.nullifies)}</div>
+                                <div><b>Absorb:</b> {formatResistanceList(selected.resistances?.absorb, selected.absorbs)}</div>
+                                <div><b>Reflect:</b> {formatResistanceList(selected.resistances?.reflect, selected.reflects)}</div>
                             </div>
                         </div>
                     ) : (
@@ -7682,18 +8298,22 @@ function DemonTab({ game, me, onUpdate }) {
                             )}
                         </div>
                         <div className="row" style={{ gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-                            <span className="pill">STR {d.stats?.strength ?? 0}</span>
-                            <span className="pill">MAG {d.stats?.magic ?? 0}</span>
-                            <span className="pill">END {d.stats?.endurance ?? 0}</span>
-                            <span className="pill">AGI {d.stats?.agility ?? 0}</span>
-                            <span className="pill">LUC {d.stats?.luck ?? 0}</span>
+                            {ABILITY_DEFS.map((ability) => {
+                                const score = Number((d.stats || {})[ability.key]) || 0;
+                                const mod = d.mods?.[ability.key] ?? abilityModifier(score);
+                                return (
+                                    <span key={ability.key} className="pill">
+                                        {ability.key} {score} ({formatModifier(mod)})
+                                    </span>
+                                );
+                            })}
                         </div>
                         <div style={{ marginTop: 8, fontSize: 12 }}>
-                            <div><b>Weak:</b> {(d.resistances?.weak || []).join(', ') || '—'}</div>
-                            <div><b>Resist:</b> {(d.resistances?.resist || []).join(', ') || '—'}</div>
-                            <div><b>Null:</b> {(d.resistances?.null || []).join(', ') || '—'}</div>
-                            <div><b>Absorb:</b> {(d.resistances?.absorb || []).join(', ') || '—'}</div>
-                            <div><b>Reflect:</b> {(d.resistances?.reflect || []).join(', ') || '—'}</div>
+                            <div><b>Weak:</b> {formatResistanceList(d.resistances?.weak, d.weak)}</div>
+                            <div><b>Resist:</b> {formatResistanceList(d.resistances?.resist, d.resists)}</div>
+                            <div><b>Null:</b> {formatResistanceList(d.resistances?.null, d.nullifies)}</div>
+                            <div><b>Absorb:</b> {formatResistanceList(d.resistances?.absorb, d.absorbs)}</div>
+                            <div><b>Reflect:</b> {formatResistanceList(d.resistances?.reflect, d.reflects)}</div>
                         </div>
                         {Array.isArray(d.skills) && d.skills.length > 0 && (
                             <div style={{ marginTop: 8, fontSize: 12 }}>
