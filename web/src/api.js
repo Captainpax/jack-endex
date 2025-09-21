@@ -482,6 +482,7 @@ export const StoryLogs = {
      *   channelId?: string,
      *   guildId?: string,
      *   webhookUrl?: string,
+     *   botToken?: string,
      *   allowPlayerPosts?: boolean,
      *   scribeIds?: string[],
      *   pollIntervalMs?: number
