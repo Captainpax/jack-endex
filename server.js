@@ -112,7 +112,9 @@ function ensurePlayerShape(player) {
 }
 
 function getGame(db, id) {
-    const game = (db.games || []).find((g) => g && g.id === id);
+    const gameId = parseUUID(id);
+    if (!gameId) return null;
+    const game = (db.games || []).find((g) => g && g.id === gameId);
     return ensureGameShape(game);
 }
 
@@ -194,6 +196,47 @@ function normalizeCount(value, fallback = 0) {
     return rounded < 0 ? 0 : rounded;
 }
 
+const USERNAME_REGEX = /^[A-Za-z0-9_]{3,30}$/;
+const INVALID_GAME_NAME_CHARS = /[<>\n\r\t]/;
+const INVITE_CODE_REGEX = /^[A-Z0-9]{6}$/;
+const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function readUsername(value) {
+    if (typeof value !== 'string') return null;
+    const username = value.trim();
+    if (!USERNAME_REGEX.test(username)) return null;
+    return username;
+}
+
+function readPassword(value) {
+    if (typeof value !== 'string') return null;
+    const password = value;
+    if (password.length < 8 || password.length > 128) return null;
+    return password;
+}
+
+function readGameName(value) {
+    if (typeof value !== 'string') return null;
+    const name = value.trim();
+    if (!name || name.length > 100) return null;
+    if (INVALID_GAME_NAME_CHARS.test(name)) return null;
+    return name;
+}
+
+function parseInviteCode(value) {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().toUpperCase();
+    if (!INVITE_CODE_REGEX.test(normalized)) return null;
+    return normalized;
+}
+
+function parseUUID(value) {
+    if (typeof value !== 'string') return null;
+    const id = value.trim();
+    if (!UUID_V4_REGEX.test(id)) return null;
+    return id;
+}
+
 // --- helpers ---
 function normalizeDB(raw) {
     const db = raw && typeof raw === 'object' ? raw : {};
@@ -260,11 +303,15 @@ app.get('/api/auth/me', async (req, res) => {
 });
 
 app.post('/api/auth/register', async (req, res) => {
-    const { username, password } = req.body || {};
-    if (!username || !password) return res.status(400).json({ error: 'missing fields' });
+    const username = readUsername(req.body?.username);
+    const password = readPassword(req.body?.password);
+    if (!username || !password) return res.status(400).json({ error: 'invalid fields' });
 
     const db = await readDB();
-    if (db.users.some(u => u.username === username)) return res.status(400).json({ error: 'user exists' });
+    const exists = db.users.some((u) =>
+        typeof u?.username === 'string' && u.username.toLowerCase() === username.toLowerCase()
+    );
+    if (exists) return res.status(400).json({ error: 'user exists' });
 
     const salt = crypto.randomBytes(8).toString('hex');
     const user = { id: uuid(), username, pass: `${salt}$${hash(password, salt)}` };
@@ -276,13 +323,20 @@ app.post('/api/auth/register', async (req, res) => {
 });
 
 app.post('/api/auth/login', async (req, res) => {
-    const { username, password } = req.body || {};
+    const username = readUsername(req.body?.username);
+    const password = readPassword(req.body?.password);
+    if (!username || !password) return res.status(400).json({ error: 'invalid credentials' });
+
     const db = await readDB();
-    const user = db.users.find(u => u.username === username);
+    const user = db.users.find(
+        (u) => typeof u?.username === 'string' && u.username.toLowerCase() === username.toLowerCase()
+    );
     if (!user) return res.status(400).json({ error: 'invalid credentials' });
 
     const [salt, stored] = user.pass.split('$');
-    if (hash(password, salt) !== stored) return res.status(400).json({ error: 'invalid credentials' });
+    if (!salt || !stored || hash(password, salt) !== stored) {
+        return res.status(400).json({ error: 'invalid credentials' });
+    }
 
     req.session.userId = user.id;
     res.json({ id: user.id, username: user.username });
@@ -302,8 +356,8 @@ app.get('/api/games', requireAuth, async (req, res) => {
 });
 
 app.post('/api/games', requireAuth, async (req, res) => {
-    const { name } = req.body || {};
-    if (!name) return res.status(400).json({ error: 'missing name' });
+    const name = readGameName(req.body?.name);
+    if (!name) return res.status(400).json({ error: 'invalid name' });
 
     const db = await readDB();
     const game = {
@@ -379,7 +433,7 @@ app.post('/api/games/:id/invites', requireAuth, async (req, res) => {
 });
 
 app.post('/api/games/join/:code', requireAuth, async (req, res) => {
-    const { code } = req.params || {};
+    const code = parseInviteCode(req.params?.code);
     if (!code) return res.status(400).json({ error: 'invalid_code' });
 
     const db = await readDB();
@@ -471,7 +525,8 @@ app.delete('/api/games/:id', requireAuth, async (req, res) => {
         return res.status(403).json({ error: 'forbidden' });
     }
 
-    db.games = (db.games || []).filter((g) => g && g.id !== id);
+    const gameId = game.id;
+    db.games = (db.games || []).filter((g) => g && g.id !== gameId);
     await writeDB(db);
     res.json({ ok: true });
 });
