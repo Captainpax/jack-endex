@@ -2,6 +2,17 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Auth, Games, Items, Personas, onApiActivity } from "./api";
 
+const ENV = import.meta.env || {};
+const readEnv = (key) => {
+    const raw = ENV?.[key];
+    return typeof raw === "string" ? raw.trim() : "";
+};
+
+const DISCORD_SERVER_ID = readEnv("VITE_DISCORD_SERVER_ID");
+const DISCORD_CHANNEL_ID = readEnv("VITE_DISCORD_CHANNEL_ID");
+const DISCORD_WIDGET_BASE = readEnv("VITE_DISCORD_WIDGET_BASE");
+const DISCORD_WIDGET_THEME = readEnv("VITE_DISCORD_WIDGET_THEME") || "dark";
+
 const DM_NAV = [
     {
         key: "overview",
@@ -32,6 +43,11 @@ const DM_NAV = [
         key: "demons",
         label: "Demon Codex",
         description: "Summoned allies and spirits",
+    },
+    {
+        key: "storyLogs",
+        label: "Story Logs",
+        description: "Read the shared Discord story log",
     },
     {
         key: "settings",
@@ -65,6 +81,11 @@ const PLAYER_NAV = [
         key: "demons",
         label: "Demon Companions",
         description: "Track your summoned allies",
+    },
+    {
+        key: "storyLogs",
+        label: "Story Logs",
+        description: "Catch up on the Discord channel",
     },
 ];
 
@@ -979,6 +1000,8 @@ function GameView({
                             }}
                         />
                     )}
+
+                    {tab === "storyLogs" && <StoryLogsTab />}
 
                     {tab === "settings" && isDM && (
                         <SettingsTab
@@ -2903,6 +2926,78 @@ function Party({ game, selectedPlayerId, onSelectPlayer, mode = "player", curren
                 )}
             </div>
         </div>
+    );
+}
+
+// ---------- Story Logs ----------
+function StoryLogsTab() {
+    const serverId = DISCORD_SERVER_ID;
+    const channelId = DISCORD_CHANNEL_ID;
+    const widgetTheme = DISCORD_WIDGET_THEME;
+    const widgetBase = DISCORD_WIDGET_BASE || "https://e.widgetbot.io/channels";
+
+    const embedUrl = useMemo(() => {
+        if (!serverId || !channelId) return "";
+        const trimmedBase = widgetBase.replace(/\/+$/, "");
+        const baseUrl = `${trimmedBase}/${encodeURIComponent(serverId)}/${encodeURIComponent(
+            channelId
+        )}`;
+        const params = new URLSearchParams();
+        if (widgetTheme) params.set("theme", widgetTheme);
+        const query = params.toString();
+        return query ? `${baseUrl}?${query}` : baseUrl;
+    }, [channelId, serverId, widgetBase, widgetTheme]);
+
+    const channelLink = useMemo(() => {
+        if (!serverId || !channelId) return "";
+        return `https://discord.com/channels/${encodeURIComponent(serverId)}/${encodeURIComponent(
+            channelId
+        )}`;
+    }, [channelId, serverId]);
+
+    const isConfigured = Boolean(embedUrl);
+
+    return (
+        <section className="card story-logs-card">
+            <div className="header">
+                <div>
+                    <h3>Story logs</h3>
+                    <p className="text-muted text-small">
+                        Keep up with the Discord story log channel without leaving the command
+                        center.
+                    </p>
+                </div>
+                {isConfigured && channelLink && (
+                    <a
+                        className="btn ghost btn-small"
+                        href={channelLink}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                    >
+                        Open in Discord
+                    </a>
+                )}
+            </div>
+            {isConfigured ? (
+                <div className="story-logs__embed">
+                    <iframe
+                        title="Discord story logs"
+                        src={embedUrl}
+                        loading="lazy"
+                        allowTransparency
+                        allow="clipboard-read; clipboard-write"
+                    />
+                </div>
+            ) : (
+                <div className="story-logs__empty">
+                    <p className="text-muted">
+                        Provide <code>VITE_DISCORD_SERVER_ID</code> and <code>VITE_DISCORD_CHANNEL_ID</code>
+                        {" "}
+                        in your environment configuration to embed the Discord story logs.
+                    </p>
+                </div>
+            )}
+        </section>
     );
 }
 
