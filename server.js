@@ -877,7 +877,7 @@ app.post('/api/games/:id/demons', requireAuth, async (req, res) => {
     if (!game || !isMember(game, req.session.userId)) {
         return res.status(404).json({ error: 'not_found' });
     }
-    if (!isDM(game, req.session.userId) && !game.permissions.canEditDemons) {
+    if (!isDM(game, req.session.userId)) {
         return res.status(403).json({ error: 'forbidden' });
     }
 
@@ -967,7 +967,7 @@ app.delete('/api/games/:id/demons/:demonId', requireAuth, async (req, res) => {
     if (!game || !isMember(game, req.session.userId)) {
         return res.status(404).json({ error: 'not_found' });
     }
-    if (!isDM(game, req.session.userId) && !game.permissions.canEditDemons) {
+    if (!isDM(game, req.session.userId)) {
         return res.status(403).json({ error: 'forbidden' });
     }
 
