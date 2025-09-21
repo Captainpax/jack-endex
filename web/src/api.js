@@ -403,6 +403,15 @@ export const Games = {
     joinByCode: (code) => api(`/api/games/join/${encodeURIComponent(code)}`, { method: 'POST' }),
     setPerms: (id, perms) => api(`/api/games/${encodeURIComponent(id)}/permissions`, { method: 'PUT', body: perms }),
     saveCharacter: (id, character) => api(`/api/games/${encodeURIComponent(id)}/character`, { method: 'PUT', body: { character } }),
+    addWorldSkill: (id, skill) =>
+        api(`/api/games/${encodeURIComponent(id)}/world-skills`, { method: 'POST', body: { skill } }),
+    updateWorldSkill: (id, skillId, skill) =>
+        api(`/api/games/${encodeURIComponent(id)}/world-skills/${encodeURIComponent(skillId)}`, {
+            method: 'PUT',
+            body: { skill },
+        }),
+    deleteWorldSkill: (id, skillId) =>
+        api(`/api/games/${encodeURIComponent(id)}/world-skills/${encodeURIComponent(skillId)}`, { method: 'DELETE' }),
     addCustomItem: (id, item) => api(`/api/games/${encodeURIComponent(id)}/items/custom`, { method: 'POST', body: { item } }),
     updateCustomItem: (id, itemId, item) => api(`/api/games/${encodeURIComponent(id)}/items/custom/${encodeURIComponent(itemId)}`, { method: 'PUT', body: { item } }),
     deleteCustomItem: (id, itemId) => api(`/api/games/${encodeURIComponent(id)}/items/custom/${encodeURIComponent(itemId)}`, { method: 'DELETE' }),
