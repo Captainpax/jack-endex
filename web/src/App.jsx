@@ -1,6 +1,6 @@
 // --- FILE: web/src/App.jsx ---
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Auth, Games, Items, Personas } from "./api";
+import { Auth, Games, Items, Personas, onApiActivity } from "./api";
 
 const DM_NAV = [
     {
@@ -667,6 +667,23 @@ function GameView({
     setDmSheetPlayerId,
 }) {
     const isDM = game.dmId === me.id;
+    const [apiBusy, setApiBusy] = useState(false);
+    const [refreshBusy, setRefreshBusy] = useState(false);
+    const loadedTabRef = useRef(false);
+    const loadedSheetRef = useRef(false);
+
+    useEffect(() => onApiActivity(setApiBusy), []);
+
+    const tabPrefKey = game?.id ? `amz:lastTab:${game.id}` : null;
+    const sheetPrefKey = game?.id ? `amz:lastSheet:${game.id}` : null;
+
+    useEffect(() => {
+        loadedTabRef.current = false;
+    }, [tabPrefKey]);
+
+    useEffect(() => {
+        loadedSheetRef.current = false;
+    }, [sheetPrefKey]);
 
     const navItems = useMemo(() => (isDM ? DM_NAV : PLAYER_NAV), [isDM]);
 
@@ -677,6 +694,22 @@ function GameView({
         }
     }, [navItems, tab, setTab]);
 
+    useEffect(() => {
+        if (!tabPrefKey || loadedTabRef.current) return;
+        const stored = typeof window !== "undefined" ? localStorage.getItem(tabPrefKey) : null;
+        if (stored && navItems.some((item) => item.key === stored)) {
+            setTab(stored);
+        }
+        loadedTabRef.current = true;
+    }, [navItems, setTab, tabPrefKey]);
+
+    useEffect(() => {
+        if (!tabPrefKey) return;
+        if (typeof window !== "undefined") {
+            localStorage.setItem(tabPrefKey, tab);
+        }
+    }, [tab, tabPrefKey]);
+
     const activeNav = navItems.find((item) => item.key === tab) || navItems[0] || null;
 
     const campaignPlayers = useMemo(
@@ -686,6 +719,22 @@ function GameView({
             ),
         [game.players]
     );
+
+    useEffect(() => {
+        if (!sheetPrefKey || !isDM || loadedSheetRef.current) return;
+        const stored = typeof window !== "undefined" ? localStorage.getItem(sheetPrefKey) : null;
+        if (stored && campaignPlayers.some((p) => p.userId === stored)) {
+            setDmSheetPlayerId(stored);
+        }
+        loadedSheetRef.current = true;
+    }, [campaignPlayers, isDM, setDmSheetPlayerId, sheetPrefKey]);
+
+    useEffect(() => {
+        if (!sheetPrefKey || !isDM) return;
+        if (typeof window !== "undefined") {
+            localStorage.setItem(sheetPrefKey, dmSheetPlayerId || "");
+        }
+    }, [dmSheetPlayerId, isDM, sheetPrefKey]);
 
     const myEntry = useMemo(
         () => campaignPlayers.find((p) => p.userId === me.id) || null,
@@ -728,8 +777,48 @@ function GameView({
         return pills;
     }, [campaignPlayers.length, demonCount, isDM, myEntry]);
 
+    const handleRefresh = useCallback(async () => {
+        if (!game?.id) return;
+        try {
+            setRefreshBusy(true);
+            const full = await Games.get(game.id);
+            setActive(full);
+        } catch (e) {
+            alert(e.message);
+        } finally {
+            setRefreshBusy(false);
+        }
+    }, [game?.id, setActive]);
+
+    useEffect(() => {
+        const handler = (evt) => {
+            if (!(evt.ctrlKey && evt.altKey)) return;
+            const target = evt.target;
+            if (target && target instanceof HTMLElement) {
+                const tag = target.tagName.toLowerCase();
+                if (tag === "input" || tag === "textarea" || target.isContentEditable) return;
+            }
+            if (evt.key === "r" || evt.key === "R") {
+                evt.preventDefault();
+                handleRefresh();
+                return;
+            }
+            const numeric = Number(evt.key);
+            if (Number.isInteger(numeric) && numeric > 0 && numeric <= navItems.length) {
+                evt.preventDefault();
+                setTab(navItems[numeric - 1].key);
+            }
+        };
+        window.addEventListener("keydown", handler);
+        return () => window.removeEventListener("keydown", handler);
+    }, [handleRefresh, navItems, setTab]);
+
     return (
-        <div className="app-shell">
+        <div className="app-root">
+            <div className={`app-activity${apiBusy ? " is-active" : ""}`}>
+                <div className="app-activity__bar" />
+            </div>
+            <div className="app-shell">
             <aside className="app-sidebar">
                 <div className="sidebar__header">
                     <span className="sidebar__mode">
@@ -781,6 +870,20 @@ function GameView({
                         )}
                     </div>
                     <div className="app-main__header-meta">
+                        <div className="header-actions">
+                            <button
+                                type="button"
+                                className="btn ghost btn-small"
+                                onClick={handleRefresh}
+                                disabled={refreshBusy}
+                                title="Ctrl+Alt+R"
+                            >
+                                {refreshBusy ? "Refreshing…" : "Refresh data"}
+                            </button>
+                            <span className="text-muted text-small hotkey-hint">
+                                Ctrl+Alt+1–{navItems.length} to switch · Ctrl+Alt+R refresh
+                            </span>
+                        </div>
                         <div className="header-pills">
                             {headerPills.map((pill, idx) => (
                                 <span
@@ -931,6 +1034,7 @@ function GameView({
                 </div>
             </main>
         </div>
+    </div>
     );
 }
 
@@ -3287,134 +3391,230 @@ const PLAYER_GEAR_LABELS = {
     accessory: "Accessory",
 };
 
+function parseAssignmentKey(key, options) {
+    const baseline = {};
+    if (typeof key === "string" && key.length > 0) {
+        for (const part of key.split("|")) {
+            if (!part) continue;
+            const [slot, value = ""] = part.split(":");
+            if (slot) baseline[slot] = value;
+        }
+    }
+    if (Array.isArray(options)) {
+        for (const opt of options) {
+            if (!Object.prototype.hasOwnProperty.call(baseline, opt.value)) {
+                baseline[opt.value] = "";
+            }
+        }
+    }
+    return baseline;
+}
+
 function PlayerGearCard({ player, canEdit, gameId, onUpdate, libraryGear }) {
     const slotOptions = useMemo(
         () => PLAYER_GEAR_SLOTS.map((value) => ({ value, label: PLAYER_GEAR_LABELS[value] || value })),
         []
     );
-    const defaultSlot = slotOptions[0]?.value || "weapon";
-    const [form, setForm] = useState(() => ({ slot: defaultSlot, name: "", type: "", desc: "" }));
-    const [busySave, setBusySave] = useState(false);
-    const [busySlot, setBusySlot] = useState(null);
-    const [picker, setPicker] = useState("");
-
-    const slotSet = useMemo(() => new Set(slotOptions.map((opt) => opt.value)), [slotOptions]);
-
-    const normalizeSlot = useCallback(
-        (slot) => {
-            const value = String(slot || "").toLowerCase();
-            return slotSet.has(value) ? value : defaultSlot;
-        },
-        [slotSet, defaultSlot]
-    );
-
-    const gearMap = useMemo(() => {
-        const source = player?.gear && typeof player.gear === "object" ? player.gear : {};
-        const map = {};
-        for (const opt of slotOptions) {
-            const entry = source?.[opt.value];
-            map[opt.value] = entry && typeof entry === "object" ? entry : null;
-        }
-        return map;
-    }, [player.gear, slotOptions]);
 
     const playerId = player?.userId || "";
-    const prevPlayer = useRef(playerId);
+
+    const gearState = useMemo(() => {
+        const raw = player?.gear && typeof player.gear === "object" ? player.gear : {};
+        const slotsRaw = raw && typeof raw.slots === "object" ? raw.slots : {};
+        const bagRaw = Array.isArray(raw.bag) ? raw.bag : [];
+        const bagMap = new Map();
+
+        const insert = (entry, forcedId) => {
+            if (!entry || typeof entry !== "object") return null;
+            const id =
+                forcedId ||
+                (typeof entry.id === "string" && entry.id
+                    ? entry.id
+                    : `${entry.name || "gear"}-${bagMap.size + 1}`);
+            const normalized = {
+                id,
+                name: entry.name || "",
+                type: entry.type || "",
+                desc: entry.desc || "",
+            };
+            if (!bagMap.has(id)) {
+                bagMap.set(id, normalized);
+            } else {
+                bagMap.set(id, { ...bagMap.get(id), ...normalized });
+            }
+            return id;
+        };
+
+        for (const entry of bagRaw) {
+            insert(entry);
+        }
+
+        const slots = {};
+        for (const opt of slotOptions) {
+            const slotValue = opt.value;
+            let itemId = null;
+            const slotEntry = slotsRaw?.[slotValue];
+            if (slotEntry && typeof slotEntry.itemId === "string" && slotEntry.itemId) {
+                itemId = slotEntry.itemId;
+                if (!bagMap.has(itemId) && slotEntry.item && typeof slotEntry.item === "object") {
+                    insert(slotEntry.item, itemId);
+                }
+            }
+            if (!itemId && raw?.[slotValue] && typeof raw[slotValue] === "object") {
+                itemId = insert(raw[slotValue]);
+            }
+            if (itemId && bagMap.has(itemId)) {
+                slots[slotValue] = { itemId };
+            } else {
+                slots[slotValue] = null;
+            }
+        }
+
+        return { bag: Array.from(bagMap.values()), slots };
+    }, [player?.gear, slotOptions]);
+
+    const bag = gearState.bag;
+    const slots = gearState.slots;
+
+    const bagMap = useMemo(() => {
+        const map = new Map();
+        for (const item of bag) {
+            if (!item || typeof item.id !== "string") continue;
+            map.set(item.id, {
+                id: item.id,
+                name: item.name || "",
+                type: item.type || "",
+                desc: item.desc || "",
+            });
+        }
+        return map;
+    }, [bag]);
+
+    const slotMemo = useMemo(() => {
+        const assignments = {};
+        const keyParts = [];
+        for (const opt of slotOptions) {
+            const slotValue = opt.value;
+            const itemId = slots?.[slotValue]?.itemId;
+            const resolved = itemId && bagMap.has(itemId) ? itemId : "";
+            assignments[slotValue] = resolved;
+            keyParts.push(`${slotValue}:${resolved}`);
+        }
+        return { assignments, key: keyParts.join("|") };
+    }, [bagMap, slots, slotOptions]);
+
+    const slotAssignments = slotMemo.assignments;
+    const assignmentKey = slotMemo.key;
+
+    const [slotDrafts, setSlotDrafts] = useState(() => parseAssignmentKey(assignmentKey, slotOptions));
+    const [busySlot, setBusySlot] = useState(null);
+    const [bagForm, setBagForm] = useState({ name: "", type: "", desc: "" });
+    const [bagEditing, setBagEditing] = useState(null);
+    const [bagBusy, setBagBusy] = useState(false);
+    const [bagRowBusy, setBagRowBusy] = useState(null);
+    const [bagSearch, setBagSearch] = useState("");
+    const [libraryPick, setLibraryPick] = useState("");
+    const [quickAddBusy, setQuickAddBusy] = useState(false);
 
     useEffect(() => {
-        if (prevPlayer.current !== playerId) {
-            prevPlayer.current = playerId;
-            const entry = gearMap[defaultSlot];
-            setForm({
-                slot: defaultSlot,
-                name: entry?.name || "",
-                type: entry?.type || "",
-                desc: entry?.desc || "",
-            });
-            setPicker((prev) => (prev ? "" : prev));
+        setSlotDrafts((prev) => {
+            const baseline = parseAssignmentKey(assignmentKey, slotOptions);
+            const same = slotOptions.every(
+                (opt) => (prev[opt.value] || "") === (baseline[opt.value] || "")
+            );
+            return same ? prev : baseline;
+        });
+    }, [assignmentKey, slotOptions, playerId]);
+
+    const resetBagForm = useCallback(() => {
+        setBagEditing(null);
+        setBagForm({ name: "", type: "", desc: "" });
+    }, []);
+
+    useEffect(() => {
+        resetBagForm();
+        setBagSearch("");
+        setLibraryPick("");
+    }, [playerId, resetBagForm]);
+
+    const editingEntry = bagEditing ? bagMap.get(bagEditing) : null;
+    useEffect(() => {
+        if (!bagEditing) return;
+        if (!editingEntry) {
+            resetBagForm();
             return;
         }
-        setForm((prev) => {
-            const slot = normalizeSlot(prev.slot);
-            const entry = gearMap[slot];
-            const next = {
-                slot,
-                name: entry?.name || "",
-                type: entry?.type || "",
-                desc: entry?.desc || "",
-            };
+        setBagForm((prev) => {
             if (
-                next.slot === prev.slot &&
-                next.name === prev.name &&
-                next.type === prev.type &&
-                next.desc === prev.desc
+                prev.name === (editingEntry.name || "") &&
+                prev.type === (editingEntry.type || "") &&
+                prev.desc === (editingEntry.desc || "")
             ) {
                 return prev;
             }
-            return next;
+            return {
+                name: editingEntry.name || "",
+                type: editingEntry.type || "",
+                desc: editingEntry.desc || "",
+            };
         });
-        setPicker((prev) => (prev ? "" : prev));
-    }, [defaultSlot, gearMap, normalizeSlot, playerId]);
+    }, [bagEditing, editingEntry, resetBagForm]);
 
-    const available = Array.isArray(libraryGear) ? libraryGear : [];
+    const libraryOptions = useMemo(() => {
+        const list = Array.isArray(libraryGear) ? libraryGear : [];
+        return list.map((item, idx) => ({
+            key: typeof item.id === "string" && item.id ? item.id : `library-${idx}`,
+            item,
+            label: `${item.name || "Untitled"}${item.type ? ` · ${item.type}` : ""}`,
+        }));
+    }, [libraryGear]);
 
-    const inferSlot = useCallback((type) => {
-        const lower = (type || "").toLowerCase();
-        if (lower.startsWith("weapon")) return "weapon";
-        if (lower.startsWith("armor")) return "armor";
-        if (lower.startsWith("accessory")) return "accessory";
-        return null;
+    useEffect(() => {
+        setLibraryPick((prev) => (libraryOptions.some((opt) => opt.key === prev) ? prev : ""));
+    }, [libraryOptions]);
+
+    const normalizedSearch = bagSearch.trim().toLowerCase();
+    const filteredBag = useMemo(() => {
+        if (!normalizedSearch) return bag;
+        return bag.filter((item) => {
+            const value = `${item.name} ${item.type} ${item.desc}`.toLowerCase();
+            return value.includes(normalizedSearch);
+        });
+    }, [bag, normalizedSearch]);
+
+    const playerLabel =
+        player?.character?.name || `Player ${player?.userId?.slice?.(0, 6) || ""}`;
+    const subtitleParts = [];
+    if (player?.character?.profile?.class) {
+        subtitleParts.push(player.character.profile.class);
+    }
+    if (player?.character?.resources?.level) {
+        subtitleParts.push(`LV ${player.character.resources.level}`);
+    }
+    const subtitle = subtitleParts.join(" · ");
+    const bagCount = bag.length;
+    const equippedCount = slotOptions.reduce(
+        (count, opt) => (slotAssignments[opt.value] ? count + 1 : count),
+        0
+    );
+    const handleSelectSlot = useCallback((slot, value) => {
+        setSlotDrafts((prev) => ({ ...prev, [slot]: value }));
     }, []);
 
-    const startEdit = useCallback(
-        (slot) => {
-            const next = normalizeSlot(slot);
-            const entry = gearMap[next];
-            setForm({
-                slot: next,
-                name: entry?.name || "",
-                type: entry?.type || "",
-                desc: entry?.desc || "",
-            });
-            setPicker("");
-        },
-        [gearMap, normalizeSlot]
-    );
-
-    const resetForm = useCallback(() => {
-        startEdit(form.slot);
-    }, [form.slot, startEdit]);
-
-    const save = useCallback(async () => {
-        if (!canEdit) return;
-        const slot = normalizeSlot(form.slot);
-        const name = form.name.trim();
-        if (!name) return alert("Gear needs a name");
-        const payload = {
-            name,
-            type: form.type.trim(),
-            desc: form.desc.trim(),
-        };
-        try {
-            setBusySave(true);
-            await Games.setPlayerGear(gameId, player.userId, slot, payload);
-            await onUpdate();
-        } catch (e) {
-            alert(e.message);
-        } finally {
-            setBusySave(false);
-        }
-    }, [canEdit, form.name, form.type, form.desc, form.slot, normalizeSlot, gameId, player.userId, onUpdate]);
-
-    const remove = useCallback(
+    const applySlot = useCallback(
         async (slot) => {
-            if (!canEdit) return;
-            const normalized = normalizeSlot(slot);
-            if (!gearMap[normalized]) return;
-            if (!confirm("Remove this gear from the slot?")) return;
+            if (!canEdit || !playerId) return;
+            const targetId = slotDrafts[slot] || "";
+            const baseline = slotAssignments[slot] || "";
+            if (targetId === baseline) return;
             try {
-                setBusySlot(normalized);
-                await Games.clearPlayerGear(gameId, player.userId, normalized);
+                setBusySlot(slot);
+                setSlotDrafts((prev) => ({ ...prev, [slot]: targetId }));
+                if (!targetId) {
+                    await Games.clearPlayerGear(gameId, playerId, slot);
+                } else {
+                    await Games.setPlayerGear(gameId, playerId, slot, { itemId: targetId });
+                }
                 await onUpdate();
             } catch (e) {
                 alert(e.message);
@@ -3422,163 +3622,396 @@ function PlayerGearCard({ player, canEdit, gameId, onUpdate, libraryGear }) {
                 setBusySlot(null);
             }
         },
-        [canEdit, gearMap, normalizeSlot, gameId, player.userId, onUpdate]
+        [canEdit, gameId, onUpdate, playerId, slotAssignments, slotDrafts]
     );
 
-    const playerLabel = player.character?.name || `Player ${player.userId?.slice?.(0, 6) || ""}`;
-    const subtitleParts = [];
-    if (player.character?.profile?.class) subtitleParts.push(player.character.profile.class);
-    if (player.character?.resources?.level) subtitleParts.push(`LV ${player.character.resources.level}`);
-    const subtitle = subtitleParts.join(" · ");
-
-    const activeSlot = normalizeSlot(form.slot);
-    const currentEntry = gearMap[activeSlot];
-    const equippedCount = slotOptions.reduce(
-        (count, opt) => (gearMap[opt.value] ? count + 1 : count),
-        0
+    const clearSlot = useCallback(
+        async (slot) => {
+            if (!canEdit || !playerId) return;
+            if (!slotAssignments[slot]) {
+                setSlotDrafts((prev) => ({ ...prev, [slot]: "" }));
+                return;
+            }
+            try {
+                setBusySlot(slot);
+                setSlotDrafts((prev) => ({ ...prev, [slot]: "" }));
+                await Games.clearPlayerGear(gameId, playerId, slot);
+                await onUpdate();
+            } catch (e) {
+                alert(e.message);
+            } finally {
+                setBusySlot(null);
+            }
+        },
+        [canEdit, gameId, onUpdate, playerId, slotAssignments]
     );
-    const hasChanges = currentEntry
-        ? form.name !== (currentEntry.name || "") ||
-          form.type !== (currentEntry.type || "") ||
-          form.desc !== (currentEntry.desc || "")
-        : !!(form.name || form.type || form.desc);
+
+    const inferSlot = useCallback(
+        (type) => {
+            const lower = (type || "").toLowerCase();
+            if (lower.startsWith("weapon")) return "weapon";
+            if (lower.startsWith("armor")) return "armor";
+            if (lower.startsWith("accessory")) return "accessory";
+            return slotOptions[0]?.value || null;
+        },
+        [slotOptions]
+    );
+
+    const quickEquip = useCallback(
+        async (item) => {
+            if (!canEdit || !playerId) return;
+            if (!item || typeof item.id !== "string") return;
+            const slot = inferSlot(item.type) || slotOptions[0]?.value;
+            if (!slot) return;
+            try {
+                setBusySlot(slot);
+                setSlotDrafts((prev) => ({ ...prev, [slot]: item.id }));
+                await Games.setPlayerGear(gameId, playerId, slot, { itemId: item.id });
+                await onUpdate();
+            } catch (e) {
+                alert(e.message);
+            } finally {
+                setBusySlot(null);
+            }
+        },
+        [canEdit, gameId, inferSlot, onUpdate, playerId, slotOptions]
+    );
+
+    const startBagEdit = useCallback((item) => {
+        if (!item || typeof item.id !== "string") return;
+        setBagEditing(item.id);
+        setBagForm({
+            name: item.name || "",
+            type: item.type || "",
+            desc: item.desc || "",
+        });
+    }, []);
+
+    const saveBagForm = useCallback(
+        async () => {
+            if (!canEdit || !playerId) return;
+            const name = bagForm.name.trim();
+            if (!name) {
+                alert("Gear needs a name");
+                return;
+            }
+            const payload = {
+                name,
+                type: bagForm.type.trim(),
+                desc: bagForm.desc.trim(),
+            };
+            try {
+                setBagBusy(true);
+                if (bagEditing) {
+                    await Games.updatePlayerGearBag(gameId, playerId, bagEditing, payload);
+                } else {
+                    await Games.addPlayerGearBag(gameId, playerId, payload);
+                }
+                await onUpdate();
+                resetBagForm();
+            } catch (e) {
+                alert(e.message);
+            } finally {
+                setBagBusy(false);
+            }
+        },
+        [bagEditing, bagForm.desc, bagForm.name, bagForm.type, canEdit, gameId, onUpdate, playerId, resetBagForm]
+    );
+
+    const removeBagItem = useCallback(
+        async (item) => {
+            if (!canEdit || !playerId) return;
+            if (!item || typeof item.id !== "string") return;
+            if (!confirm("Remove this gear from the bag? Equipped slots will be cleared.")) return;
+            try {
+                setBagRowBusy(item.id);
+                await Games.deletePlayerGearBag(gameId, playerId, item.id);
+                await onUpdate();
+            } catch (e) {
+                alert(e.message);
+            } finally {
+                setBagRowBusy(null);
+            }
+        },
+        [canEdit, gameId, onUpdate, playerId]
+    );
+
+    const addFromLibrary = useCallback(async () => {
+        if (!canEdit || !playerId) return;
+        const option = libraryOptions.find((opt) => opt.key === libraryPick);
+        if (!option) {
+            alert("Pick gear to add first");
+            return;
+        }
+        const payload = {
+            name: option.item?.name || "",
+            type: option.item?.type || "",
+            desc: option.item?.desc || "",
+        };
+        try {
+            setQuickAddBusy(true);
+            await Games.addPlayerGearBag(gameId, playerId, payload);
+            await onUpdate();
+            setLibraryPick("");
+        } catch (e) {
+            alert(e.message);
+        } finally {
+            setQuickAddBusy(false);
+        }
+    }, [canEdit, gameId, libraryOptions, libraryPick, onUpdate, playerId]);
+
+    const bagFormDirty = bagEditing
+        ? bagForm.name !== (editingEntry?.name || "") ||
+          bagForm.type !== (editingEntry?.type || "") ||
+          bagForm.desc !== (editingEntry?.desc || "")
+        : !!(bagForm.name.trim() || bagForm.type.trim() || bagForm.desc.trim());
+    const canSubmitBag = canEdit && !bagBusy && bagForm.name.trim();
 
     return (
         <div className="card" style={{ padding: 12 }}>
-            <div className="row" style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+            <div
+                className="row"
+                style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}
+            >
                 <div>
-                    <div><b>{playerLabel || "Unnamed Player"}</b></div>
+                    <div>
+                        <b>{playerLabel || "Unnamed Player"}</b>
+                    </div>
                     {subtitle && <div style={{ opacity: 0.75, fontSize: 12 }}>{subtitle}</div>}
                 </div>
-                <span className="pill">Equipped: {equippedCount}/{slotOptions.length}</span>
-            </div>
-
-            <div className="row" style={{ gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                <select
-                    value={activeSlot}
-                    onChange={(e) => startEdit(e.target.value)}
-                    disabled={!canEdit}
-                    style={{ minWidth: 140 }}
-                >
-                    {slotOptions.map((opt) => (
-                        <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                        </option>
-                    ))}
-                </select>
-                <select
-                    value={picker}
-                    onChange={(e) => {
-                        const value = e.target.value;
-                        if (!value) {
-                            setPicker("");
-                            return;
-                        }
-                        const idx = Number(value);
-                        if (!Number.isNaN(idx) && available[idx]) {
-                            const chosen = available[idx];
-                            const guessed = normalizeSlot(inferSlot(chosen.type) || activeSlot);
-                            setForm({
-                                slot: guessed,
-                                name: chosen.name || "",
-                                type: chosen.type || "",
-                                desc: chosen.desc || "",
-                            });
-                        }
-                        setPicker("");
-                    }}
-                    disabled={!canEdit || available.length === 0}
-                    style={{ minWidth: 180 }}
-                >
-                    <option value="">Copy from library…</option>
-                    {available.map((it, idx) => (
-                        <option key={`${it.id ?? it.name ?? idx}-${idx}`} value={String(idx)}>
-                            {(it.name || "Untitled").slice(0, 40)}
-                            {it.type ? ` · ${it.type}` : ""}
-                        </option>
-                    ))}
-                </select>
-            </div>
-
-            <div className="row" style={{ gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                <input
-                    placeholder="Gear name"
-                    value={form.name}
-                    onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-                    disabled={!canEdit}
-                    style={{ flex: 2, minWidth: 180 }}
-                />
-                <input
-                    placeholder="Type"
-                    value={form.type}
-                    onChange={(e) => setForm((prev) => ({ ...prev, type: e.target.value }))}
-                    disabled={!canEdit}
-                    style={{ flex: 1, minWidth: 160 }}
-                />
-                <input
-                    placeholder="Description"
-                    value={form.desc}
-                    onChange={(e) => setForm((prev) => ({ ...prev, desc: e.target.value }))}
-                    disabled={!canEdit}
-                    style={{ flex: 3, minWidth: 220 }}
-                />
-                <div className="row" style={{ gap: 8 }}>
-                    <button className="btn" onClick={save} disabled={!canEdit || busySave || !form.name.trim()}>
-                        {busySave ? "…" : currentEntry ? "Update" : "Assign"}
-                    </button>
-                    {hasChanges && (
-                        <button className="btn" onClick={resetForm} disabled={busySave}>
-                            Cancel
-                        </button>
-                    )}
+                <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+                    <span className="pill">Equipped {equippedCount}/{slotOptions.length}</span>
+                    <span className="pill light">Bag {bagCount}</span>
                 </div>
             </div>
 
-            <div className="list" style={{ marginTop: 12 }}>
-                {slotOptions.map((opt) => {
-                    const entry = gearMap[opt.value];
-                    return (
-                        <div key={opt.value} className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                            <div style={{ flex: 1 }}>
-                                <div style={{ fontWeight: 600 }}>{opt.label}</div>
-                                {entry ? (
-                                    <>
-                                        <div className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 4 }}>
-                                            <b>{entry.name}</b>
-                                            {entry.type && <span className="pill">{entry.type}</span>}
-                                        </div>
-                                        {entry.desc && (
-                                            <div style={{ opacity: 0.75, fontSize: 12, marginTop: 4 }}>{entry.desc}</div>
+            <div className="stack" style={{ marginTop: 12, gap: 16 }}>
+                <section className="col" style={{ gap: 12 }}>
+                    <h4>Equipped gear</h4>
+                    <div className="list" style={{ gap: 12 }}>
+                        {slotOptions.map((opt) => {
+                            const currentId = slotAssignments[opt.value] || "";
+                            const draftId = slotDrafts[opt.value] ?? "";
+                            const currentItem = currentId ? bagMap.get(currentId) : null;
+                            const hasDirty = (draftId || "") !== (currentId || "");
+                            return (
+                                <div
+                                    key={opt.value}
+                                    className="row"
+                                    style={{ alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}
+                                >
+                                    <div style={{ flex: 1, minWidth: 220 }}>
+                                        <div style={{ fontWeight: 600 }}>{opt.label}</div>
+                                        {currentItem ? (
+                                            <>
+                                                <div
+                                                    className="row"
+                                                    style={{ gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 4 }}
+                                                >
+                                                    <b>{currentItem.name}</b>
+                                                    {currentItem.type && <span className="pill">{currentItem.type}</span>}
+                                                </div>
+                                                {currentItem.desc && (
+                                                    <div style={{ opacity: 0.75, fontSize: 12, marginTop: 4 }}>
+                                                        {currentItem.desc}
+                                                    </div>
+                                                )}
+                                            </>
+                                        ) : (
+                                            <div style={{ opacity: 0.7, fontSize: 12, marginTop: 4 }}>Empty slot.</div>
                                         )}
-                                    </>
-                                ) : (
-                                    <div style={{ opacity: 0.7, fontSize: 12, marginTop: 4 }}>Empty slot.</div>
-                                )}
-                            </div>
-                            {canEdit && (
-                                <div className="row" style={{ gap: 6 }}>
-                                    <button className="btn" onClick={() => startEdit(opt.value)} disabled={busySave}>
-                                        {entry ? "Edit" : "Assign"}
-                                    </button>
-                                    {entry && (
-                                        <button
-                                            className="btn"
-                                            onClick={() => remove(opt.value)}
-                                            disabled={busySlot === opt.value}
+                                    </div>
+                                    <div className="col" style={{ gap: 6, minWidth: 220 }}>
+                                        <select
+                                            value={draftId}
+                                            onChange={(e) => handleSelectSlot(opt.value, e.target.value)}
+                                            disabled={!canEdit || bag.length === 0 || busySlot === opt.value}
+                                            style={{ minWidth: 180 }}
                                         >
-                                            {busySlot === opt.value ? "…" : "Remove"}
-                                        </button>
-                                    )}
+                                            <option value="">Unequipped</option>
+                                            {bag.map((item) => (
+                                                <option key={item.id} value={item.id}>
+                                                    {item.name || "Unnamed"}
+                                                    {item.type ? ` · ${item.type}` : ""}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <div className="row" style={{ gap: 6 }}>
+                                            <button
+                                                className="btn btn-small"
+                                                onClick={() => applySlot(opt.value)}
+                                                disabled={!canEdit || busySlot === opt.value || !hasDirty}
+                                            >
+                                                {busySlot === opt.value ? "…" : "Apply"}
+                                            </button>
+                                            {currentId && (
+                                                <button
+                                                    className="btn ghost btn-small"
+                                                    onClick={() => clearSlot(opt.value)}
+                                                    disabled={!canEdit || busySlot === opt.value}
+                                                >
+                                                    {busySlot === opt.value ? "…" : "Clear"}
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
+                            );
+                        })}
+                        {slotOptions.length === 0 && (
+                            <div style={{ opacity: 0.7 }}>No gear slots configured for this character.</div>
+                        )}
+                    </div>
+                </section>
+
+                <section className="col" style={{ gap: 12 }}>
+                    <h4>Gear bag</h4>
+                    <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                        <select
+                            value={libraryPick}
+                            onChange={(e) => setLibraryPick(e.target.value)}
+                            disabled={!canEdit || libraryOptions.length === 0 || quickAddBusy}
+                            style={{ minWidth: 220 }}
+                        >
+                            <option value="">Add from library…</option>
+                            {libraryOptions.map((opt) => (
+                                <option key={opt.key} value={opt.key}>
+                                    {opt.label}
+                                </option>
+                            ))}
+                        </select>
+                        <button
+                            className="btn btn-small"
+                            onClick={addFromLibrary}
+                            disabled={!canEdit || !libraryPick || quickAddBusy}
+                        >
+                            {quickAddBusy ? "…" : "Add to bag"}
+                        </button>
+                    </div>
+
+                    <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                        <input
+                            placeholder={bagEditing ? "Edit gear name" : "Custom gear name"}
+                            value={bagForm.name}
+                            onChange={(e) => setBagForm((prev) => ({ ...prev, name: e.target.value }))}
+                            disabled={!canEdit || bagBusy}
+                            style={{ flex: 2, minWidth: 180 }}
+                        />
+                        <input
+                            placeholder="Type"
+                            value={bagForm.type}
+                            onChange={(e) => setBagForm((prev) => ({ ...prev, type: e.target.value }))}
+                            disabled={!canEdit || bagBusy}
+                            style={{ flex: 1, minWidth: 140 }}
+                        />
+                        <textarea
+                            rows={2}
+                            placeholder="Notes"
+                            value={bagForm.desc}
+                            onChange={(e) => setBagForm((prev) => ({ ...prev, desc: e.target.value }))}
+                            disabled={!canEdit || bagBusy}
+                            style={{ flex: 2, minWidth: 220 }}
+                        />
+                        <div className="row" style={{ gap: 6, alignItems: "flex-start" }}>
+                            <button className="btn" onClick={saveBagForm} disabled={!canSubmitBag}>
+                                {bagBusy ? "…" : bagEditing ? "Save gear" : "Add gear"}
+                            </button>
+                            {bagFormDirty && (
+                                <button className="btn ghost" onClick={resetBagForm} disabled={bagBusy}>
+                                    Clear
+                                </button>
                             )}
                         </div>
-                    );
-                })}
+                    </div>
+
+                    <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                        <input
+                            placeholder="Search bag"
+                            value={bagSearch}
+                            onChange={(e) => setBagSearch(e.target.value)}
+                            style={{ flex: 1, minWidth: 200 }}
+                        />
+                        {bagSearch && (
+                            <button
+                                className="btn ghost btn-small"
+                                onClick={() => setBagSearch("")}
+                                disabled={bagBusy}
+                            >
+                                Clear search
+                            </button>
+                        )}
+                    </div>
+
+                    <div className="list" style={{ gap: 12 }}>
+                        {filteredBag.map((item) => {
+                            const equippedSlot = slotOptions.find((opt) => slotAssignments[opt.value] === item.id);
+                            const isRowBusy = bagRowBusy === item.id;
+                            return (
+                                <div
+                                    key={item.id}
+                                    className="row"
+                                    style={{
+                                        alignItems: "flex-start",
+                                        justifyContent: "space-between",
+                                        gap: 12,
+                                        flexWrap: "wrap",
+                                    }}
+                                >
+                                    <div style={{ flex: 1, minWidth: 220 }}>
+                                        <div className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                                            <b>{item.name || "Unnamed gear"}</b>
+                                            {item.type && <span className="pill">{item.type}</span>}
+                                            {equippedSlot && (
+                                                <span className="pill success">Equipped · {equippedSlot.label}</span>
+                                            )}
+                                        </div>
+                                        {item.desc && (
+                                            <div style={{ opacity: 0.75, fontSize: 12, marginTop: 4 }}>{item.desc}</div>
+                                        )}
+                                    </div>
+                                    {canEdit && (
+                                        <div className="col" style={{ gap: 6, minWidth: 200 }}>
+                                            <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+                                                <button
+                                                    className="btn btn-small"
+                                                    onClick={() => quickEquip(item)}
+                                                    disabled={busySlot !== null || isRowBusy}
+                                                >
+                                                    Equip now
+                                                </button>
+                                                <button
+                                                    className="btn ghost btn-small"
+                                                    onClick={() => startBagEdit(item)}
+                                                    disabled={bagBusy || isRowBusy}
+                                                >
+                                                    Edit
+                                                </button>
+                                                <button
+                                                    className="btn danger btn-small"
+                                                    onClick={() => removeBagItem(item)}
+                                                    disabled={isRowBusy}
+                                                >
+                                                    {isRowBusy ? "…" : "Remove"}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                        {filteredBag.length === 0 && (
+                            <div style={{ opacity: 0.7 }}>
+                                {bag.length === 0
+                                    ? "No gear in the bag yet. Add items from the library or create custom gear."
+                                    : "No gear matches your search."}
+                            </div>
+                        )}
+                    </div>
+                </section>
             </div>
         </div>
     );
 }
-
 // ---------- Gear ----------
 function GearTab({ game, me, onUpdate }) {
     const [premade, setPremade] = useState([]);

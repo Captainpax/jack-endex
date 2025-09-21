@@ -373,6 +373,44 @@ p  { margin: 0 0 .75rem; color: var(--text); }
 }
 
 /* Application shell */
+.app-root {
+    display: grid;
+    gap: 16px;
+}
+
+.app-activity {
+    height: 3px;
+    border-radius: 999px;
+    background: var(--border);
+    overflow: hidden;
+    position: relative;
+    opacity: 0;
+    transition: opacity var(--trans-fast);
+}
+
+.app-activity__bar {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, var(--brand-600), var(--brand));
+    transform-origin: left;
+    transform: scaleX(0);
+    transition: transform var(--trans-fast);
+}
+
+.app-activity.is-active {
+    opacity: 1;
+}
+
+.app-activity.is-active .app-activity__bar {
+    transform: scaleX(1);
+    animation: activity-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes activity-pulse {
+    from { opacity: 0.45; }
+    to { opacity: 1; }
+}
+
 .app-shell {
     display: grid;
     grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
@@ -529,6 +567,22 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     display: grid;
     gap: 12px;
     justify-items: end;
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.header-actions .btn {
+    white-space: nowrap;
+}
+
+.hotkey-hint {
+    opacity: 0.75;
 }
 
 .header-pills {
