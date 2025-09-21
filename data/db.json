@@ -4,22 +4,74 @@
       "id": "2dbd5fc6-817d-4904-94c9-ff9de128c87d",
       "username": "CapPax",
       "pass": "4042d8695b02bf2d$57ffd004496417eac8c42c8e24ff4ef98f2cedc744be560bad356cec4e18e605"
+    },
+    {
+      "id": "89e5209b-0f2e-4e6e-9a53-0c6861359f1d",
+      "username": "ItsRainingHP",
+      "pass": "277fcf4743afe420$6a9399ae8f6109c684afd25089c33b66b2a9809364deae7dd4d459b1875200f6"
+    },
+    {
+      "id": "62ec96f2-f4af-4cf7-9ecf-7aca6eea0baf",
+      "username": "CaptainPax",
+      "pass": "5d7a6031e6dfc0e2$0522500f0605af0f4ec99fad7911644788c338394f2402e4db747f5ccb85cfdc"
     }
   ],
   "games": [
     {
-      "players": []
-    },
-    {
-      "id": "e83df7ab-71e7-4223-b50d-ea8011a6ad84",
-      "name": "Best DnD Game Ever",
+      "id": "d2161b75-3f81-4361-a490-ab9413bf5140",
+      "name": "Test Campaign",
       "dmId": "2dbd5fc6-817d-4904-94c9-ff9de128c87d",
       "players": [
         {
           "userId": "2dbd5fc6-817d-4904-94c9-ff9de128c87d",
           "role": "dm",
           "character": null,
-          "inventory": []
+          "inventory": [],
+          "gear": {
+            "weapon": null,
+            "armor": null,
+            "accessory": null
+          }
+        },
+        {
+          "userId": "62ec96f2-f4af-4cf7-9ecf-7aca6eea0baf",
+          "role": "player",
+          "character": {
+            "name": "Bob",
+            "profile": {
+              "class": "God"
+            },
+            "resources": {
+              "level": 99,
+              "exp": 99000,
+              "hp": 9999,
+              "maxHP": 99999,
+              "useTP": true,
+              "tp": 999
+            },
+            "stats": {
+              "STR": 99,
+              "DEX": 99,
+              "CON": 99,
+              "INT": 99,
+              "WIS": 99,
+              "CHA": 99
+            }
+          },
+          "inventory": [
+            {
+              "id": "318f1dea-3c9f-43d6-929c-94251fca74f7",
+              "name": "Bead",
+              "type": "Restorative",
+              "desc": "Restores 100% HP",
+              "amount": 5
+            }
+          ],
+          "gear": {
+            "weapon": null,
+            "armor": null,
+            "accessory": null
+          }
         }
       ],
       "items": {
@@ -34,12 +86,20 @@
         "used": 0
       },
       "permissions": {
-        "canEditStats": false,
-        "canEditItems": false,
-        "canEditGear": false,
-        "canEditDemons": false
+        "canEditStats": true,
+        "canEditItems": true,
+        "canEditGear": true,
+        "canEditDemons": true
       },
-      "invites": []
+      "invites": [
+        {
+          "code": "JX2JUN",
+          "createdBy": "2dbd5fc6-817d-4904-94c9-ff9de128c87d",
+          "createdAt": "2025-09-21T04:33:28.542Z",
+          "uses": 2,
+          "lastUsedAt": "2025-09-21T04:46:26.661Z"
+        }
+      ]
     }
   ]
 }
