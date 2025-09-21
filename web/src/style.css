@@ -561,6 +561,7 @@ p  { margin: 0 0 .75rem; color: var(--text); }
 
 .text-muted { color: var(--muted); }
 .text-small { font-size: .85rem; line-height: 1.4; }
+.text-tiny { font-size: .75rem; line-height: 1.2; color: var(--muted); }
 .text-error { color: var(--danger); }
 
 .app-main__header-meta {
@@ -633,6 +634,44 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     font-weight: 600;
 }
 
+.story-logs__persona-statuses {
+    display: grid;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.story-logs__persona-status {
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    padding: 8px 10px;
+    font-size: 0.85rem;
+}
+
+.story-logs__persona-status--pending {
+    border-color: color-mix(in srgb, var(--brand) 40%, var(--border));
+    background: color-mix(in srgb, var(--brand) 12%, transparent);
+}
+
+.story-logs__persona-status--approved {
+    border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+    background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+
+.story-logs__persona-status--denied {
+    border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.story-logs__persona-status--expired {
+    border-color: color-mix(in srgb, var(--muted) 35%, var(--border));
+    background: color-mix(in srgb, var(--muted) 10%, transparent);
+}
+
+.story-logs__persona-status-text {
+    display: block;
+}
+
 .story-logs__alert {
     padding: 12px 14px;
     border-radius: var(--radius-sm);
@@ -694,6 +733,14 @@ p  { margin: 0 0 .75rem; color: var(--text); }
 
 .story-logs__message-header {
     display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    justify-content: space-between;
+    flex-wrap: wrap;
+}
+
+.story-logs__message-meta {
+    display: flex;
     gap: 8px;
     align-items: baseline;
     flex-wrap: wrap;
@@ -712,6 +759,92 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     margin: 0;
     white-space: pre-wrap;
     word-break: break-word;
+}
+
+.story-logs__markdown {
+    display: grid;
+    gap: 8px;
+    font-size: 0.95rem;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+.story-logs__markdown p,
+.story-logs__markdown ul,
+.story-logs__markdown ol,
+.story-logs__markdown blockquote {
+    margin: 0;
+}
+
+.story-logs__markdown ul,
+.story-logs__markdown ol {
+    padding-left: 20px;
+    display: grid;
+    gap: 4px;
+}
+
+.story-logs__markdown pre {
+    margin: 0;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+    font-size: 0.85rem;
+    overflow-x: auto;
+}
+
+.story-logs__markdown code {
+    background: color-mix(in srgb, var(--surface-2) 85%, transparent);
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+}
+
+.story-logs__markdown pre code {
+    background: none;
+    padding: 0;
+}
+
+.story-logs__markdown blockquote {
+    border-left: 3px solid color-mix(in srgb, var(--border) 70%, transparent);
+    padding-left: 12px;
+    color: var(--muted);
+    display: grid;
+    gap: 6px;
+}
+
+.story-logs__markdown a {
+    color: var(--brand);
+}
+
+.story-logs__markdown del {
+    color: var(--muted);
+}
+
+.story-logs__delete {
+    border: none;
+    background: none;
+    color: var(--muted);
+    font-size: 0.75rem;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: color var(--trans), background var(--trans);
+}
+
+.story-logs__delete:hover {
+    color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.story-logs__delete:focus {
+    outline: none;
+    box-shadow: var(--focus);
+}
+
+.story-logs__delete:disabled {
+    opacity: 0.6;
+    cursor: default;
 }
 
 .story-logs__attachments {
@@ -1149,6 +1282,220 @@ label {
 .wizard-content { padding: 24px; overflow-y: auto; max-height: 60vh; }
 .wizard-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .wizard-footer__actions { display: flex; gap: 8px; }
+
+.persona-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(12, 14, 20, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    pointer-events: none;
+    z-index: 30;
+}
+
+.persona-modal {
+    pointer-events: auto;
+    background: var(--surface);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-md);
+    width: min(520px, 92vw);
+    display: grid;
+    gap: 16px;
+    padding: 20px 22px;
+}
+
+.persona-modal__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.persona-modal__body {
+    display: grid;
+    gap: 12px;
+}
+
+.persona-modal__actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.persona-modal__timer {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--muted);
+}
+
+.trade-overlay {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    gap: 16px;
+    align-content: center;
+    justify-items: center;
+    padding: 24px;
+    pointer-events: none;
+    z-index: 24;
+}
+
+.trade-window {
+    pointer-events: auto;
+    background: var(--surface);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-md);
+    width: min(760px, 96vw);
+    display: grid;
+    gap: 16px;
+    padding: 20px 22px;
+}
+
+.trade-window__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.trade-window__timer {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--muted);
+}
+
+.trade-window__note {
+    margin: 4px 0 0;
+    font-style: italic;
+    color: var(--muted);
+}
+
+.trade-window__columns {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.trade-window__column {
+    display: grid;
+    gap: 12px;
+}
+
+.trade-window__column h4 {
+    margin: 0;
+}
+
+.trade-offer {
+    display: grid;
+    gap: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 12px;
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+}
+
+.trade-offer__row {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    justify-content: space-between;
+    flex-wrap: wrap;
+}
+
+.trade-offer__info {
+    display: grid;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+}
+
+.trade-offer__name {
+    font-weight: 600;
+}
+
+.trade-offer__meta {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+    font-size: 0.75rem;
+    color: var(--muted);
+}
+
+.trade-offer__desc {
+    margin: 0;
+    color: var(--muted);
+}
+
+.trade-offer__controls {
+    display: grid;
+    gap: 6px;
+    justify-items: flex-start;
+}
+
+.trade-offer__controls input {
+    width: 80px;
+}
+
+.trade-offer__picker {
+    display: grid;
+    gap: 6px;
+}
+
+.trade-offer__footer {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.trade-offer__empty {
+    margin: 0;
+    font-size: 0.85rem;
+}
+
+.trade-window__warning {
+    margin: 0;
+    color: var(--warning);
+}
+
+.trade-window__footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.trade-window__status {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.trade-window__actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.trade-window__actions--invite {
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.trade-window__body {
+    display: grid;
+    gap: 12px;
+}
+
+.trade-window__message {
+    margin: 0;
+}
 .wizard-stack { display: grid; gap: 16px; }
 .wizard-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
 .wizard-grid--stretch { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }

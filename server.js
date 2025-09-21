@@ -1,7 +1,9 @@
 /* eslint-env node */
 /* global process */
+import http from 'http';
 import express from 'express';
 import session from 'express-session';
+import { WebSocketServer } from 'ws';
 import { v4 as uuid } from 'uuid';
 import path from 'path';
 import fs from 'fs/promises';
@@ -14,6 +16,14 @@ import { createDiscordWatcher } from './discordWatcher.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const loadedEnvKeys = new Set();
 const storyWatchers = new Map();
+const storySubscribers = new Map();
+const userSockets = new Map();
+const pendingPersonaRequests = new Map();
+const pendingTrades = new Map();
+const storyBroadcastQueue = new Map();
+const DISCORD_API_BASE = 'https://discord.com/api/v10';
+const PERSONA_REQUEST_TIMEOUT_MS = 120_000;
+const TRADE_TIMEOUT_MS = 180_000;
 
 /**
  * Read the bot token configured for Discord synchronization.
@@ -343,25 +353,51 @@ async function sendWebhookMessage(url, payload) {
     }
 }
 
+async function deleteDiscordMessage(token, channelId, messageId) {
+    if (!token) throw new Error('missing_token');
+    if (!channelId || !messageId) throw new Error('invalid_target');
+    const url = `${DISCORD_API_BASE}/channels/${channelId}/messages/${messageId}`;
+    const res = await fetch(url, {
+        method: 'DELETE',
+        headers: {
+            Authorization: `Bot ${token}`,
+            'User-Agent': 'jack-endex/server (+https://example.com)',
+        },
+    });
+    if (res.status === 204) return;
+    if (res.status === 404) throw new Error('not_found');
+    if (res.status === 403) throw new Error('forbidden');
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`discord_delete_error_${res.status}:${text.slice(0, 120)}`);
+    }
+}
+
 /**
  * Resolve a persona selection into a Discord username/avatar payload.
  *
  * @param {{ persona?: string, targetUserId?: string }} selection
  * @param {{ db: any, game: ReturnType<typeof ensureGameShape>, actorId: string }} ctx
  */
-function resolveStoryPersona(selection, { db, game, actorId }) {
+function describePlayerLabel(player, user) {
+    if (!player) return user?.username || 'Player';
+    const name = player.character?.name;
+    if (typeof name === 'string' && name.trim()) return name.trim();
+    if (player?.userId) {
+        return user?.username || `Player ${player.userId.slice(0, 6)}`;
+    }
+    return user?.username || 'Player';
+}
+
+function resolveStoryPersona(selection, { db, game, actorId }, options = {}) {
     const story = ensureStoryConfig(game);
     const persona = typeof selection?.persona === 'string' ? selection.persona : 'self';
     const actorIsDM = isDM(game, actorId);
     const actorPlayer = findPlayer(game, actorId);
     const actorUser = findUser(db, actorId);
+    const overrideTargetId = options?.overrideTargetId ? parseUUID(options.overrideTargetId) : null;
 
-    const describePlayer = (player, user) => {
-        if (!player) return user?.username || 'Player';
-        const name = player.character?.name;
-        if (typeof name === 'string' && name.trim()) return name.trim();
-        return user?.username || `Player ${player.userId?.slice(0, 6) || ''}`;
-    };
+    const describePlayer = (player, user) => describePlayerLabel(player, user);
 
     if (persona === 'bot') {
         if (!actorIsDM) throw new Error('persona_forbidden');
@@ -391,6 +427,13 @@ function resolveStoryPersona(selection, { db, game, actorId }) {
     }
 
     if (persona === 'player') {
+        if (overrideTargetId) {
+            const targetPlayer = findPlayer(game, overrideTargetId);
+            if (!targetPlayer) throw new Error('invalid_target');
+            const targetUser = findUser(db, overrideTargetId);
+            return { username: describePlayer(targetPlayer, targetUser) };
+        }
+
         if (selection?.targetUserId) {
             if (!actorIsDM) throw new Error('persona_forbidden');
             const targetId = parseUUID(selection.targetUserId);
@@ -456,6 +499,13 @@ function presentStoryConfig(story, { includeSecrets = false } = {}) {
  */
 function removeStoryWatcher(gameId) {
     const existing = storyWatchers.get(gameId);
+    if (existing?.unsubscribe) {
+        try {
+            existing.unsubscribe();
+        } catch {
+            // ignore listener cleanup errors
+        }
+    }
     if (existing && existing.watcher && typeof existing.watcher.stop === 'function') {
         try {
             existing.watcher.stop();
@@ -494,8 +544,11 @@ function getOrCreateStoryWatcher(game) {
         pollIntervalMs: story.pollIntervalMs,
     });
     if (watcher.enabled) {
+        const unsubscribe = watcher.subscribe(() => {
+            queueStoryBroadcast(game.id);
+        });
         watcher.start();
-        storyWatchers.set(game.id, { watcher, signature });
+        storyWatchers.set(game.id, { watcher, signature, unsubscribe });
         return watcher;
     }
     return null;
@@ -564,6 +617,815 @@ function getStorySnapshot(game) {
         channel: status.channel || null,
         messages: watcher.getMessages(),
     };
+}
+
+// --- Real-time helpers ---
+
+function getOrCreateSet(map, key) {
+    let set = map.get(key);
+    if (!set) {
+        set = new Set();
+        map.set(key, set);
+    }
+    return set;
+}
+
+function sendJson(ws, payload) {
+    if (!ws || ws.readyState !== ws.OPEN) return;
+    try {
+        ws.send(JSON.stringify(payload));
+    } catch (err) {
+        console.warn('Failed to send websocket payload', err);
+    }
+}
+
+async function buildStoryPayload(gameId) {
+    const db = await readDB();
+    const game = getGame(db, gameId);
+    if (!game) return null;
+    const story = ensureStoryConfig(game);
+    const snapshot = getStorySnapshot(game);
+    return {
+        ...snapshot,
+        config: presentStoryConfig(story, { includeSecrets: false }),
+        fetchedAt: new Date().toISOString(),
+    };
+}
+
+async function pushStoryUpdate(gameId) {
+    const sockets = storySubscribers.get(gameId);
+    if (!sockets || sockets.size === 0) return;
+    const payload = await buildStoryPayload(gameId);
+    if (!payload) return;
+    const message = { type: 'story:update', gameId, snapshot: payload };
+    for (const ws of sockets) {
+        sendJson(ws, message);
+    }
+}
+
+function queueStoryBroadcast(gameId, immediate = false) {
+    if (!storySubscribers.has(gameId)) return;
+    if (storyBroadcastQueue.has(gameId)) return;
+    const timer = setTimeout(async () => {
+        storyBroadcastQueue.delete(gameId);
+        await pushStoryUpdate(gameId);
+    }, immediate ? 0 : 150);
+    storyBroadcastQueue.set(gameId, timer);
+}
+
+async function deliverStorySnapshot(ws, gameId) {
+    const payload = await buildStoryPayload(gameId);
+    if (!payload) return;
+    sendJson(ws, { type: 'story:update', gameId, snapshot: payload });
+}
+
+function addSocketForUser(userId, ws) {
+    if (!userId) return;
+    const set = getOrCreateSet(userSockets, userId);
+    set.add(ws);
+}
+
+function removeSocketForUser(userId, ws) {
+    if (!userId) return;
+    const set = userSockets.get(userId);
+    if (!set) return;
+    set.delete(ws);
+    if (set.size === 0) {
+        userSockets.delete(userId);
+    }
+}
+
+function subscribeStoryChannel(ws, gameId) {
+    if (!ws.storySubscriptions) ws.storySubscriptions = new Set();
+    if (!gameId || ws.storySubscriptions.has(gameId)) return;
+    ws.storySubscriptions.add(gameId);
+    const set = getOrCreateSet(storySubscribers, gameId);
+    set.add(ws);
+    queueStoryBroadcast(gameId, true);
+    deliverStorySnapshot(ws, gameId).catch((err) => {
+        console.warn('Failed to send initial story snapshot', err);
+    });
+}
+
+function subscribeTradeChannel(ws, gameId) {
+    if (!gameId) return;
+    if (!ws.tradeSubscriptions) ws.tradeSubscriptions = new Set();
+    ws.tradeSubscriptions.add(gameId);
+}
+
+function unsubscribeTradeChannel(ws, gameId) {
+    if (!ws.tradeSubscriptions || !gameId) return;
+    ws.tradeSubscriptions.delete(gameId);
+}
+
+function unsubscribeStoryChannel(ws, gameId) {
+    if (!ws.storySubscriptions || !gameId) return;
+    ws.storySubscriptions.delete(gameId);
+    const set = storySubscribers.get(gameId);
+    if (set) {
+        set.delete(ws);
+        if (set.size === 0) storySubscribers.delete(gameId);
+    }
+}
+
+function cleanupSocket(ws) {
+    if (!ws) return;
+    if (ws.storySubscriptions) {
+        for (const gameId of ws.storySubscriptions) {
+            unsubscribeStoryChannel(ws, gameId);
+        }
+    }
+    if (ws.tradeSubscriptions) {
+        ws.tradeSubscriptions.clear();
+    }
+    removeSocketForUser(ws.userId, ws);
+}
+
+function sendToUser(userId, payload, predicate) {
+    const sockets = userSockets.get(userId);
+    if (!sockets) return;
+    for (const socket of sockets) {
+        if (socket.readyState !== socket.OPEN) continue;
+        if (typeof predicate === 'function' && !predicate(socket)) continue;
+        sendJson(socket, payload);
+    }
+}
+
+async function loadGameForUser(gameId, userId) {
+    const db = await readDB();
+    const game = getGame(db, gameId);
+    if (!game) return { error: 'not_found' };
+    if (!isMember(game, userId)) return { error: 'forbidden' };
+    return { db, game };
+}
+
+// --- Story impersonation workflow ---
+
+function resolvePersonaRequestStatus(request, status, extra = {}) {
+    if (!request) return;
+    if (request.timeout) {
+        clearTimeout(request.timeout);
+    }
+    pendingPersonaRequests.delete(request.id);
+    const payload = {
+        type: 'story:impersonation_status',
+        requestId: request.id,
+        status,
+        gameId: request.gameId,
+        targetUserId: request.targetUserId,
+        scribeId: request.scribeId,
+        content: request.content,
+        expiresAt: request.expiresAt,
+        createdAt: request.createdAt,
+        targetName: request.targetName,
+        scribeName: request.scribeName,
+    };
+    if (extra.reason) payload.reason = extra.reason;
+    if (extra.nonce) payload.nonce = extra.nonce;
+    if (extra.error) payload.error = extra.error;
+
+    sendToUser(
+        request.scribeId,
+        payload,
+        (socket) => socket.storySubscriptions?.has(request.gameId)
+    );
+    sendToUser(
+        request.targetUserId,
+        payload,
+        (socket) => socket.storySubscriptions?.has(request.gameId)
+    );
+}
+
+function expirePersonaRequest(requestId) {
+    const request = pendingPersonaRequests.get(requestId);
+    if (!request) return;
+    resolvePersonaRequestStatus(request, 'expired', { reason: 'Request timed out.' });
+}
+
+async function handlePersonaRequestMessage(ws, payload) {
+    const nonce = typeof payload?.nonce === 'string' ? payload.nonce : null;
+    const gameId = parseUUID(payload?.gameId);
+    const targetUserId = parseUUID(payload?.targetUserId);
+    if (!gameId || !targetUserId) {
+        sendJson(ws, {
+            type: 'story:impersonation_status',
+            status: 'error',
+            nonce,
+            error: 'invalid_request',
+        });
+        return;
+    }
+
+    const context = await loadGameForUser(gameId, ws.userId);
+    const { game, error } = context;
+    const db = context.db;
+    if (error) {
+        sendJson(ws, {
+            type: 'story:impersonation_status',
+            status: 'error',
+            nonce,
+            error,
+        });
+        return;
+    }
+
+    const story = ensureStoryConfig(game);
+    if (!story.webhookUrl) {
+        sendJson(ws, {
+            type: 'story:impersonation_status',
+            status: 'error',
+            nonce,
+            error: 'not_configured',
+        });
+        return;
+    }
+    if (!story.scribeIds.includes(ws.userId)) {
+        sendJson(ws, {
+            type: 'story:impersonation_status',
+            status: 'error',
+            nonce,
+            error: 'forbidden',
+        });
+        return;
+    }
+
+    const trimmed = sanitizeStoryContent(payload?.content);
+    if (!trimmed) {
+        sendJson(ws, {
+            type: 'story:impersonation_status',
+            status: 'error',
+            nonce,
+            error: 'empty_content',
+        });
+        return;
+    }
+
+    if (targetUserId === ws.userId) {
+        sendJson(ws, {
+            type: 'story:impersonation_status',
+            status: 'error',
+            nonce,
+            error: 'invalid_target',
+        });
+        return;
+    }
+
+    const targetPlayer = findPlayer(game, targetUserId);
+    if (!targetPlayer || (targetPlayer.role || '').toLowerCase() === 'dm') {
+        sendJson(ws, {
+            type: 'story:impersonation_status',
+            status: 'error',
+            nonce,
+            error: 'invalid_target',
+        });
+        return;
+    }
+
+    const targetUser = findUser(db, targetUserId);
+    const scribeUser = findUser(db, ws.userId);
+    const scribePlayer = findPlayer(game, ws.userId);
+    const scribeName = scribePlayer
+        ? describePlayerLabel(scribePlayer, scribeUser)
+        : scribeUser?.username || 'Scribe';
+    const targetName = describePlayerLabel(targetPlayer, targetUser);
+    const createdAt = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + PERSONA_REQUEST_TIMEOUT_MS).toISOString();
+    const requestId = uuid();
+    const timeout = setTimeout(() => expirePersonaRequest(requestId), PERSONA_REQUEST_TIMEOUT_MS);
+
+    const request = {
+        id: requestId,
+        gameId: game.id,
+        scribeId: ws.userId,
+        targetUserId,
+        content: trimmed,
+        createdAt,
+        expiresAt,
+        timeout,
+        scribeName,
+        targetName,
+        gameName: game.name,
+    };
+
+    pendingPersonaRequests.set(requestId, request);
+
+    resolvePersonaRequestStatus(request, 'pending', { nonce });
+
+    sendToUser(
+        targetUserId,
+        {
+            type: 'story:impersonation_prompt',
+            request: {
+                id: request.id,
+                gameId: request.gameId,
+                scribeId: request.scribeId,
+                scribeName,
+                content: trimmed,
+                createdAt,
+                expiresAt,
+                gameName: game.name,
+                targetName,
+            },
+        },
+        (socket) => socket.storySubscriptions?.has(game.id)
+    );
+}
+
+async function handlePersonaResponseMessage(ws, payload) {
+    const requestId = typeof payload?.requestId === 'string' ? payload.requestId : null;
+    if (!requestId) return;
+    const request = pendingPersonaRequests.get(requestId);
+    if (!request) {
+        sendJson(ws, {
+            type: 'story:impersonation_status',
+            requestId,
+            status: 'error',
+            error: 'not_found',
+        });
+        return;
+    }
+    if (request.targetUserId !== ws.userId) {
+        sendJson(ws, {
+            type: 'story:impersonation_status',
+            requestId,
+            status: 'error',
+            error: 'forbidden',
+        });
+        return;
+    }
+
+    const approve = !!payload?.approve;
+
+    const { db, game, error } = await loadGameForUser(request.gameId, ws.userId);
+    if (error) {
+        resolvePersonaRequestStatus(request, 'error', { reason: error });
+        return;
+    }
+
+    if (!approve) {
+        resolvePersonaRequestStatus(request, 'denied', { reason: 'Request denied.' });
+        return;
+    }
+
+    const story = ensureStoryConfig(game);
+    if (!story.webhookUrl) {
+        resolvePersonaRequestStatus(request, 'error', { reason: 'Webhook not configured.' });
+        return;
+    }
+
+    let persona;
+    try {
+        persona = resolveStoryPersona(
+            { persona: 'player', targetUserId: request.targetUserId },
+            { db, game, actorId: request.scribeId },
+            { overrideTargetId: request.targetUserId }
+        );
+    } catch (err) {
+        resolvePersonaRequestStatus(request, 'error', { reason: err?.message || 'persona_error' });
+        return;
+    }
+
+    try {
+        await sendWebhookMessage(story.webhookUrl, {
+            content: request.content,
+            username: persona.username,
+            avatar_url: persona.avatarUrl || undefined,
+        });
+    } catch (err) {
+        resolvePersonaRequestStatus(request, 'error', {
+            reason: err instanceof Error ? err.message : 'webhook_error',
+        });
+        return;
+    }
+
+    const watcherInfo = storyWatchers.get(game.id);
+    if (watcherInfo?.watcher?.forceSync) {
+        try {
+            await watcherInfo.watcher.forceSync();
+        } catch (err) {
+            console.warn('Failed to force sync story watcher', err);
+        }
+    }
+    queueStoryBroadcast(game.id, true);
+
+    resolvePersonaRequestStatus(request, 'approved');
+}
+
+// --- Trade workflow ---
+
+function sanitizeTradeOffer(list) {
+    if (!Array.isArray(list)) return [];
+    const map = new Map();
+    for (const entry of list) {
+        if (!entry) continue;
+        const itemId = typeof entry.itemId === 'string' ? entry.itemId.trim() : '';
+        if (!itemId) continue;
+        const quantityRaw = Number(entry.quantity);
+        const quantity = Number.isFinite(quantityRaw)
+            ? Math.max(1, Math.min(9999, Math.round(quantityRaw)))
+            : 1;
+        map.set(itemId, (map.get(itemId) || 0) + quantity);
+        if (map.size >= 20) break;
+    }
+    return Array.from(map.entries()).map(([itemId, quantity]) => ({ itemId, quantity }));
+}
+
+function buildTradeSnapshot(trade, game, db) {
+    const initiatorPlayer = findPlayer(game, trade.initiatorId);
+    const initiatorUser = findUser(db, trade.initiatorId);
+    const partnerPlayer = findPlayer(game, trade.partnerId);
+    const partnerUser = findUser(db, trade.partnerId);
+
+    const mapOffers = (player, offers) => {
+        if (!player) return [];
+        const inventory = ensureInventoryList(player);
+        const index = new Map();
+        for (const item of inventory) {
+            if (item?.id) index.set(item.id, item);
+        }
+        return offers.map((entry) => {
+            const source = index.get(entry.itemId);
+            return {
+                itemId: entry.itemId,
+                quantity: entry.quantity,
+                name: source?.name || 'Item',
+                type: source?.type || '',
+                desc: source?.desc || '',
+            };
+        });
+    };
+
+    return {
+        id: trade.id,
+        gameId: trade.gameId,
+        initiatorId: trade.initiatorId,
+        partnerId: trade.partnerId,
+        status: trade.status,
+        createdAt: trade.createdAt,
+        expiresAt: trade.expiresAt,
+        note: trade.note || null,
+        participants: {
+            [trade.initiatorId]: {
+                userId: trade.initiatorId,
+                name: describePlayerLabel(initiatorPlayer, initiatorUser),
+            },
+            [trade.partnerId]: {
+                userId: trade.partnerId,
+                name: describePlayerLabel(partnerPlayer, partnerUser),
+            },
+        },
+        offers: {
+            [trade.initiatorId]: mapOffers(initiatorPlayer, trade.offers[trade.initiatorId] || []),
+            [trade.partnerId]: mapOffers(partnerPlayer, trade.offers[trade.partnerId] || []),
+        },
+        confirmations: { ...trade.confirmations },
+    };
+}
+
+function refreshTradeTimeout(trade) {
+    if (trade.timeout) {
+        clearTimeout(trade.timeout);
+    }
+    trade.expiresAt = new Date(Date.now() + TRADE_TIMEOUT_MS).toISOString();
+    trade.timeout = setTimeout(() => {
+        cancelTrade(trade, 'timeout').catch((err) => console.warn('trade timeout cancel failed', err));
+    }, TRADE_TIMEOUT_MS);
+}
+
+async function sendTradeMessage(trade, type, extra = {}) {
+    const db = await readDB();
+    const game = getGame(db, trade.gameId);
+    if (!game) return;
+    const snapshot = buildTradeSnapshot(trade, game, db);
+    const payload = { type, trade: snapshot, ...extra };
+    const filter = (socket) => socket.tradeSubscriptions?.has(trade.gameId);
+    sendToUser(trade.initiatorId, payload, filter);
+    sendToUser(trade.partnerId, payload, filter);
+}
+
+async function cancelTrade(trade, reason = 'cancelled') {
+    if (!trade) return;
+    if (trade.timeout) clearTimeout(trade.timeout);
+    trade.status = 'cancelled';
+    pendingTrades.delete(trade.id);
+    await sendTradeMessage(trade, 'trade:cancelled', { reason });
+}
+
+async function finalizeTrade(trade) {
+    const db = await readDB();
+    const game = getGame(db, trade.gameId);
+    if (!game) {
+        await cancelTrade(trade, 'game_missing');
+        return;
+    }
+    const giver = findPlayer(game, trade.initiatorId);
+    const receiver = findPlayer(game, trade.partnerId);
+    if (!giver || !receiver) {
+        await cancelTrade(trade, 'player_missing');
+        return;
+    }
+
+    const prepareEntries = (player, offers) => {
+        const inventory = ensureInventoryList(player);
+        const index = new Map();
+        for (const item of inventory) {
+            if (item?.id) index.set(item.id, item);
+        }
+        const prepared = [];
+        for (const offer of offers) {
+            const source = index.get(offer.itemId);
+            if (!source) {
+                return { error: 'missing_item', itemId: offer.itemId };
+            }
+            const amountRaw = Number(source.amount);
+            const available = Number.isFinite(amountRaw) && amountRaw > 0 ? amountRaw : 1;
+            if (offer.quantity > available) {
+                return { error: 'insufficient_quantity', itemId: offer.itemId };
+            }
+            prepared.push({ item: source, quantity: Math.max(1, Math.min(offer.quantity, available)) });
+        }
+        return { entries: prepared };
+    };
+
+    const giverEntries = prepareEntries(giver, trade.offers[trade.initiatorId] || []);
+    if (giverEntries.error) {
+        await cancelTrade(trade, giverEntries.error);
+        return;
+    }
+    const receiverEntries = prepareEntries(receiver, trade.offers[trade.partnerId] || []);
+    if (receiverEntries.error) {
+        await cancelTrade(trade, receiverEntries.error);
+        return;
+    }
+
+    const transfer = (fromPlayer, toPlayer, entries) => {
+        const fromInventory = ensureInventoryList(fromPlayer);
+        const toInventory = ensureInventoryList(toPlayer);
+        for (const entry of entries) {
+            const idx = fromInventory.findIndex((it) => it && it.id === entry.item.id);
+            if (idx === -1) continue;
+            const source = fromInventory[idx];
+            const qty = entry.quantity;
+            const amountRaw = Number(source.amount);
+            const available = Number.isFinite(amountRaw) && amountRaw > 0 ? amountRaw : 1;
+            if (available > qty) {
+                source.amount = available - qty;
+                const clone = {
+                    id: uuid(),
+                    name: source.name,
+                    type: source.type,
+                    desc: source.desc,
+                    amount: qty,
+                };
+                toInventory.push(clone);
+            } else {
+                const removed = fromInventory.splice(idx, 1)[0];
+                const clone = {
+                    id: uuid(),
+                    name: removed.name,
+                    type: removed.type,
+                    desc: removed.desc,
+                };
+                if (available > 1) clone.amount = available;
+                toInventory.push(clone);
+            }
+        }
+    };
+
+    transfer(giver, receiver, giverEntries.entries);
+    transfer(receiver, giver, receiverEntries.entries);
+
+    saveGame(db, game);
+    await writeDB(db);
+
+    if (trade.timeout) clearTimeout(trade.timeout);
+    trade.status = 'completed';
+    pendingTrades.delete(trade.id);
+
+    await sendTradeMessage(trade, 'trade:completed');
+}
+
+async function handleTradeStart(ws, payload) {
+    const gameId = parseUUID(payload?.gameId);
+    const partnerId = parseUUID(payload?.partnerId);
+    if (!gameId || !partnerId || partnerId === ws.userId) {
+        sendJson(ws, { type: 'trade:error', error: 'invalid_request' });
+        return;
+    }
+    const { game, error } = await loadGameForUser(gameId, ws.userId);
+    if (error) {
+        sendJson(ws, { type: 'trade:error', error });
+        return;
+    }
+    const actorPlayer = findPlayer(game, ws.userId);
+    const partnerPlayer = findPlayer(game, partnerId);
+    if (!actorPlayer || (actorPlayer.role || '').toLowerCase() === 'dm') {
+        sendJson(ws, { type: 'trade:error', error: 'initiator_not_player' });
+        return;
+    }
+    if (!partnerPlayer || (partnerPlayer.role || '').toLowerCase() === 'dm') {
+        sendJson(ws, { type: 'trade:error', error: 'partner_not_player' });
+        return;
+    }
+
+    const note = typeof payload?.note === 'string' ? payload.note.slice(0, 200) : '';
+    const tradeId = uuid();
+    const trade = {
+        id: tradeId,
+        gameId: game.id,
+        initiatorId: ws.userId,
+        partnerId,
+        status: 'awaiting-partner',
+        offers: {
+            [ws.userId]: [],
+            [partnerId]: [],
+        },
+        confirmations: {
+            [ws.userId]: false,
+            [partnerId]: false,
+        },
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + TRADE_TIMEOUT_MS).toISOString(),
+        note,
+    };
+    trade.timeout = setTimeout(() => {
+        cancelTrade(trade, 'timeout').catch((err) => console.warn('trade timeout cancel failed', err));
+    }, TRADE_TIMEOUT_MS);
+
+    pendingTrades.set(tradeId, trade);
+
+    refreshTradeTimeout(trade);
+    await sendTradeMessage(trade, 'trade:invite', { initiatedBy: ws.userId });
+}
+
+async function handleTradeRespond(ws, payload) {
+    const tradeId = typeof payload?.tradeId === 'string' ? payload.tradeId : null;
+    if (!tradeId) return;
+    const trade = pendingTrades.get(tradeId);
+    if (!trade) {
+        sendJson(ws, { type: 'trade:error', error: 'not_found', tradeId });
+        return;
+    }
+    if (trade.partnerId !== ws.userId) {
+        sendJson(ws, { type: 'trade:error', error: 'forbidden', tradeId });
+        return;
+    }
+    if (trade.status !== 'awaiting-partner') {
+        return;
+    }
+    const accept = !!payload?.accept;
+    if (!accept) {
+        await cancelTrade(trade, 'declined');
+        return;
+    }
+    trade.status = 'active';
+    trade.confirmations[trade.initiatorId] = false;
+    trade.confirmations[trade.partnerId] = false;
+    refreshTradeTimeout(trade);
+    await sendTradeMessage(trade, 'trade:active');
+}
+
+async function handleTradeUpdate(ws, payload) {
+    const tradeId = typeof payload?.tradeId === 'string' ? payload.tradeId : null;
+    if (!tradeId) return;
+    const trade = pendingTrades.get(tradeId);
+    if (!trade) {
+        sendJson(ws, { type: 'trade:error', error: 'not_found', tradeId });
+        return;
+    }
+    if (trade.status !== 'active') return;
+    if (ws.userId !== trade.initiatorId && ws.userId !== trade.partnerId) {
+        sendJson(ws, { type: 'trade:error', error: 'forbidden', tradeId });
+        return;
+    }
+
+    const sanitized = sanitizeTradeOffer(payload?.items);
+    trade.offers[ws.userId] = sanitized;
+    trade.confirmations[trade.initiatorId] = false;
+    trade.confirmations[trade.partnerId] = false;
+    refreshTradeTimeout(trade);
+    await sendTradeMessage(trade, 'trade:update');
+}
+
+async function handleTradeConfirm(ws, payload) {
+    const tradeId = typeof payload?.tradeId === 'string' ? payload.tradeId : null;
+    if (!tradeId) return;
+    const trade = pendingTrades.get(tradeId);
+    if (!trade || trade.status !== 'active') return;
+    if (ws.userId !== trade.initiatorId && ws.userId !== trade.partnerId) return;
+    trade.confirmations[ws.userId] = true;
+    refreshTradeTimeout(trade);
+    await sendTradeMessage(trade, 'trade:update');
+    if (trade.confirmations[trade.initiatorId] && trade.confirmations[trade.partnerId]) {
+        await finalizeTrade(trade);
+    }
+}
+
+async function handleTradeUnconfirm(ws, payload) {
+    const tradeId = typeof payload?.tradeId === 'string' ? payload.tradeId : null;
+    if (!tradeId) return;
+    const trade = pendingTrades.get(tradeId);
+    if (!trade || trade.status !== 'active') return;
+    if (ws.userId !== trade.initiatorId && ws.userId !== trade.partnerId) return;
+    trade.confirmations[ws.userId] = false;
+    refreshTradeTimeout(trade);
+    await sendTradeMessage(trade, 'trade:update');
+}
+
+async function handleTradeCancel(ws, payload) {
+    const tradeId = typeof payload?.tradeId === 'string' ? payload.tradeId : null;
+    if (!tradeId) return;
+    const trade = pendingTrades.get(tradeId);
+    if (!trade) return;
+    if (ws.userId !== trade.initiatorId && ws.userId !== trade.partnerId) return;
+    await cancelTrade(trade, 'cancelled');
+}
+
+async function sendOpenTradesToSocket(ws, gameId) {
+    const relevant = Array.from(pendingTrades.values()).filter(
+        (trade) =>
+            trade.gameId === gameId &&
+            (trade.initiatorId === ws.userId || trade.partnerId === ws.userId) &&
+            trade.status !== 'completed' &&
+            trade.status !== 'cancelled'
+    );
+    if (relevant.length === 0) return;
+    const db = await readDB();
+    const game = getGame(db, gameId);
+    if (!game) return;
+    for (const trade of relevant) {
+        const snapshot = buildTradeSnapshot(trade, game, db);
+        const type = trade.status === 'awaiting-partner' ? 'trade:invite' : 'trade:active';
+        sendJson(ws, { type, trade: snapshot });
+    }
+}
+
+async function handleSocketMessage(ws, data) {
+    let message;
+    try {
+        message = typeof data === 'string' ? JSON.parse(data) : JSON.parse(data.toString('utf8'));
+    } catch {
+        return;
+    }
+    if (!message || typeof message !== 'object') return;
+
+    const type = message.type;
+    try {
+        switch (type) {
+            case 'subscribe': {
+                const channel = message.channel;
+                const gameId = parseUUID(message.gameId);
+                if (!gameId) break;
+                if (channel === 'story') {
+                    subscribeStoryChannel(ws, gameId);
+                } else if (channel === 'trade') {
+                    subscribeTradeChannel(ws, gameId);
+                    await sendOpenTradesToSocket(ws, gameId);
+                }
+                break;
+            }
+            case 'unsubscribe': {
+                const channel = message.channel;
+                const gameId = parseUUID(message.gameId);
+                if (!gameId) break;
+                if (channel === 'story') {
+                    unsubscribeStoryChannel(ws, gameId);
+                } else if (channel === 'trade') {
+                    unsubscribeTradeChannel(ws, gameId);
+                }
+                break;
+            }
+            case 'story.impersonation.request':
+                await handlePersonaRequestMessage(ws, message);
+                break;
+            case 'story.impersonation.respond':
+                await handlePersonaResponseMessage(ws, message);
+                break;
+            case 'trade.start':
+                await handleTradeStart(ws, message);
+                break;
+            case 'trade.respond':
+                await handleTradeRespond(ws, message);
+                break;
+            case 'trade.update':
+                await handleTradeUpdate(ws, message);
+                break;
+            case 'trade.confirm':
+                await handleTradeConfirm(ws, message);
+                break;
+            case 'trade.unconfirm':
+                await handleTradeUnconfirm(ws, message);
+                break;
+            case 'trade.cancel':
+                await handleTradeCancel(ws, message);
+                break;
+            default:
+                sendJson(ws, { type: 'error', error: 'unknown_type', originalType: type });
+        }
+    } catch (err) {
+        console.warn('Websocket handler error', err);
+        sendJson(ws, { type: 'error', error: 'internal_error' });
+    }
 }
 
 function canEditInventory(game, actingUserId, targetUserId) {
@@ -797,15 +1659,17 @@ app.use(express.json());
 // if you ever run behind a proxy/https later
 // app.set('trust proxy', 1);
 
-app.use(session({
+const sessionParser = session({
     secret: 'dev-secret',
     resave: false,
     saveUninitialized: false,
     cookie: {
-        sameSite: 'lax',   // 'lax' works for http://localhost:5173 -> http://localhost:3000
-        secure: false,     // set true only behind https
+        sameSite: 'lax', // 'lax' works for http://localhost:5173 -> http://localhost:3000
+        secure: false, // set true only behind https
     },
-}));
+});
+
+app.use(sessionParser);
 
 function requireAuth(req, res, next) {
     if (!req.session.userId) return res.status(401).json({ error: 'unauthenticated' });
@@ -1771,6 +2635,12 @@ app.post('/api/games/:id/story-log/messages', requireAuth, async (req, res) => {
         return res.status(400).json({ error: 'empty_content' });
     }
 
+    const personaType = typeof req.body?.persona === 'string' ? req.body.persona : null;
+    const targetUserId = typeof req.body?.targetUserId === 'string' ? parseUUID(req.body.targetUserId) : null;
+    if (!actorIsDM && personaType === 'player' && targetUserId && targetUserId !== actorId) {
+        return res.status(409).json({ error: 'approval_required' });
+    }
+
     let persona;
     try {
         persona = resolveStoryPersona(req.body || {}, { db, game, actorId });
@@ -1793,9 +2663,64 @@ app.post('/api/games/:id/story-log/messages', requireAuth, async (req, res) => {
         return res.status(502).json({ error: 'webhook_error', message });
     }
 
-    getOrCreateStoryWatcher(game);
+    const watcherInfo = getOrCreateStoryWatcher(game);
+    if (watcherInfo?.forceSync) {
+        try {
+            await watcherInfo.forceSync();
+        } catch (err) {
+            console.warn('Failed to force sync after post', err);
+        }
+    }
+    queueStoryBroadcast(game.id, true);
 
     res.status(201).json({ ok: true });
+});
+
+app.delete('/api/games/:id/story-log/messages/:messageId', requireAuth, async (req, res) => {
+    const { id, messageId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const story = ensureStoryConfig(game);
+    const token = story.botToken || getDiscordBotToken();
+    if (!token || !story.channelId) {
+        return res.status(400).json({ error: 'not_configured' });
+    }
+
+    try {
+        await deleteDiscordMessage(token, story.channelId, messageId);
+    } catch (err) {
+        const message = err instanceof Error ? err.message : 'delete_failed';
+        if (message === 'not_found') {
+            return res.status(404).json({ error: 'message_not_found' });
+        }
+        if (message === 'forbidden') {
+            return res.status(403).json({ error: 'discord_forbidden' });
+        }
+        if (message === 'missing_token' || message === 'invalid_target') {
+            return res.status(400).json({ error: message });
+        }
+        console.warn('Failed to delete Discord message', err);
+        return res.status(502).json({ error: 'discord_error' });
+    }
+
+    const watcher = getOrCreateStoryWatcher(game);
+    if (watcher?.forceSync) {
+        try {
+            await watcher.forceSync();
+        } catch (err) {
+            console.warn('Failed to force sync after deletion', err);
+        }
+    }
+    queueStoryBroadcast(game.id, true);
+
+    res.json({ ok: true });
 });
 
 // --- Items ---
@@ -1830,5 +2755,71 @@ app.use((err, _req, res, next) => {
     res.status(500).json({ error: 'server_error' });
 });
 
+const server = http.createServer(app);
+const wss = new WebSocketServer({ noServer: true });
+
+const HEARTBEAT_INTERVAL_MS = 30_000;
+const heartbeat = setInterval(() => {
+    for (const ws of wss.clients) {
+        if (ws.isAlive === false) {
+            cleanupSocket(ws);
+            try {
+                ws.terminate();
+            } catch {
+                // ignore termination errors
+            }
+            continue;
+        }
+        ws.isAlive = false;
+        try {
+            ws.ping();
+        } catch {
+            // ignore ping errors
+        }
+    }
+}, HEARTBEAT_INTERVAL_MS);
+
+wss.on('connection', (ws) => {
+    ws.isAlive = true;
+    addSocketForUser(ws.userId, ws);
+    ws.on('message', (data) => {
+        handleSocketMessage(ws, data);
+    });
+    ws.on('pong', () => {
+        ws.isAlive = true;
+    });
+    ws.on('close', () => {
+        cleanupSocket(ws);
+    });
+    ws.on('error', () => {
+        cleanupSocket(ws);
+    });
+    sendJson(ws, { type: 'welcome', userId: ws.userId });
+});
+
+wss.on('close', () => clearInterval(heartbeat));
+
+server.on('upgrade', (req, socket, head) => {
+    if (!req.url || !req.url.startsWith('/ws')) {
+        socket.destroy();
+        return;
+    }
+
+    sessionParser(req, {}, () => {
+        if (!req.session || !req.session.userId) {
+            socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+            socket.destroy();
+            return;
+        }
+
+        wss.handleUpgrade(req, socket, head, (ws) => {
+            ws.userId = req.session.userId;
+            ws.storySubscriptions = ws.storySubscriptions || new Set();
+            ws.tradeSubscriptions = ws.tradeSubscriptions || new Set();
+            wss.emit('connection', ws, req);
+        });
+    });
+});
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`server listening on ${PORT}`));
+server.listen(PORT, () => console.log(`server listening on ${PORT}`));
