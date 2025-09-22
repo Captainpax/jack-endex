@@ -16,7 +16,14 @@ export default defineConfig({
                 ws: true,
                 // if your backend expects the path without the /api prefix, uncomment:
                 // rewrite: (path) => path.replace(/^\/api/, '')
-            }
+            },
+            // Proxy websocket connections used for real-time features in dev mode
+            '/ws': {
+                target: 'ws://127.0.0.1:3000',
+                changeOrigin: true,
+                secure: false,
+                ws: true,
+            },
         }
     }
 })
