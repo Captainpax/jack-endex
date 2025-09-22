@@ -1713,6 +1713,47 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     justify-content: flex-end;
 }
 
+.presence-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+.presence-indicator::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--border);
+    box-shadow: 0 0 0 1px var(--border);
+}
+
+.presence-indicator.is-online {
+    border-color: color-mix(in oklab, var(--success) 55%, transparent);
+    background: color-mix(in oklab, var(--success) 12%, var(--surface-2));
+    color: color-mix(in oklab, var(--success) 65%, var(--text));
+}
+
+.presence-indicator.is-online::before {
+    background: var(--success);
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--success) 45%, transparent);
+}
+
+.presence-indicator.is-offline::before {
+    background: var(--border);
+    box-shadow: 0 0 0 1px var(--border);
+}
+
 .overview-player.is-clickable {
     cursor: pointer;
 }
