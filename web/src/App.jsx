@@ -8854,11 +8854,18 @@ function DemonTab({ game, me, onUpdate }) {
     const [resist, setResist] = useState({ weak: "", resist: "", null: "", absorb: "", reflect: "" });
     const [skills, setSkills] = useState("");
     const [notes, setNotes] = useState("");
+    const [image, setImage] = useState("");
     const [q, setQ] = useState("");
     const [results, setResults] = useState([]);
     const [selected, setSelected] = useState(null);
-    const previewStats = useMemo(() => resolveAbilityState(selected?.stats ?? selected), [selected]);
-    const previewMods = useMemo(() => (selected?.mods && typeof selected.mods === "object" ? selected.mods : {}), [selected]);
+    const previewStats = useMemo(
+        () => resolveAbilityState(selected?.stats ?? selected ?? stats),
+        [selected, stats],
+    );
+    const previewMods = useMemo(
+        () => (selected?.mods && typeof selected.mods === "object" ? selected.mods : {}),
+        [selected],
+    );
     const [editing, setEditing] = useState(null);
     const [busySave, setBusySave] = useState(false);
     const [busySearch, setBusySearch] = useState(false);
@@ -8876,6 +8883,7 @@ function DemonTab({ game, me, onUpdate }) {
         setResist({ weak: "", resist: "", null: "", absorb: "", reflect: "" });
         setSkills("");
         setNotes("");
+        setImage("");
         setSelected(null);
         setEditing(null);
     }, []);
@@ -8900,6 +8908,7 @@ function DemonTab({ game, me, onUpdate }) {
             resistances: resist,
             skills,
             notes,
+            image,
         };
         try {
             setBusySave(true);
@@ -8984,6 +8993,7 @@ function DemonTab({ game, me, onUpdate }) {
             });
             setSkills(Array.isArray(p.skills) ? p.skills.join('\n') : "");
             setNotes(p.description || "");
+            setImage(p.image || "");
         } catch (e) {
             alert(e.message);
         }
@@ -9009,6 +9019,7 @@ function DemonTab({ game, me, onUpdate }) {
         });
         setSkills(Array.isArray(demon.skills) ? demon.skills.join('\n') : "");
         setNotes(demon.notes || "");
+        setImage(demon.image || "");
         setSelected(null);
     };
 
@@ -9047,6 +9058,19 @@ function DemonTab({ game, me, onUpdate }) {
                         </button>
                     )}
                 </div>
+            </div>
+
+            <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                <label className="col" style={{ flex: 1, minWidth: 220 }}>
+                    <span>Image URL (optional)</span>
+                    <input
+                        type="url"
+                        placeholder="https://example.com/artwork.png"
+                        value={image}
+                        onChange={(e) => setImage(e.target.value)}
+                        style={{ width: '100%' }}
+                    />
+                </label>
             </div>
 
             <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
@@ -9148,61 +9172,111 @@ function DemonTab({ game, me, onUpdate }) {
 
                 <div className="col" style={{ width: 360 }}>
                     <h4>Preview</h4>
-                    {selected ? (
-                        <div>
-                            {selected.image && (
-                                <img
-                                    src={selected.image}
-                                    alt={selected.name}
+                    {(() => {
+                        const previewImage = selected?.image || image.trim();
+                        const previewName = selected?.name || name || "";
+                        const previewArcana = selected?.arcana || arcana || "—";
+                        const previewAlignment = selected?.alignment || align || "—";
+                        const previewLevel = selected?.level ?? level ?? 0;
+                        const previewDescription = selected?.description || notes || "";
+                        const weakText = selected
+                            ? formatResistanceList(selected.resistances?.weak, selected.weak)
+                            : formatResistanceList(resist.weak);
+                        const resistText = selected
+                            ? formatResistanceList(selected.resistances?.resist, selected.resists)
+                            : formatResistanceList(resist.resist);
+                        const nullText = selected
+                            ? formatResistanceList(selected.resistances?.null, selected.nullifies)
+                            : formatResistanceList(resist.null);
+                        const absorbText = selected
+                            ? formatResistanceList(selected.resistances?.absorb, selected.absorbs)
+                            : formatResistanceList(resist.absorb);
+                        const reflectText = selected
+                            ? formatResistanceList(selected.resistances?.reflect, selected.reflects)
+                            : formatResistanceList(resist.reflect);
+                        const hasPreview = Boolean(previewImage || previewName || previewDescription || selected);
+                        if (!hasPreview) {
+                            return <div style={{ opacity: 0.7 }}>Fill in details or pick a persona to preview.</div>;
+                        }
+                        return (
+                            <div>
+                                {previewImage && (
+                                    <img
+                                        src={previewImage}
+                                        alt={previewName || 'Demon artwork'}
+                                        loading="lazy"
+                                        referrerPolicy="no-referrer"
+                                        style={{
+                                            maxWidth: "100%",
+                                            background: "#0b0c10",
+                                            borderRadius: 12,
+                                            border: "1px solid #1f2937",
+                                        }}
+                                    />
+                                )}
+                                <div style={{ marginTop: 8 }}>
+                                    <b>{previewName || "Unnamed demon"}</b> · {previewArcana || "—"} · {previewAlignment || "—"} · LV {previewLevel}
+                                </div>
+                                {previewDescription && (
+                                    <div style={{ opacity: 0.85, fontSize: 13, marginTop: 6 }}>
+                                        {previewDescription}
+                                    </div>
+                                )}
+                                <div
                                     style={{
-                                        maxWidth: "100%",
-                                        background: "#0b0c10",
-                                        borderRadius: 12,
-                                        border: "1px solid #1f2937",
+                                        display: "grid",
+                                        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                                        gap: 6,
+                                        marginTop: 8,
                                     }}
-                                />
-                            )}
-                            <div style={{ marginTop: 8 }}>
-                                <b>{selected.name}</b> · {selected.arcana} · LV {selected.level}
+                                >
+                                    {ABILITY_DEFS.map((ability) => (
+                                        <span key={ability.key} className="pill">
+                                            {ability.key} {previewStats[ability.key]} ({formatModifier(previewMods[ability.key] ?? abilityModifier(previewStats[ability.key]))})
+                                        </span>
+                                    ))}
+                                </div>
+                                <div style={{ marginTop: 8, fontSize: 12 }}>
+                                    <div><b>Weak:</b> {weakText}</div>
+                                    <div><b>Resist:</b> {resistText}</div>
+                                    <div><b>Null:</b> {nullText}</div>
+                                    <div><b>Absorb:</b> {absorbText}</div>
+                                    <div><b>Reflect:</b> {reflectText}</div>
+                                </div>
                             </div>
-                            <div style={{ opacity: 0.85, fontSize: 13, marginTop: 6 }}>
-                                {selected.description}
-                            </div>
-                            <div
-                                style={{
-                                    display: "grid",
-                                    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                                    gap: 6,
-                                    marginTop: 8,
-                                }}
-                            >
-                                {ABILITY_DEFS.map((ability) => (
-                                    <span key={ability.key} className="pill">
-                                        {ability.key} {previewStats[ability.key]} ({formatModifier(previewMods[ability.key] ?? abilityModifier(previewStats[ability.key]))})
-                                    </span>
-                                ))}
-                            </div>
-                            <div style={{ marginTop: 8, fontSize: 12 }}>
-                                <div><b>Weak:</b> {formatResistanceList(selected.resistances?.weak, selected.weak)}</div>
-                                <div><b>Resist:</b> {formatResistanceList(selected.resistances?.resist, selected.resists)}</div>
-                                <div><b>Null:</b> {formatResistanceList(selected.resistances?.null, selected.nullifies)}</div>
-                                <div><b>Absorb:</b> {formatResistanceList(selected.resistances?.absorb, selected.absorbs)}</div>
-                                <div><b>Reflect:</b> {formatResistanceList(selected.resistances?.reflect, selected.reflects)}</div>
-                            </div>
-                        </div>
-                    ) : (
-                        <div style={{ opacity: 0.7 }}>Pick a persona to preview</div>
-                    )}
+                        );
+                    })()}
                 </div>
             </div>
 
             <div className="list" style={{ marginTop: 12, gap: 12 }}>
                 {game.demons.map((d) => (
                     <div key={d.id} className="card" style={{ padding: 12 }}>
-                        <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-                            <div>
-                                <div><b>{d.name}</b> · {d.arcana ?? "—"} · {d.alignment ?? "—"}</div>
-                                <div style={{ opacity: 0.75, fontSize: 12 }}>Level {d.level ?? 0}</div>
+                        <div
+                            className="row"
+                            style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}
+                        >
+                            <div className="row" style={{ gap: 12, alignItems: "flex-start", flex: 1 }}>
+                                {d.image && (
+                                    <img
+                                        src={d.image}
+                                        alt={`${d.name} artwork`}
+                                        loading="lazy"
+                                        referrerPolicy="no-referrer"
+                                        style={{
+                                            width: 96,
+                                            height: "auto",
+                                            background: "#0b0c10",
+                                            borderRadius: 8,
+                                            border: "1px solid #1f2937",
+                                            objectFit: "cover",
+                                        }}
+                                    />
+                                )}
+                                <div>
+                                    <div><b>{d.name}</b> · {d.arcana ?? "—"} · {d.alignment ?? "—"}</div>
+                                    <div style={{ opacity: 0.75, fontSize: 12 }}>Level {d.level ?? 0}</div>
+                                </div>
                             </div>
                             {canEdit && (
                                 <div className="row" style={{ gap: 8 }}>
