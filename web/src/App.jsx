@@ -12292,14 +12292,11 @@ function DemonTab({ game, me, onUpdate }) {
     const [q, setQ] = useState("");
     const [results, setResults] = useState([]);
     const [selected, setSelected] = useState(null);
-    const previewStats = useMemo(
-        () => resolveAbilityState(selected?.stats ?? selected ?? stats),
-        [selected, stats],
-    );
-    const previewMods = useMemo(
-        () => (selected?.mods && typeof selected.mods === "object" ? selected.mods : {}),
-        [selected],
-    );
+    const previewStats = useMemo(() => resolveAbilityState(stats), [stats]);
+    const previewMods = useMemo(() => {
+        const source = (selected && selected.mods) || (editing && editing.mods);
+        return source && typeof source === "object" ? source : EMPTY_OBJECT;
+    }, [editing, selected]);
     const [editing, setEditing] = useState(null);
     const [busySave, setBusySave] = useState(false);
     const [busySearch, setBusySearch] = useState(false);
@@ -12752,27 +12749,33 @@ function DemonTab({ game, me, onUpdate }) {
                 <div className="col" style={{ width: 360 }}>
                     <h4>Preview</h4>
                     {(() => {
-                        const previewImage = selected?.image || image.trim();
-                        const previewName = selected?.name || name || "";
-                        const previewArcana = selected?.arcana || arcana || "—";
-                        const previewAlignment = selected?.alignment || align || "—";
-                        const previewLevel = selected?.level ?? level ?? 0;
-                        const previewDescription = selected?.description || notes || "";
-                        const weakText = selected
-                            ? formatResistanceList(selected.resistances?.weak, selected.weak)
-                            : formatResistanceList(resist.weak);
-                        const resistText = selected
-                            ? formatResistanceList(selected.resistances?.resist, selected.resists)
-                            : formatResistanceList(resist.resist);
-                        const nullText = selected
-                            ? formatResistanceList(selected.resistances?.null, selected.nullifies)
-                            : formatResistanceList(resist.null);
-                        const absorbText = selected
-                            ? formatResistanceList(selected.resistances?.absorb, selected.absorbs)
-                            : formatResistanceList(resist.absorb);
-                        const reflectText = selected
-                            ? formatResistanceList(selected.resistances?.reflect, selected.reflects)
-                            : formatResistanceList(resist.reflect);
+                        const trimmedImage = image.trim();
+                        const previewImage = trimmedImage || selected?.image || "";
+                        const previewName = name || selected?.name || "";
+                        const previewArcana = arcana || selected?.arcana || "—";
+                        const previewAlignment = align || selected?.alignment || "—";
+                        const previewLevel = Number.isFinite(level) ? level : selected?.level ?? 0;
+                        const previewDescription = notes || selected?.description || "";
+                        const weakText = formatResistanceList(
+                            resist.weak,
+                            selected?.resistances?.weak ?? selected?.weak,
+                        );
+                        const resistText = formatResistanceList(
+                            resist.resist,
+                            selected?.resistances?.resist ?? selected?.resists,
+                        );
+                        const nullText = formatResistanceList(
+                            resist.null,
+                            selected?.resistances?.null ?? selected?.nullifies,
+                        );
+                        const absorbText = formatResistanceList(
+                            resist.absorb,
+                            selected?.resistances?.absorb ?? selected?.absorbs,
+                        );
+                        const reflectText = formatResistanceList(
+                            resist.reflect,
+                            selected?.resistances?.reflect ?? selected?.reflects,
+                        );
                         const hasPreview = Boolean(previewImage || previewName || previewDescription || selected);
                         if (!hasPreview) {
                             return <div style={{ opacity: 0.7 }}>Fill in details or pick a persona to preview.</div>;
