@@ -4,6 +4,84 @@ import { Auth, Games, Help, Items, Personas, StoryLogs, onApiActivity } from "./
 
 const EMPTY_ARRAY = Object.freeze([]);
 
+const DEMON_IMAGE_FALLBACK_BASES = [
+    "https://static.megatenwiki.com",
+    "https://megatenwiki.miraheze.org",
+    "https://static.miraheze.org/megatenwiki",
+    "https://static.miraheze.org/megatenwikiwiki",
+    "https://static.wikia.nocookie.net/megamitensei",
+];
+
+function computeDemonImageSources(imageUrl) {
+    const trimmed = typeof imageUrl === "string" ? imageUrl.trim() : "";
+    if (!trimmed) return EMPTY_ARRAY;
+
+    const sources = [];
+    const seen = new Set();
+    const addSource = (value) => {
+        if (!value || seen.has(value)) return;
+        seen.add(value);
+        sources.push(value);
+    };
+
+    addSource(trimmed);
+
+    let parsed;
+    try {
+        parsed = new URL(trimmed);
+    } catch {
+        return sources;
+    }
+
+    if (parsed.protocol === "http:") {
+        const httpsUrl = `https://${parsed.host}${parsed.pathname}${parsed.search}${parsed.hash}`;
+        addSource(httpsUrl);
+    }
+
+    const pathname = parsed.pathname || "";
+    const imagePathIndex = pathname.indexOf("/images/");
+    const imagePath = imagePathIndex === -1 ? "" : pathname.slice(imagePathIndex);
+    const fileName = pathname.split("/").filter(Boolean).pop() || "";
+
+    if (imagePath) {
+        for (const base of DEMON_IMAGE_FALLBACK_BASES) {
+            addSource(`${base}${imagePath}`);
+        }
+    }
+
+    if (fileName) {
+        addSource(`https://megatenwiki.com/wiki/Special:FilePath/${fileName}`);
+    }
+
+    return sources;
+}
+
+function DemonImage({ src, alt, onError, ...imgProps }) {
+    const sources = useMemo(() => computeDemonImageSources(src), [src]);
+    const [index, setIndex] = useState(0);
+
+    useEffect(() => {
+        setIndex(0);
+    }, [sources]);
+
+    const handleError = useCallback(
+        (event) => {
+            if (index < sources.length - 1) {
+                setIndex((prev) => prev + 1);
+            } else if (onError) {
+                onError(event);
+            }
+        },
+        [index, onError, sources.length],
+    );
+
+    if (sources.length === 0) {
+        return null;
+    }
+
+    return <img {...imgProps} alt={alt} src={sources[index]} onError={handleError} />;
+}
+
 function normalizeMediaSnapshot(snapshot) {
     if (!snapshot || typeof snapshot !== "object") return null;
     const videoId = typeof snapshot.videoId === "string" ? snapshot.videoId.trim() : "";
@@ -9250,11 +9328,11 @@ function DemonTab({ game, me, onUpdate }) {
                         return (
                             <div>
                                 {previewImage && (
-                                    <img
+                                    <DemonImage
                                         src={previewImage}
-                                        alt={previewName || 'Demon artwork'}
+                                        alt={previewName || "Demon artwork"}
                                         loading="lazy"
-                                        referrerPolicy="no-referrer"
+                                        decoding="async"
                                         style={{
                                             maxWidth: "100%",
                                             background: "#0b0c10",
@@ -9307,11 +9385,11 @@ function DemonTab({ game, me, onUpdate }) {
                         >
                             <div className="row" style={{ gap: 12, alignItems: "flex-start", flex: 1 }}>
                                 {d.image && (
-                                    <img
+                                    <DemonImage
                                         src={d.image}
                                         alt={`${d.name} artwork`}
                                         loading="lazy"
-                                        referrerPolicy="no-referrer"
+                                        decoding="async"
                                         style={{
                                             width: 96,
                                             height: "auto",
