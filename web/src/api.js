@@ -458,6 +458,7 @@ export const Games = {
 
     updateMapSettings: (id, settings) =>
         api(`/api/games/${encodeURIComponent(id)}/map/settings`, { method: 'PUT', body: settings }),
+    getMap: (id) => api(`/api/games/${encodeURIComponent(id)}/map`),
     addMapStroke: (id, stroke) =>
         api(`/api/games/${encodeURIComponent(id)}/map/strokes`, { method: 'POST', body: { stroke } }),
     deleteMapStroke: (id, strokeId) =>

@@ -34,6 +34,7 @@ const DEFAULT_STROKE_COLOR = '#f97316';
 const DEFAULT_PLAYER_TOKEN_COLOR = '#38bdf8';
 const DEFAULT_DEMON_TOKEN_COLOR = '#f97316';
 const DEFAULT_CUSTOM_TOKEN_COLOR = '#a855f7';
+const DEFAULT_ENEMY_TOKEN_COLOR = '#ef4444';
 
 function parseYouTubeTimecode(raw) {
     if (typeof raw !== 'string') return 0;
@@ -227,7 +228,7 @@ function buildDemonTooltip(demon) {
 function normalizeMapToken(entry, game) {
     if (!entry || typeof entry !== 'object') return null;
     const kindRaw = typeof entry.kind === 'string' ? entry.kind.trim().toLowerCase() : 'custom';
-    const allowedKinds = new Set(['player', 'demon', 'custom']);
+    const allowedKinds = new Set(['player', 'demon', 'enemy', 'custom']);
     const kind = allowedKinds.has(kindRaw) ? kindRaw : 'custom';
     let refId = typeof entry.refId === 'string' ? entry.refId : null;
     const id = typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : uuid();
@@ -256,6 +257,10 @@ function normalizeMapToken(entry, game) {
         if (!label) label = demon.name || 'Demon';
         if (!tooltip) tooltip = buildDemonTooltip(demon);
         color = sanitizeColor(entry.color, DEFAULT_DEMON_TOKEN_COLOR);
+    } else if (kind === 'enemy') {
+        if (!label) label = 'Enemy';
+        if (entry.showTooltip === undefined) showTooltip = !!tooltip;
+        color = sanitizeColor(entry.color, DEFAULT_ENEMY_TOKEN_COLOR);
     } else {
         if (!label) label = 'Marker';
         if (entry.showTooltip === undefined) showTooltip = !!tooltip;
@@ -287,6 +292,14 @@ function presentMapStroke(stroke) {
 
 function presentMapToken(token) {
     if (!token || typeof token !== 'object') return null;
+    const fallbackColor =
+        token.kind === 'player'
+            ? DEFAULT_PLAYER_TOKEN_COLOR
+            : token.kind === 'demon'
+                ? DEFAULT_DEMON_TOKEN_COLOR
+                : token.kind === 'enemy'
+                    ? DEFAULT_ENEMY_TOKEN_COLOR
+                    : DEFAULT_CUSTOM_TOKEN_COLOR;
     return {
         id: token.id,
         kind: token.kind,
@@ -294,7 +307,7 @@ function presentMapToken(token) {
         label: token.label || '',
         tooltip: token.tooltip || '',
         showTooltip: !!token.showTooltip,
-        color: sanitizeColor(token.color, DEFAULT_CUSTOM_TOKEN_COLOR),
+        color: sanitizeColor(token.color, fallbackColor),
         x: clamp01(token.x),
         y: clamp01(token.y),
         ownerId: typeof token.ownerId === 'string' ? token.ownerId : null,
@@ -2705,6 +2718,18 @@ app.put('/api/games/:id/character', requireAuth, async (req, res) => {
 
     await persistGame(db, game);
     res.json({ ok: true });
+});
+
+app.get('/api/games/:id/map', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
+    const map = ensureMapState(game);
+    res.json(presentMapState(map));
 });
 
 app.put('/api/games/:id/map/settings', requireAuth, async (req, res) => {
