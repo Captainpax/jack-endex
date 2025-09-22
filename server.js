@@ -21,6 +21,7 @@ import { loadDemonEntries } from './lib/demonImport.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const storyWatchers = new Map();
+const storyWatcherSkipReasons = new Map();
 const storySubscribers = new Map();
 const gameSubscribers = new Map();
 const gamePresence = new Map();
@@ -1669,6 +1670,18 @@ function presentStoryConfig(story, { includeSecrets = false } = {}) {
  */
 function removeStoryWatcher(gameId) {
     const existing = storyWatchers.get(gameId);
+    if (existing) {
+        let channelLabel = 'unknown';
+        try {
+            const status = typeof existing.watcher?.getStatus === 'function'
+                ? existing.watcher.getStatus()
+                : null;
+            channelLabel = status?.channel?.id || status?.channel?.name || channelLabel;
+        } catch {
+            channelLabel = 'unknown';
+        }
+        console.log(`[discord] Removing story watcher for game ${gameId} (channel ${channelLabel}).`);
+    }
     if (existing?.unsubscribe) {
         try {
             existing.unsubscribe();
@@ -1684,6 +1697,7 @@ function removeStoryWatcher(gameId) {
         }
     }
     storyWatchers.delete(gameId);
+    storyWatcherSkipReasons.delete(gameId);
 }
 
 /**
@@ -1695,18 +1709,32 @@ function removeStoryWatcher(gameId) {
 function getOrCreateStoryWatcher(game) {
     const story = ensureStoryConfig(game);
     const token = story.botToken || getDiscordBotToken();
+    const existing = storyWatchers.get(game.id);
     if (!token || !story.channelId) {
+        const reason = !token ? 'missing bot token' : 'missing channel ID';
+        const previousReason = storyWatcherSkipReasons.get(game.id);
+        if (previousReason !== reason) {
+            console.warn(`[discord] Skipping watcher for game ${game.id}: ${reason}.`);
+            storyWatcherSkipReasons.set(game.id, reason);
+        }
         removeStoryWatcher(game.id);
         return null;
     }
+    storyWatcherSkipReasons.delete(game.id);
 
     const signature = `${token}:${story.channelId}:${story.guildId || ''}:${story.pollIntervalMs}`;
-    const existing = storyWatchers.get(game.id);
     if (existing && existing.signature === signature) {
+        if (!existing.reuseLogged) {
+            console.log(`[discord] Reusing story watcher for game ${game.id} (channel ${story.channelId}).`);
+            existing.reuseLogged = true;
+        }
         return existing.watcher;
     }
 
     removeStoryWatcher(game.id);
+    console.log(
+        `[discord] Creating story watcher for game ${game.id} (channel ${story.channelId}, poll ${story.pollIntervalMs}ms).`,
+    );
     const watcher = createDiscordWatcher({
         token,
         guildId: story.guildId || undefined,
@@ -1718,9 +1746,12 @@ function getOrCreateStoryWatcher(game) {
             queueStoryBroadcast(game.id);
         });
         watcher.start();
-        storyWatchers.set(game.id, { watcher, signature, unsubscribe });
+        storyWatchers.set(game.id, { watcher, signature, unsubscribe, reuseLogged: false });
         return watcher;
     }
+    console.warn(
+        `[discord] Story watcher for game ${game.id} not enabled despite valid config; check watcher status.`,
+    );
     return null;
 }
 

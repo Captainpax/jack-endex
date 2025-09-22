@@ -160,6 +160,12 @@ export function createDiscordWatcher({
     const normalizedPoll = Math.max(5_000, Math.min(120_000, toNumber(pollIntervalMs, 15_000)));
     const limit = Math.max(1, Math.min(100, Math.floor(toNumber(maxMessages, 50))));
     const enabled = Boolean(token && channelId);
+    const scopeGuild = guildId ? `:${guildId}` : '';
+    const scope = `${channelId || 'unknown'}${scopeGuild}`;
+    const logPrefix = `[discord-watcher:${scope}]`;
+    const debug = (...args) => console.log(logPrefix, ...args);
+    const warn = (...args) => console.warn(logPrefix, ...args);
+    const error = (...args) => console.error(logPrefix, ...args);
 
     const state = {
         enabled,
@@ -187,7 +193,7 @@ export function createDiscordWatcher({
             try {
                 listener(payload);
             } catch (err) {
-                console.warn('discordWatcher listener error', err);
+                warn('listener error', err);
             }
         }
     }
@@ -198,20 +204,23 @@ export function createDiscordWatcher({
             if (phase === 'ready' || phase === 'connecting') {
                 state.error = null;
             }
-            notify();
+            debug('phase changed to', phase);
         }
+        notify();
     }
 
     function setError(message) {
         state.phase = 'error';
         state.error = message;
         state.lastErrorAt = new Date().toISOString();
+        error('entering error state:', message);
         notify();
     }
 
     function scheduleNext(delayMs = state.pollIntervalMs) {
         if (stopped) return;
         clearTimeout(timer);
+        debug('scheduling next sync in', Math.max(0, delayMs), 'ms');
         timer = setTimeout(async () => {
             const nextDelay = await syncOnce();
             scheduleNext(nextDelay);
@@ -232,6 +241,11 @@ export function createDiscordWatcher({
             url: data.guild_id ? `https://discord.com/channels/${data.guild_id}/${data.id}` : null,
         };
         if (!state.readyAt) state.readyAt = new Date().toISOString();
+        debug('channel info loaded', {
+            channelId: state.channel.id,
+            guildId: state.channel.guildId,
+            name: state.channel.name,
+        });
     }
 
     async function syncOnce() {
@@ -240,6 +254,7 @@ export function createDiscordWatcher({
         inFlight = true;
         state.lastAttemptAt = new Date().toISOString();
         try {
+            debug('starting sync attempt', { lastSyncAt: state.lastSyncAt });
             setPhase(state.channel ? 'ready' : 'connecting');
             await ensureChannelInfo();
             const raw = await discordRequest(`/channels/${channelId}/messages?limit=${limit}`, token);
@@ -257,6 +272,10 @@ export function createDiscordWatcher({
             state.lastSyncAt = new Date().toISOString();
             if (!state.readyAt) state.readyAt = state.lastSyncAt;
             setPhase('ready');
+            debug('sync completed', {
+                messageCount: messages.length,
+                pollIntervalMs: state.pollIntervalMs,
+            });
             notify();
             return state.pollIntervalMs;
         } catch (err) {
@@ -265,6 +284,11 @@ export function createDiscordWatcher({
             const retry = err instanceof DiscordWatcherError && err.retryAfter
                 ? err.retryAfter
                 : Math.min(state.pollIntervalMs * 2, 120_000);
+            if (err instanceof DiscordWatcherError && err.fatal) {
+                error('fatal sync error, will retry after', retry, 'ms:', err);
+            } else {
+                warn('sync error, will retry after', retry, 'ms:', err);
+            }
             return retry;
         } finally {
             inFlight = false;
@@ -272,12 +296,21 @@ export function createDiscordWatcher({
     }
 
     function start() {
-        if (started || !enabled) {
+        if (started) {
+            debug('start requested but watcher already running');
+            return;
+        }
+        if (!enabled) {
+            warn('start requested but watcher is disabled due to missing configuration');
             started = true;
             return;
         }
         started = true;
         stopped = false;
+        debug('starting watcher loop', {
+            pollIntervalMs: state.pollIntervalMs,
+            limit,
+        });
         setPhase('connecting');
         scheduleNext(0);
     }
@@ -286,6 +319,7 @@ export function createDiscordWatcher({
         stopped = true;
         clearTimeout(timer);
         timer = null;
+        debug('stop requested; timer cleared');
     }
 
     function getMessages() {
@@ -299,15 +333,23 @@ export function createDiscordWatcher({
     function subscribe(listener) {
         if (typeof listener !== 'function') return () => {};
         listeners.add(listener);
+        debug('listener subscribed; total listeners:', listeners.size);
         try {
             listener({ status: getStatus(), messages: getMessages() });
         } catch (err) {
-            console.warn('discordWatcher listener bootstrap error', err);
+            warn('listener bootstrap error', err);
         }
         return () => {
             listeners.delete(listener);
+            debug('listener unsubscribed; remaining listeners:', listeners.size);
         };
     }
+
+    debug('initialized', {
+        enabled,
+        pollIntervalMs: normalizedPoll,
+        maxMessages: limit,
+    });
 
     return {
         enabled,
