@@ -1750,6 +1750,41 @@ label {
 .world-skill-card__plus { display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 999px; background: color-mix(in oklab, var(--brand) 18%, transparent); color: var(--brand-700); font-size: 1.6rem; font-weight: 700; }
 .world-skill-empty { border: 1px dashed var(--border); border-radius: var(--radius); padding: 16px; display: grid; gap: 6px; align-content: start; background: var(--surface); text-align: center; color: var(--muted); }
 
+.combat-skill-tab .card { display: grid; gap: 16px; }
+.combat-skill-manager__header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.combat-skill-manager__header h3 { margin: 0; }
+.combat-skill-manager__filters { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; margin-top: 12px; }
+.combat-skill-manager__filters label { display: grid; gap: 4px; }
+.combat-skill-manager__filters input,
+.combat-skill-manager__filters select { min-width: 160px; width: 100%; }
+.combat-skill-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.combat-skill-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--surface-2); display: grid; gap: 12px; transition: border-color var(--trans-fast), box-shadow var(--trans-fast), transform var(--trans-fast); }
+.combat-skill-card:hover { border-color: color-mix(in oklab, var(--brand) 40%, var(--border) 60%); box-shadow: 0 8px 22px rgba(15,17,21,0.16); transform: translateY(-2px); }
+.combat-skill-card.is-editing { border-color: var(--brand); box-shadow: 0 12px 28px rgba(15,17,21,0.18); }
+.combat-skill-card__header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.combat-skill-card__header h4 { margin: 0; font-size: 1.05rem; color: var(--text); }
+.combat-skill-card__badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.combat-skill-card__badges .pill { border: none; }
+.combat-skill-card__meta { color: var(--muted); font-weight: 600; }
+.combat-skill-card__notes { margin: 0; color: var(--muted); white-space: pre-wrap; }
+.combat-skill-card__actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.combat-skill-card--add { border: 1px dashed color-mix(in oklab, var(--border) 70%, var(--brand) 30%); align-content: center; justify-items: center; text-align: center; min-height: 220px; }
+.combat-skill-card--add.is-editing { border-style: solid; }
+.combat-skill-card__add-btn { border: none; background: transparent; color: var(--muted); display: grid; gap: 10px; justify-items: center; font-weight: 600; cursor: pointer; padding: 16px; transition: color var(--trans-fast), transform var(--trans-fast); }
+.combat-skill-card__add-btn:hover:not(:disabled) { color: var(--brand-600); transform: translateY(-1px); }
+.combat-skill-card__add-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.combat-skill-card__plus { display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 999px; background: color-mix(in oklab, var(--brand) 18%, transparent); color: var(--brand-700); font-size: 1.6rem; font-weight: 700; }
+.combat-skill-editor { display: grid; gap: 12px; }
+.combat-skill-editor__actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.combat-calculator { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); padding: 12px; display: grid; gap: 12px; }
+.combat-calculator__result { display: grid; gap: 4px; border-radius: var(--radius-sm); background: color-mix(in oklab, var(--brand) 12%, transparent); padding: 12px; }
+.combat-calculator__total { font-size: 1.8rem; font-weight: 700; color: var(--text); }
+.combat-calculator__footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+
+@media (max-width: 720px) {
+    .combat-calculator__footer { justify-content: center; }
+}
+
 /* Wizard overlay */
 .wizard-backdrop { position: fixed; inset: 0; background: rgba(15, 17, 21, 0.78); display: grid; place-items: center; padding: 24px; z-index: 20; }
 .wizard-panel { width: min(960px, 100%); max-height: 100%; overflow: hidden; border-radius: var(--radius-lg); background: var(--surface); display: grid; grid-template-rows: auto auto 1fr auto; box-shadow: 0 30px 80px rgba(0,0,0,0.35); }
