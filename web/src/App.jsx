@@ -3,6 +3,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { ApiError, Auth, Games, Help, Items, Personas, StoryLogs, onApiActivity } from "./api";
 
 const EMPTY_ARRAY = Object.freeze([]);
+const EMPTY_OBJECT = Object.freeze({});
 
 const DEMON_IMAGE_FALLBACK_BASES = [
     "https://static.megatenwiki.com",
@@ -320,6 +321,7 @@ function useRealtimeConnection({ gameId, refreshGame, onGameDeleted }) {
     const [personaPrompts, setPersonaPrompts] = useState([]);
     const [personaStatuses, setPersonaStatuses] = useState({});
     const [tradeSessions, setTradeSessions] = useState({});
+    const [onlineUsers, setOnlineUsers] = useState(() => ({}));
     const [mediaState, setMediaState] = useState(null);
     const [mediaError, setMediaError] = useState(null);
     const [alerts, setAlerts] = useState([]);
@@ -552,6 +554,33 @@ function useRealtimeConnection({ gameId, refreshGame, onGameDeleted }) {
                         // no-op
                     }
                     break;
+                case "presence:state": {
+                    if (msg.gameId !== gameId) return;
+                    const list = Array.isArray(msg.online) ? msg.online : EMPTY_ARRAY;
+                    setOnlineUsers(() => {
+                        const next = {};
+                        for (const entry of list) {
+                            if (typeof entry === "string" && entry) {
+                                next[entry] = true;
+                            }
+                        }
+                        return next;
+                    });
+                    break;
+                }
+                case "presence:update":
+                    if (msg.gameId !== gameId) return;
+                    if (typeof msg.userId !== "string" || !msg.userId) return;
+                    setOnlineUsers((prev) => {
+                        const next = { ...prev };
+                        if (msg.online) {
+                            next[msg.userId] = true;
+                        } else {
+                            delete next[msg.userId];
+                        }
+                        return next;
+                    });
+                    break;
                 case "error":
                     console.warn("Realtime error", msg.error);
                     break;
@@ -595,6 +624,7 @@ function useRealtimeConnection({ gameId, refreshGame, onGameDeleted }) {
                     if (cancelled) return;
                     setConnectionState("disconnected");
                     socketRef.current = null;
+                    setOnlineUsers(() => ({}));
                     rejectPendingPersona("connection_closed");
                     retryRef.current = window.setTimeout(connect, 2000);
                 };
@@ -611,6 +641,7 @@ function useRealtimeConnection({ gameId, refreshGame, onGameDeleted }) {
         setPersonaPrompts([]);
         setPersonaStatuses({});
         setTradeSessions({});
+        setOnlineUsers(() => ({}));
         latestStoryRef.current = null;
         connect();
 
@@ -631,6 +662,7 @@ function useRealtimeConnection({ gameId, refreshGame, onGameDeleted }) {
             setPersonaPrompts([]);
             setPersonaStatuses({});
             setTradeSessions({});
+            setOnlineUsers(() => ({}));
             setMediaState(null);
             setMediaError(null);
             setAlerts([]);
@@ -794,6 +826,7 @@ function useRealtimeConnection({ gameId, refreshGame, onGameDeleted }) {
         personaStatuses,
         tradeSessions: tradeList,
         tradeActions,
+        onlineUsers,
         mediaState,
         mediaError,
         syncMedia,
@@ -3557,6 +3590,7 @@ function DMOverview({ game, onInspectPlayer }) {
     }, [serverAlertError]);
     const displayAlertError = alertFormError || friendlyAlertError;
     const isRealtimeConnected = !!realtime?.connected;
+    const presenceMap = realtime?.onlineUsers || EMPTY_OBJECT;
 
     const players = useMemo(
         () =>
@@ -3839,6 +3873,9 @@ function DMOverview({ game, onInspectPlayer }) {
                             const inventoryCount = Array.isArray(player.inventory)
                                 ? player.inventory.length
                                 : 0;
+                            const isOnline = !!(
+                                (player.userId && presenceMap[player.userId]) ?? player.online
+                            );
 
                             return (
                                 <div
@@ -3867,6 +3904,13 @@ function DMOverview({ game, onInspectPlayer }) {
                                         )}
                                     </div>
                                     <div className="overview-player__meta">
+                                        <span
+                                            className={`presence-indicator ${
+                                                isOnline ? "is-online" : "is-offline"
+                                            }`}
+                                        >
+                                            {isOnline ? "Online" : "Offline"}
+                                        </span>
                                         <span className={`pill ${tone}`}>HP {hpLabel}</span>
                                         <span className="pill">Items {inventoryCount}</span>
                                         {canInspect && (
@@ -5985,6 +6029,7 @@ function normalizeSkills(raw, worldSkills = DEFAULT_WORLD_SKILLS) {
 
 // ---------- Party ----------
 function Party({ game, selectedPlayerId, onSelectPlayer, mode = "player", currentUserId }) {
+    const realtime = useContext(RealtimeContext);
     const players = useMemo(
         () =>
             (game.players || []).filter(
@@ -5992,6 +6037,7 @@ function Party({ game, selectedPlayerId, onSelectPlayer, mode = "player", curren
             ),
         [game.players]
     );
+    const presenceMap = realtime?.onlineUsers || EMPTY_OBJECT;
 
     const canSelect = typeof onSelectPlayer === "function";
     const title = mode === "dm" ? "Party roster" : "Party lineup";
@@ -6033,6 +6079,9 @@ function Party({ game, selectedPlayerId, onSelectPlayer, mode = "player", curren
                         const isSelf = currentUserId && p.userId === currentUserId;
                         const roleLabel = (p.role || "").trim();
                         const showRole = roleLabel && roleLabel.toLowerCase() !== "player";
+                        const isOnline = !!(
+                            (p.userId && presenceMap[p.userId]) ?? p.online
+                        );
 
                         const subtitleParts = [];
                         if (p.character?.profile?.class) {
@@ -6070,6 +6119,13 @@ function Party({ game, selectedPlayerId, onSelectPlayer, mode = "player", curren
                                     )}
                                 </div>
                                 <div className="party-row__metrics">
+                                    <span
+                                        className={`presence-indicator ${
+                                            isOnline ? "is-online" : "is-offline"
+                                        }`}
+                                    >
+                                        {isOnline ? "Online" : "Offline"}
+                                    </span>
                                     <span className={`pill ${tone}`}>HP {hpLabel}</span>
                                     {mode !== "dm" && level !== null && (
                                         <span className="pill">LV {level}</span>

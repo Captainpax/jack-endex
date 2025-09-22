@@ -21,6 +21,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const storyWatchers = new Map();
 const storySubscribers = new Map();
 const gameSubscribers = new Map();
+const gamePresence = new Map();
 const userSockets = new Map();
 const pendingPersonaRequests = new Map();
 const pendingTrades = new Map();
@@ -529,11 +530,18 @@ function presentGame(game, { includeSecrets = false } = {}) {
     const story = ensureStoryConfig(normalized);
     const worldSkills = ensureWorldSkills(normalized);
     const combatSkills = ensureCombatSkills(normalized);
+    const players = Array.isArray(normalized.players)
+        ? normalized.players.map((player) => {
+            if (!player || typeof player !== 'object') return player;
+            const online = isUserOnlineInGame(normalized.id, player.userId);
+            return { ...player, online };
+        })
+        : [];
     return {
         id: normalized.id,
         name: normalized.name,
         dmId: normalized.dmId,
-        players: normalized.players,
+        players,
         items: normalized.items,
         gear: normalized.gear,
         demons: normalized.demons,
@@ -1272,6 +1280,15 @@ function getOrCreateSet(map, key) {
     return set;
 }
 
+function getOrCreateMap(map, key) {
+    let value = map.get(key);
+    if (!value) {
+        value = new Map();
+        map.set(key, value);
+    }
+    return value;
+}
+
 function sendJson(ws, payload) {
     if (!ws || ws.readyState !== ws.OPEN) return;
     try {
@@ -1279,6 +1296,68 @@ function sendJson(ws, payload) {
     } catch (err) {
         console.warn('Failed to send websocket payload', err);
     }
+}
+
+function getOnlineUserIds(gameId) {
+    if (!gameId) return [];
+    const presence = gamePresence.get(gameId);
+    if (!presence) return [];
+    const online = [];
+    for (const [userId, count] of presence) {
+        if (count > 0) online.push(userId);
+    }
+    return online;
+}
+
+function isUserOnlineInGame(gameId, userId) {
+    if (!gameId || !userId) return false;
+    const presence = gamePresence.get(gameId);
+    if (!presence) return false;
+    return (presence.get(userId) || 0) > 0;
+}
+
+function broadcastPresenceUpdate(gameId, userId, online) {
+    if (!gameId || !userId) return;
+    const sockets = gameSubscribers.get(gameId);
+    if (!sockets || sockets.size === 0) return;
+    const payload = { type: 'presence:update', gameId, userId, online: !!online };
+    for (const socket of sockets) {
+        sendJson(socket, payload);
+    }
+}
+
+function markUserOnlineForGame(gameId, userId) {
+    if (!gameId || !userId) return;
+    const presence = getOrCreateMap(gamePresence, gameId);
+    const prev = presence.get(userId) || 0;
+    const next = prev + 1;
+    presence.set(userId, next);
+    if (prev === 0) {
+        broadcastPresenceUpdate(gameId, userId, true);
+    }
+}
+
+function markUserOfflineForGame(gameId, userId) {
+    if (!gameId || !userId) return;
+    const presence = gamePresence.get(gameId);
+    if (!presence) return;
+    const prev = presence.get(userId) || 0;
+    const next = prev - 1;
+    if (next <= 0) {
+        presence.delete(userId);
+        broadcastPresenceUpdate(gameId, userId, false);
+    } else {
+        presence.set(userId, next);
+    }
+    if (presence.size === 0) {
+        gamePresence.delete(gameId);
+    }
+}
+
+function sendPresenceState(ws, gameId) {
+    if (!ws || !gameId) return;
+    const online = getOnlineUserIds(gameId);
+    sendJson(ws, { type: 'presence:state', gameId, online });
 }
 
 async function buildStoryPayload(gameId) {
@@ -1391,6 +1470,10 @@ function subscribeGameChannel(ws, gameId) {
     ws.gameSubscriptions.add(gameId);
     const set = getOrCreateSet(gameSubscribers, gameId);
     set.add(ws);
+    if (ws.userId) {
+        markUserOnlineForGame(gameId, ws.userId);
+    }
+    sendPresenceState(ws, gameId);
 }
 
 function subscribeTradeChannel(ws, gameId) {
@@ -1416,11 +1499,15 @@ function unsubscribeStoryChannel(ws, gameId) {
 
 function unsubscribeGameChannel(ws, gameId) {
     if (!ws.gameSubscriptions || !gameId) return;
-    ws.gameSubscriptions.delete(gameId);
+    const hadSubscription = ws.gameSubscriptions.delete(gameId);
+    if (!hadSubscription) return;
     const set = gameSubscribers.get(gameId);
     if (set) {
         set.delete(ws);
         if (set.size === 0) gameSubscribers.delete(gameId);
+    }
+    if (ws.userId) {
+        markUserOfflineForGame(gameId, ws.userId);
     }
 }
 
@@ -2591,7 +2678,18 @@ app.get('/api/games', requireAuth, async (req, res) => {
     const db = await readDB();
     const games = (db.games || [])
         .filter(g => g && Array.isArray(g.players) && g.players.some(p => p.userId === req.session.userId))
-        .map(g => ({ id: g.id, name: g.name, dmId: g.dmId, players: g.players || [] }));
+        .map((g) => ({
+            id: g.id,
+            name: g.name,
+            dmId: g.dmId,
+            players: Array.isArray(g.players)
+                ? g.players.map((p) => {
+                    if (!p || typeof p !== 'object') return p;
+                    const online = isUserOnlineInGame(g.id, p.userId);
+                    return { ...p, online };
+                })
+                : [],
+        }));
     res.json(games);
 });
 
