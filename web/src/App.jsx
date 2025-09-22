@@ -2451,6 +2451,7 @@ const MAP_DEFAULT_SETTINGS = Object.freeze({
 });
 
 const MAP_BRUSH_COLORS = ['#f97316', '#38bdf8', '#a855f7', '#22c55e', '#f472b6'];
+const MAP_ENEMY_DEFAULT_COLOR = '#ef4444';
 const MAP_MAX_POINTS_PER_STROKE = 600;
 
 function mapClamp01(value) {
@@ -2499,7 +2500,9 @@ function normalizeClientMapToken(token) {
     if (!token || typeof token !== 'object') return null;
     const kind = typeof token.kind === 'string' ? token.kind : 'custom';
     const labelRaw = typeof token.label === 'string' ? token.label : '';
-    const label = labelRaw.trim() || (kind === 'player' ? 'Player' : kind === 'demon' ? 'Demon' : 'Marker');
+    const label =
+        labelRaw.trim() ||
+        (kind === 'player' ? 'Player' : kind === 'demon' ? 'Demon' : kind === 'enemy' ? 'Enemy' : 'Marker');
     const tooltipRaw = typeof token.tooltip === 'string' ? token.tooltip : '';
     const tooltipTrimmed = tooltipRaw.trim();
     const tooltip = tooltipTrimmed || label;
@@ -2508,6 +2511,7 @@ function normalizeClientMapToken(token) {
     if (!token.color) {
         if (kind === 'player') color = '#38bdf8';
         else if (kind === 'demon') color = '#f97316';
+        else if (kind === 'enemy') color = MAP_ENEMY_DEFAULT_COLOR;
     }
     return {
         id: token.id || `token-${Math.random().toString(36).slice(2, 10)}`,
@@ -2594,6 +2598,44 @@ function MapTab({ game, me }) {
         setMapState(normalizeClientMapState(game?.map));
     }, [game.id, game?.map]);
 
+    useEffect(() => {
+        if (typeof window === 'undefined') return () => {};
+        if (!game?.id) return () => {};
+
+        let cancelled = false;
+        let timer = null;
+
+        const fetchMap = async () => {
+            try {
+                const snapshot = await Games.getMap(game.id);
+                if (cancelled) return;
+                const normalized = normalizeClientMapState(snapshot);
+                setMapState((prev) => {
+                    if (!prev) return normalized;
+                    if (!prev.updatedAt || !normalized.updatedAt) return normalized;
+                    if (prev.updatedAt !== normalized.updatedAt) return normalized;
+                    if (prev.tokens.length !== normalized.tokens.length) return normalized;
+                    if (prev.strokes.length !== normalized.strokes.length) return normalized;
+                    return prev;
+                });
+            } catch (err) {
+                if (!cancelled) {
+                    console.warn('Map refresh failed', err);
+                }
+            }
+        };
+
+        fetchMap();
+        timer = window.setInterval(fetchMap, 5000);
+
+        return () => {
+            cancelled = true;
+            if (timer) {
+                window.clearInterval(timer);
+            }
+        };
+    }, [game?.id]);
+
     const [tool, setTool] = useState('select');
     const [brushColor, setBrushColor] = useState(MAP_BRUSH_COLORS[0]);
     const [brushSize, setBrushSize] = useState(4);
@@ -2607,6 +2649,12 @@ function MapTab({ game, me }) {
     const [playerChoice, setPlayerChoice] = useState('');
     const [demonChoice, setDemonChoice] = useState('');
     const [demonQuery, setDemonQuery] = useState('');
+    const [enemyForm, setEnemyForm] = useState({
+        label: '',
+        tooltip: '',
+        color: MAP_ENEMY_DEFAULT_COLOR,
+        showTooltip: true,
+    });
 
     useEffect(() => {
         if (!isDM && tool === 'draw' && (!mapState.settings.allowPlayerDrawing || mapState.paused)) {
@@ -2666,6 +2714,11 @@ function MapTab({ game, me }) {
         () => mapState.tokens.filter((token) => token.kind === 'demon'),
         [mapState.tokens]
     );
+    const enemyTokens = useMemo(
+        () => mapState.tokens.filter((token) => token.kind === 'enemy'),
+        [mapState.tokens]
+    );
+    const enemyFormValid = enemyForm.label.trim().length > 0;
 
     const availablePlayers = useMemo(() => {
         if (!isDM) return [];
@@ -3007,27 +3060,34 @@ function MapTab({ game, me }) {
         }
     }, [demonChoice, game.id]);
 
-    const handleToggleAllowDrawing = useCallback(async () => {
+    const handleAddEnemyToken = useCallback(async () => {
+        const name = enemyForm.label.trim();
+        if (!name) return;
         try {
-            const updated = await Games.updateMapSettings(game.id, {
-                allowPlayerDrawing: !mapState.settings.allowPlayerDrawing,
-            });
-            setMapState(normalizeClientMapState(updated));
+            const payload = {
+                kind: 'enemy',
+                label: name,
+                color: enemyForm.color || MAP_ENEMY_DEFAULT_COLOR,
+                showTooltip: !!enemyForm.showTooltip,
+            };
+            const tooltip = enemyForm.tooltip.trim();
+            if (tooltip) {
+                payload.tooltip = tooltip;
+            }
+            const response = await Games.addMapToken(game.id, payload);
+            const normalized = normalizeClientMapToken(response);
+            if (normalized) {
+                setMapState((prev) => ({
+                    ...prev,
+                    tokens: prev.tokens.concat(normalized),
+                    updatedAt: response?.updatedAt || prev.updatedAt,
+                }));
+            }
+            setEnemyForm({ label: '', tooltip: '', color: MAP_ENEMY_DEFAULT_COLOR, showTooltip: true });
         } catch (err) {
             alert(err.message);
         }
-    }, [game.id, mapState.settings.allowPlayerDrawing]);
-
-    const handleToggleAllowMoves = useCallback(async () => {
-        try {
-            const updated = await Games.updateMapSettings(game.id, {
-                allowPlayerTokenMoves: !mapState.settings.allowPlayerTokenMoves,
-            });
-            setMapState(normalizeClientMapState(updated));
-        } catch (err) {
-            alert(err.message);
-        }
-    }, [game.id, mapState.settings.allowPlayerTokenMoves]);
+    }, [enemyForm, game.id]);
 
     const handleTogglePause = useCallback(async () => {
         try {
@@ -3037,21 +3097,6 @@ function MapTab({ game, me }) {
             alert(err.message);
         }
     }, [game.id, mapState.paused]);
-
-    const handleClearStrokes = useCallback(async () => {
-        if (!isDM) return;
-        if (!confirm('Clear all drawings from the map?')) return;
-        try {
-            await Games.clearMapStrokes(game.id);
-            setMapState((prev) => ({
-                ...prev,
-                strokes: [],
-                updatedAt: new Date().toISOString(),
-            }));
-        } catch (err) {
-            alert(err.message);
-        }
-    }, [game.id, isDM]);
 
     return (
         <div className="map-tab">
@@ -3103,6 +3148,20 @@ function MapTab({ game, me }) {
                                     />
                                 ))}
                             </div>
+                            <label className="map-color-picker">
+                                <span className="text-small">Custom color</span>
+                                <div className="color-input">
+                                    <input
+                                        type="color"
+                                        value={brushColor}
+                                        onChange={(event) => {
+                                            const value = event.target.value || brushColor;
+                                            setBrushColor(typeof value === 'string' ? value : brushColor);
+                                        }}
+                                    />
+                                    <span className="text-muted text-small">{brushColor.toUpperCase()}</span>
+                                </div>
+                            </label>
                         </div>
                         <label className="map-brush-size">
                             <span className="text-small">Brush size</span>
@@ -3114,34 +3173,6 @@ function MapTab({ game, me }) {
                                 onChange={(event) => setBrushSize(Number(event.target.value) || 4)}
                             />
                         </label>
-                    </div>
-                )}
-                {isDM && (
-                    <div className="map-toolbar__row map-toolbar__settings">
-                        <label className="perm-toggle">
-                            <input
-                                type="checkbox"
-                                checked={mapState.settings.allowPlayerDrawing}
-                                onChange={handleToggleAllowDrawing}
-                            />
-                            <span className="perm-toggle__text">Allow players to draw</span>
-                        </label>
-                        <label className="perm-toggle">
-                            <input
-                                type="checkbox"
-                                checked={mapState.settings.allowPlayerTokenMoves}
-                                onChange={handleToggleAllowMoves}
-                            />
-                            <span className="perm-toggle__text">Allow players to move their token</span>
-                        </label>
-                        <button
-                            type="button"
-                            className="btn ghost btn-small"
-                            onClick={handleClearStrokes}
-                            disabled={mapState.strokes.length === 0}
-                        >
-                            Clear drawings
-                        </button>
                     </div>
                 )}
             </div>
@@ -3332,6 +3363,116 @@ function MapTab({ game, me }) {
                                         </div>
                                     );
                                 })}
+                            </div>
+                        )}
+                    </div>
+                    <div className="map-panel card">
+                        <h3>Enemy tokens</h3>
+                        {isDM && (
+                            <div className="map-panel__add">
+                                <label className="text-small" htmlFor="map-enemy-name">Enemy name</label>
+                                <input
+                                    id="map-enemy-name"
+                                    type="text"
+                                    value={enemyForm.label}
+                                    onChange={(event) =>
+                                        setEnemyForm((prev) => ({
+                                            ...prev,
+                                            label: event.target.value,
+                                        }))
+                                    }
+                                    placeholder="e.g. Shadow Trooper"
+                                />
+                                <label className="text-small" htmlFor="map-enemy-tooltip">Tooltip (optional)</label>
+                                <textarea
+                                    id="map-enemy-tooltip"
+                                    rows={2}
+                                    value={enemyForm.tooltip}
+                                    onChange={(event) =>
+                                        setEnemyForm((prev) => ({
+                                            ...prev,
+                                            tooltip: event.target.value,
+                                        }))
+                                    }
+                                    placeholder="HP, status, or notes…"
+                                />
+                                <div className="row" style={{ justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                                    <label className="color-input" htmlFor="map-enemy-color">
+                                        <span className="text-small">Token color</span>
+                                        <input
+                                            id="map-enemy-color"
+                                            type="color"
+                                            value={enemyForm.color}
+                                            onChange={(event) =>
+                                                setEnemyForm((prev) => ({
+                                                    ...prev,
+                                                    color: event.target.value || MAP_ENEMY_DEFAULT_COLOR,
+                                                }))
+                                            }
+                                        />
+                                        <span className="text-muted text-small">
+                                            {(enemyForm.color || MAP_ENEMY_DEFAULT_COLOR).toUpperCase()}
+                                        </span>
+                                    </label>
+                                    <label className="perm-toggle" style={{ marginLeft: 'auto' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={enemyForm.showTooltip}
+                                            onChange={(event) =>
+                                                setEnemyForm((prev) => ({
+                                                    ...prev,
+                                                    showTooltip: event.target.checked,
+                                                }))
+                                            }
+                                        />
+                                        <span className="perm-toggle__text">Show tooltip on hover</span>
+                                    </label>
+                                </div>
+                                <button
+                                    type="button"
+                                    className="btn btn-small"
+                                    onClick={handleAddEnemyToken}
+                                    disabled={!enemyFormValid}
+                                >
+                                    Place enemy
+                                </button>
+                            </div>
+                        )}
+                        {enemyTokens.length === 0 ? (
+                            <p className="map-empty text-muted">No enemies placed.</p>
+                        ) : (
+                            <div className="list">
+                                {enemyTokens.map((token) => (
+                                    <div key={token.id} className="map-token-row">
+                                        <div>
+                                            <strong>{token.label}</strong>
+                                            {token.rawTooltip && (
+                                                <div className="text-muted text-small">{token.rawTooltip}</div>
+                                            )}
+                                        </div>
+                                        {isDM && (
+                                            <div className="row" style={{ gap: 8 }}>
+                                                <label className="perm-toggle">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={token.showTooltip}
+                                                        onChange={(event) =>
+                                                            handleToggleTooltip(token, event.target.checked)
+                                                        }
+                                                    />
+                                                    <span className="perm-toggle__text">Tooltip</span>
+                                                </label>
+                                                <button
+                                                    type="button"
+                                                    className="btn ghost btn-small"
+                                                    onClick={() => handleRemoveToken(token)}
+                                                >
+                                                    Remove
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
                             </div>
                         )}
                     </div>
@@ -11874,6 +12015,13 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
     const storyDefaults = useMemo(() => normalizeStorySettings(game.story), [game.story]);
     const [storyForm, setStoryForm] = useState(storyDefaults);
     const [storySaving, setStorySaving] = useState(false);
+    const [mapSettings, setMapSettings] = useState(() => ({
+        allowPlayerDrawing: !!game.map?.settings?.allowPlayerDrawing,
+        allowPlayerTokenMoves: !!game.map?.settings?.allowPlayerTokenMoves,
+        paused: !!game.map?.paused,
+    }));
+    const [mapSaving, setMapSaving] = useState(false);
+    const [clearingDrawings, setClearingDrawings] = useState(false);
 
     useEffect(() => {
         setPerms({
@@ -11886,6 +12034,19 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
     useEffect(() => {
         setStoryForm(storyDefaults);
     }, [storyDefaults]);
+
+    useEffect(() => {
+        setMapSettings({
+            allowPlayerDrawing: !!game.map?.settings?.allowPlayerDrawing,
+            allowPlayerTokenMoves: !!game.map?.settings?.allowPlayerTokenMoves,
+            paused: !!game.map?.paused,
+        });
+    }, [
+        game.id,
+        game.map?.paused,
+        game.map?.settings?.allowPlayerDrawing,
+        game.map?.settings?.allowPlayerTokenMoves,
+    ]);
 
     const removablePlayers = useMemo(
         () =>
@@ -11907,329 +12068,472 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
         [storyDefaults, storyForm]
     );
 
-    return (
-        <div className="card">
-            <h3>Permissions</h3>
-            <p className="text-muted text-small" style={{ marginTop: -4 }}>
-                Decide which parts of the campaign your players can maintain themselves.
-            </p>
+    const mapStrokeCount = Array.isArray(game.map?.strokes) ? game.map.strokes.length : 0;
 
-            <div className="stack" style={{ marginTop: 12 }}>
-                {PERMISSION_OPTIONS.map((option) => (
-                    <label
-                        key={option.key}
-                        className={`perm-toggle${!isDM ? " is-readonly" : ""}`}
-                    >
-                        <input
-                            type="checkbox"
-                            checked={!!perms[option.key]}
-                            disabled={!isDM || saving}
-                            onChange={(e) =>
-                                setPerms((prev) => ({
-                                    ...prev,
-                                    [option.key]: e.target.checked,
-                                }))
-                            }
-                        />
-                        <div className="perm-toggle__text">
-                            <span className="perm-toggle__label">{option.label}</span>
-                            <span className="text-muted text-small">{option.description}</span>
-                        </div>
-                    </label>
-                ))}
-            </div>
+    const applyMapSettings = useCallback(
+        async (changes) => {
+            if (!isDM) return;
+            const previous = { ...mapSettings };
+            setMapSettings((current) => ({ ...current, ...changes }));
+            setMapSaving(true);
+            try {
+                const updated = await Games.updateMapSettings(game.id, changes);
+                setMapSettings({
+                    allowPlayerDrawing: !!updated.settings?.allowPlayerDrawing,
+                    allowPlayerTokenMoves: !!updated.settings?.allowPlayerTokenMoves,
+                    paused: !!updated.paused,
+                });
+                if (typeof onGameRefresh === "function") {
+                    await onGameRefresh();
+                }
+            } catch (err) {
+                alert(err.message);
+                setMapSettings(previous);
+            } finally {
+                setMapSaving(false);
+            }
+        },
+        [game.id, isDM, mapSettings, onGameRefresh]
+    );
 
-            <div className="row" style={{ justifyContent: "flex-end", marginTop: 16 }}>
-                <button
-                    className="btn"
-                    disabled={saving || !hasChanges}
-                    onClick={async () => {
-                        try {
-                            setSaving(true);
-                            const payload = PERMISSION_OPTIONS.reduce((acc, option) => {
-                                acc[option.key] = !!perms[option.key];
-                                return acc;
-                            }, {});
-                            await onUpdate(payload);
-                            setPerms(payload);
-                        } catch (e) {
-                            alert(e.message);
-                        } finally {
-                            setSaving(false);
-                        }
-                    }}
-                >
-                    {saving ? "Saving…" : hasChanges ? "Save changes" : "Saved"}
-                </button>
-            </div>
+    const handleClearDrawings = useCallback(async () => {
+        if (!isDM) return;
+        if (!confirm("Clear all drawings from the battle map?")) return;
+        try {
+            setClearingDrawings(true);
+            await Games.clearMapStrokes(game.id);
+            if (typeof onGameRefresh === "function") {
+                await onGameRefresh();
+            }
+        } catch (err) {
+            alert(err.message);
+        } finally {
+            setClearingDrawings(false);
+        }
+    }, [game.id, isDM, onGameRefresh]);
 
-            {isDM && (
-                <>
-                    <div className="divider" />
-                    <div className="col" style={{ gap: 12 }}>
-                        <h4>Discord story integration</h4>
-                        <p className="text-muted text-small" style={{ marginTop: 0 }}>
-                            Link your campaign to a Discord channel and webhook so the story tab can both read and post
-                            updates.
-                        </p>
-                        <label className="field" style={{ display: "grid", gap: 4 }}>
-                            <span className="text-small">Bot token</span>
-                            <input
-                                type="password"
-                                value={storyForm.botToken}
-                                onChange={(e) =>
-                                    setStoryForm((prev) => ({ ...prev, botToken: e.target.value }))
-                                }
-                                placeholder="Paste the Discord bot token for this campaign"
-                                autoComplete="off"
-                                spellCheck={false}
-                                disabled={storySaving}
-                            />
-                            <span className="text-muted text-small">
-                                Each campaign can use its own bot token. The bot must have access to the configured channel.
-                            </span>
-                        </label>
-                        <label className="field" style={{ display: "grid", gap: 4 }}>
-                            <span className="text-small">Channel ID</span>
-                            <input
-                                type="text"
-                                value={storyForm.channelId}
-                                onChange={(e) =>
-                                    setStoryForm((prev) => ({ ...prev, channelId: e.target.value }))
-                                }
-                                placeholder="e.g. 123456789012345678"
-                                disabled={storySaving}
-                            />
-                        </label>
-                        <label className="field" style={{ display: "grid", gap: 4 }}>
-                            <span className="text-small">Guild ID (optional)</span>
-                            <input
-                                type="text"
-                                value={storyForm.guildId}
-                                onChange={(e) =>
-                                    setStoryForm((prev) => ({ ...prev, guildId: e.target.value }))
-                                }
-                                placeholder="Needed for jump links if the webhook lives in another server"
-                                disabled={storySaving}
-                            />
-                        </label>
-                        <label className="field" style={{ display: "grid", gap: 4 }}>
-                            <span className="text-small">Webhook URL</span>
-                            <input
-                                type="url"
-                                value={storyForm.webhookUrl}
-                                onChange={(e) =>
-                                    setStoryForm((prev) => ({ ...prev, webhookUrl: e.target.value }))
-                                }
-                                placeholder="https://discord.com/api/webhooks/…"
-                                disabled={storySaving}
-                            />
-                        </label>
-                        <label className={`perm-toggle${storySaving ? " is-readonly" : ""}`}>
+    const navSections = useMemo(() => {
+        const sections = [
+            { key: "permissions", label: "Permissions" },
+            { key: "battleMap", label: "Battle Map" },
+            { key: "story", label: "Story Tools" },
+        ];
+        if (canKick) sections.push({ key: "members", label: "Members" });
+        if (canDelete) sections.push({ key: "danger", label: "Danger Zone" });
+        return sections;
+    }, [canKick, canDelete]);
+
+    const [activeSection, setActiveSection] = useState(() => navSections[0]?.key || "permissions");
+
+    useEffect(() => {
+        if (!navSections.some((section) => section.key === activeSection)) {
+            setActiveSection(navSections[0]?.key || "permissions");
+        }
+    }, [activeSection, navSections]);
+
+    let sectionContent = null;
+
+    if (activeSection === "permissions") {
+        sectionContent = (
+            <>
+                <h3>Permissions</h3>
+                <p className="text-muted text-small" style={{ marginTop: -4 }}>
+                    Decide which parts of the campaign your players can maintain themselves.
+                </p>
+
+                <div className="stack" style={{ marginTop: 12 }}>
+                    {PERMISSION_OPTIONS.map((option) => (
+                        <label
+                            key={option.key}
+                            className={`perm-toggle${!isDM ? " is-readonly" : ""}`}
+                        >
                             <input
                                 type="checkbox"
-                                checked={storyForm.allowPlayerPosts}
-                                disabled={storySaving}
+                                checked={!!perms[option.key]}
+                                disabled={!isDM || saving}
                                 onChange={(e) =>
-                                    setStoryForm((prev) => ({ ...prev, allowPlayerPosts: e.target.checked }))
+                                    setPerms((prev) => ({
+                                        ...prev,
+                                        [option.key]: e.target.checked,
+                                    }))
                                 }
                             />
                             <div className="perm-toggle__text">
-                                <span className="perm-toggle__label">Allow players to post from the dashboard</span>
-                                <span className="text-muted text-small">
-                                    When enabled, players get a composer in the Story tab. They can only speak as themselves
-                                    unless marked as Scribes.
-                                </span>
+                                <span className="perm-toggle__label">{option.label}</span>
+                                <span className="text-muted text-small">{option.description}</span>
                             </div>
                         </label>
-                        <div className="col" style={{ gap: 8 }}>
-                            <strong>Scribe access</strong>
-                            <p className="text-muted text-small" style={{ marginTop: 0 }}>
-                                Scribes can narrate as the outside storyteller instead of their character.
-                            </p>
-                            {removablePlayers.length === 0 ? (
-                                <span className="text-muted text-small">No players have joined yet.</span>
-                            ) : (
-                                removablePlayers.map((player, index) => {
-                                    if (!player?.userId) return null;
-                                    const label =
-                                        player.character?.name?.trim() ||
-                                        player.username ||
-                                        `Player ${index + 1}`;
-                                    const checked = storyForm.scribeIds.includes(player.userId);
-                                    return (
-                                        <label key={player.userId} className="perm-toggle">
-                                            <input
-                                                type="checkbox"
-                                                checked={checked}
-                                                disabled={storySaving}
-                                                onChange={(e) => {
-                                                    setStoryForm((prev) => {
-                                                        const next = new Set(prev.scribeIds);
-                                                        if (e.target.checked) {
-                                                            next.add(player.userId);
-                                                        } else {
-                                                            next.delete(player.userId);
-                                                        }
-                                                        return {
-                                                            ...prev,
-                                                            scribeIds: Array.from(next).sort(),
-                                                        };
-                                                    });
-                                                }}
-                                            />
-                                            <div className="perm-toggle__text">
-                                                <span className="perm-toggle__label">{label}</span>
-                                                {player.username && (
-                                                    <span className="text-muted text-small">@{player.username}</span>
-                                                )}
-                                            </div>
-                                        </label>
-                                    );
-                                })
-                            )}
-                        </div>
-                        <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}>
-                            <button
-                                className="btn"
-                                disabled={storySaving || !storyDirty}
-                                onClick={async () => {
-                                    try {
-                                        setStorySaving(true);
-                                        const payload = {
-                                            channelId: storyForm.channelId.trim(),
-                                            guildId: storyForm.guildId.trim(),
-                                            webhookUrl: storyForm.webhookUrl.trim(),
-                                            botToken: storyForm.botToken.trim(),
-                                            allowPlayerPosts: storyForm.allowPlayerPosts,
-                                            scribeIds: storyForm.scribeIds,
-                                        };
-                                        const result = await StoryLogs.configure(game.id, payload);
-                                        setStoryForm(normalizeStorySettings(result?.story));
-                                        if (typeof onGameRefresh === "function") {
-                                            await onGameRefresh();
-                                        }
-                                    } catch (e) {
-                                        alert(e.message);
-                                    } finally {
-                                        setStorySaving(false);
-                                    }
-                                }}
-                            >
-                                {storySaving ? "Saving…" : storyDirty ? "Save story settings" : "Saved"}
-                            </button>
-                        </div>
-                    </div>
-                </>
-            )}
+                    ))}
+                </div>
 
-            {canKick && (
-                <>
-                    <div className="divider" />
-                    <div className="col" style={{ gap: 12 }}>
-                        <h4>Campaign members</h4>
-                        <p style={{ color: "var(--muted)", marginTop: 0 }}>
-                            Remove players from the campaign if they should no longer have
-                            access.
-                        </p>
-                        <div className="list">
-                            {removablePlayers.length === 0 ? (
-                                <span className="text-muted text-small">
-                                    No players have joined yet.
-                                </span>
-                            ) : (
-                                removablePlayers.map((player, index) => {
-                                    const name =
-                                        player.character?.name?.trim() ||
-                                        player.username ||
-                                        `Player ${index + 1}`;
-                                    const subtitleParts = [];
-                                    if (player.username) {
-                                        subtitleParts.push(`@${player.username}`);
-                                    }
-                                    const charClass = player.character?.profile?.class;
-                                    if (charClass) subtitleParts.push(charClass);
-                                    const subtitle = subtitleParts.join(" · ");
-                                    const isBusy = removingId === player.userId;
-
-                                    return (
-                                        <div
-                                            key={player.userId || `player-${index}`}
-                                            className="row"
-                                            style={{
-                                                justifyContent: "space-between",
-                                                alignItems: "center",
-                                                gap: 12,
-                                            }}
-                                        >
-                                            <div className="col" style={{ gap: 2 }}>
-                                                <strong>{name}</strong>
-                                                {subtitle && (
-                                                    <span className="text-muted text-small">
-                                                        {subtitle}
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <button
-                                                type="button"
-                                                className="btn danger btn-small"
-                                                disabled={removingId !== null}
-                                                onClick={async () => {
-                                                    if (!canKick || typeof onKickPlayer !== "function") {
-                                                        return;
-                                                    }
-                                                    if (!player?.userId) return;
-                                                    const confirmName =
-                                                        player.character?.name?.trim() ||
-                                                        player.username ||
-                                                        "this player";
-                                                    if (
-                                                        !confirm(
-                                                            `Remove ${confirmName} from the campaign? They will lose access to this game.`
-                                                        )
-                                                    ) {
-                                                        return;
-                                                    }
-                                                    try {
-                                                        setRemovingId(player.userId);
-                                                        await onKickPlayer(player.userId);
-                                                    } catch (e) {
-                                                        alert(e.message);
-                                                    } finally {
-                                                        setRemovingId(null);
-                                                    }
-                                                }}
-                                            >
-                                                {isBusy ? "Removing…" : "Remove"}
-                                            </button>
-                                        </div>
-                                    );
-                                })
-                            )}
+                <div className="row" style={{ justifyContent: "flex-end", marginTop: 16 }}>
+                    <button
+                        className="btn"
+                        disabled={saving || !hasChanges}
+                        onClick={async () => {
+                            try {
+                                setSaving(true);
+                                const payload = PERMISSION_OPTIONS.reduce((acc, option) => {
+                                    acc[option.key] = !!perms[option.key];
+                                    return acc;
+                                }, {});
+                                await onUpdate(payload);
+                                setPerms(payload);
+                            } catch (e) {
+                                alert(e.message);
+                            } finally {
+                                setSaving(false);
+                            }
+                        }}
+                    >
+                        {saving ? "Saving…" : hasChanges ? "Save changes" : "Saved"}
+                    </button>
+                </div>
+            </>
+        );
+    } else if (activeSection === "battleMap") {
+        sectionContent = (
+            <>
+                <h3>Battle Map controls</h3>
+                <p className="text-muted text-small" style={{ marginTop: -4 }}>
+                    Control how players collaborate on the live battle map.
+                </p>
+                <div className="stack">
+                    <label className={`perm-toggle${!isDM ? " is-readonly" : ""}`}>
+                        <input
+                            type="checkbox"
+                            checked={mapSettings.allowPlayerDrawing}
+                            disabled={!isDM || mapSaving}
+                            onChange={(event) =>
+                                applyMapSettings({ allowPlayerDrawing: event.target.checked })
+                            }
+                        />
+                        <div className="perm-toggle__text">
+                            <span className="perm-toggle__label">Allow players to draw</span>
+                            <span className="text-muted text-small">
+                                When enabled, party members can sketch routes, traps, and plans directly on the board.
+                            </span>
                         </div>
+                    </label>
+                    <label className={`perm-toggle${!isDM ? " is-readonly" : ""}`}>
+                        <input
+                            type="checkbox"
+                            checked={mapSettings.allowPlayerTokenMoves}
+                            disabled={!isDM || mapSaving}
+                            onChange={(event) =>
+                                applyMapSettings({ allowPlayerTokenMoves: event.target.checked })
+                            }
+                        />
+                        <div className="perm-toggle__text">
+                            <span className="perm-toggle__label">Allow players to move their tokens</span>
+                            <span className="text-muted text-small">
+                                Grant owners the ability to drag their own token markers during encounters.
+                            </span>
+                        </div>
+                    </label>
+                    <label className={`perm-toggle${!isDM ? " is-readonly" : ""}`}>
+                        <input
+                            type="checkbox"
+                            checked={mapSettings.paused}
+                            disabled={!isDM || mapSaving}
+                            onChange={(event) => applyMapSettings({ paused: event.target.checked })}
+                        />
+                        <div className="perm-toggle__text">
+                            <span className="perm-toggle__label">Pause live updates</span>
+                            <span className="text-muted text-small">
+                                Pause the board while you prep the battlefield. Players keep their view until you resume.
+                            </span>
+                        </div>
+                    </label>
+                </div>
+                <div className="row" style={{ justifyContent: "space-between", marginTop: 12, gap: 12 }}>
+                    <span className="text-muted text-small">
+                        {mapStrokeCount === 0
+                            ? "No freehand drawings saved yet."
+                            : `${mapStrokeCount} drawing${mapStrokeCount === 1 ? "" : "s"} on the board.`}
+                    </span>
+                    <button
+                        type="button"
+                        className="btn ghost btn-small"
+                        disabled={!isDM || clearingDrawings || mapStrokeCount === 0}
+                        onClick={handleClearDrawings}
+                    >
+                        {clearingDrawings ? "Clearing…" : "Clear drawings"}
+                    </button>
+                </div>
+            </>
+        );
+    } else if (activeSection === "story") {
+        sectionContent = (
+            <>
+                <h3>Discord story integration</h3>
+                <p className="text-muted text-small" style={{ marginTop: -4 }}>
+                    Link your campaign to a Discord channel and webhook so the story tab can both read and post updates.
+                </p>
+                <label className="field" style={{ display: "grid", gap: 4 }}>
+                    <span className="text-small">Bot token</span>
+                    <input
+                        type="password"
+                        value={storyForm.botToken}
+                        onChange={(e) =>
+                            setStoryForm((prev) => ({ ...prev, botToken: e.target.value }))
+                        }
+                        placeholder="Paste the Discord bot token for this campaign"
+                        autoComplete="off"
+                        spellCheck={false}
+                        disabled={storySaving}
+                    />
+                    <span className="text-muted text-small">
+                        Each campaign can use its own bot token. The bot must have access to the configured channel.
+                    </span>
+                </label>
+                <label className="field" style={{ display: "grid", gap: 4 }}>
+                    <span className="text-small">Channel ID</span>
+                    <input
+                        type="text"
+                        value={storyForm.channelId}
+                        onChange={(e) =>
+                            setStoryForm((prev) => ({ ...prev, channelId: e.target.value }))
+                        }
+                        placeholder="e.g. 123456789012345678"
+                        disabled={storySaving}
+                    />
+                </label>
+                <label className="field" style={{ display: "grid", gap: 4 }}>
+                    <span className="text-small">Guild ID (optional)</span>
+                    <input
+                        type="text"
+                        value={storyForm.guildId}
+                        onChange={(e) =>
+                            setStoryForm((prev) => ({ ...prev, guildId: e.target.value }))
+                        }
+                        placeholder="Needed for jump links if the webhook lives in another server"
+                        disabled={storySaving}
+                    />
+                </label>
+                <label className="field" style={{ display: "grid", gap: 4 }}>
+                    <span className="text-small">Webhook URL</span>
+                    <input
+                        type="url"
+                        value={storyForm.webhookUrl}
+                        onChange={(e) =>
+                            setStoryForm((prev) => ({ ...prev, webhookUrl: e.target.value }))
+                        }
+                        placeholder="https://discord.com/api/webhooks/…"
+                        disabled={storySaving}
+                    />
+                </label>
+                <label className={`perm-toggle${storySaving ? " is-readonly" : ""}`}>
+                    <input
+                        type="checkbox"
+                        checked={storyForm.allowPlayerPosts}
+                        disabled={storySaving}
+                        onChange={(e) =>
+                            setStoryForm((prev) => ({ ...prev, allowPlayerPosts: e.target.checked }))
+                        }
+                    />
+                    <div className="perm-toggle__text">
+                        <span className="perm-toggle__label">Allow players to post from the dashboard</span>
+                        <span className="text-muted text-small">
+                            When enabled, players get a composer in the Story tab. They can only speak as themselves unless
+                            marked as Scribes.
+                        </span>
                     </div>
-                </>
-            )}
+                </label>
+                <div className="col" style={{ gap: 8 }}>
+                    <strong>Scribe access</strong>
+                    <p className="text-muted text-small" style={{ marginTop: 0 }}>
+                        Scribes can narrate as the outside storyteller instead of their character.
+                    </p>
+                    {removablePlayers.length === 0 ? (
+                        <span className="text-muted text-small">No players have joined yet.</span>
+                    ) : (
+                        removablePlayers.map((player, index) => {
+                            if (!player?.userId) return null;
+                            const label =
+                                player.character?.name?.trim() ||
+                                player.username ||
+                                `Player ${index + 1}`;
+                            const checked = storyForm.scribeIds.includes(player.userId);
+                            return (
+                                <label key={player.userId} className="perm-toggle">
+                                    <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        disabled={storySaving}
+                                        onChange={(e) => {
+                                            setStoryForm((prev) => {
+                                                const next = new Set(prev.scribeIds);
+                                                if (e.target.checked) {
+                                                    next.add(player.userId);
+                                                } else {
+                                                    next.delete(player.userId);
+                                                }
+                                                return {
+                                                    ...prev,
+                                                    scribeIds: Array.from(next).sort(),
+                                                };
+                                            });
+                                        }}
+                                    />
+                                    <div className="perm-toggle__text">
+                                        <span className="perm-toggle__label">{label}</span>
+                                        {player.username && (
+                                            <span className="text-muted text-small">@{player.username}</span>
+                                        )}
+                                    </div>
+                                </label>
+                            );
+                        })
+                    )}
+                </div>
+                <div className="row" style={{ justifyContent: "flex-end", gap: 8 }}>
+                    <button
+                        className="btn"
+                        disabled={storySaving || !storyDirty}
+                        onClick={async () => {
+                            try {
+                                setStorySaving(true);
+                                const payload = {
+                                    botToken: storyForm.botToken.trim(),
+                                    channelId: storyForm.channelId.trim(),
+                                    guildId: storyForm.guildId.trim(),
+                                    webhookUrl: storyForm.webhookUrl.trim(),
+                                    allowPlayerPosts: !!storyForm.allowPlayerPosts,
+                                    scribeIds: storyForm.scribeIds,
+                                };
+                                await Games.setStorySettings(game.id, payload);
+                                if (typeof onGameRefresh === "function") {
+                                    await onGameRefresh();
+                                }
+                                setStoryForm(normalizeStorySettings({
+                                    ...storyForm,
+                                    ...payload,
+                                }));
+                            } catch (e) {
+                                alert(e.message);
+                            } finally {
+                                setStorySaving(false);
+                            }
+                        }}
+                    >
+                        {storySaving ? "Saving…" : storyDirty ? "Save story settings" : "Saved"}
+                    </button>
+                </div>
+            </>
+        );
+    } else if (activeSection === "members" && canKick) {
+        sectionContent = (
+            <>
+                <h3>Campaign members</h3>
+                <p style={{ color: "var(--muted)", marginTop: -4 }}>
+                    Remove players from the campaign if they should no longer have access.
+                </p>
+                <div className="list">
+                    {removablePlayers.length === 0 ? (
+                        <span className="text-muted text-small">No players have joined yet.</span>
+                    ) : (
+                        removablePlayers.map((player, index) => {
+                            const name =
+                                player.character?.name?.trim() ||
+                                player.username ||
+                                `Player ${index + 1}`;
+                            const subtitleParts = [];
+                            if (player.username) {
+                                subtitleParts.push(`@${player.username}`);
+                            }
+                            const charClass = player.character?.profile?.class;
+                            if (charClass) subtitleParts.push(charClass);
+                            const subtitle = subtitleParts.join(" · ");
+                            const isBusy = removingId === player.userId;
 
-            {canDelete && (
-                <>
-                    <div className="divider" />
-                    <div className="col" style={{ gap: 12 }}>
-                        <h4>Danger Zone</h4>
-                        <p style={{ color: "var(--muted)", marginTop: 0 }}>
-                            Deleting this game will remove all characters, inventory, and invites
-                            for every player.
-                        </p>
-                        <button className="btn danger" onClick={onDelete}>
-                            Delete Game
-                        </button>
-                    </div>
-                </>
-            )}
+                            return (
+                                <div
+                                    key={player.userId || `player-${index}`}
+                                    className="row"
+                                    style={{
+                                        justifyContent: "space-between",
+                                        alignItems: "center",
+                                        gap: 12,
+                                    }}
+                                >
+                                    <div className="col" style={{ gap: 2 }}>
+                                        <strong>{name}</strong>
+                                        {subtitle && (
+                                            <span className="text-muted text-small">{subtitle}</span>
+                                        )}
+                                    </div>
+                                    <button
+                                        type="button"
+                                        className="btn danger btn-small"
+                                        disabled={removingId !== null}
+                                        onClick={async () => {
+                                            if (!canKick || typeof onKickPlayer !== "function") {
+                                                return;
+                                            }
+                                            if (!player?.userId) return;
+                                            const confirmName =
+                                                player.character?.name?.trim() ||
+                                                player.username ||
+                                                "this player";
+                                            if (
+                                                !confirm(
+                                                    `Remove ${confirmName} from the campaign? They will lose access to this game.`
+                                                )
+                                            ) {
+                                                return;
+                                            }
+                                            try {
+                                                setRemovingId(player.userId);
+                                                await onKickPlayer(player.userId);
+                                            } catch (e) {
+                                                alert(e.message);
+                                            } finally {
+                                                setRemovingId(null);
+                                            }
+                                        }}
+                                    >
+                                        {isBusy ? "Removing…" : "Remove"}
+                                    </button>
+                                </div>
+                            );
+                        })
+                    )}
+                </div>
+            </>
+        );
+    } else if (activeSection === "danger" && canDelete) {
+        sectionContent = (
+            <>
+                <h3>Danger Zone</h3>
+                <p style={{ color: "var(--muted)", marginTop: -4 }}>
+                    Deleting this game will remove all characters, inventory, and invites for every player.
+                </p>
+                <button className="btn danger" onClick={onDelete}>
+                    Delete Game
+                </button>
+            </>
+        );
+    }
+
+    return (
+        <div className="card settings-card">
+            <div className="settings-tabs">
+                {navSections.map((section) => (
+                    <button
+                        key={section.key}
+                        type="button"
+                        className={`settings-tab${activeSection === section.key ? " is-active" : ""}`}
+                        onClick={() => setActiveSection(section.key)}
+                    >
+                        {section.label}
+                    </button>
+                ))}
+            </div>
+            <div className="settings-content">{sectionContent}</div>
         </div>
     );
 }
-
 // ---------- Utils ----------
 function get(obj, path) {
     return path.split(".").reduce((o, k) => (o == null ? o : o[k]), obj);

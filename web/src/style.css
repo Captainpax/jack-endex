@@ -428,6 +428,12 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     gap: 6px;
 }
 
+.map-color-picker {
+    display: grid;
+    gap: 4px;
+    margin-top: 8px;
+}
+
 .map-color {
     width: 28px;
     height: 28px;
@@ -444,6 +450,34 @@ p  { margin: 0 0 .75rem; color: var(--text); }
 .map-color.is-active {
     border-color: rgba(255, 255, 255, 0.8);
     box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35), 0 0 0 4px rgba(15, 23, 42, 0.2);
+}
+
+.color-input {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+}
+.color-input input[type="color"] {
+    appearance: none;
+    border: none;
+    padding: 0;
+    width: 40px;
+    height: 28px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    background: none;
+}
+.color-input input[type="color"]::-webkit-color-swatch {
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+}
+.color-input input[type="color"]::-webkit-color-swatch-wrapper {
+    padding: 0;
+}
+.color-input input[type="color"]::-moz-color-swatch {
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
 }
 
 .map-brush-size {
@@ -552,6 +586,10 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     border-color: rgba(249, 115, 22, 0.75);
 }
 
+.map-token--enemy {
+    border-color: rgba(239, 68, 68, 0.75);
+}
+
 .map-board__overlay {
     position: absolute;
     inset: 0;
@@ -602,6 +640,50 @@ p  { margin: 0 0 .75rem; color: var(--text); }
 
 .map-empty {
     margin: 4px 0 0;
+}
+
+
+.settings-card {
+    display: grid;
+    gap: 16px;
+}
+
+.settings-tabs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.settings-tab {
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background var(--trans-fast), color var(--trans-fast), border-color var(--trans-fast);
+}
+
+.settings-tab:hover {
+    border-color: var(--brand);
+}
+
+.settings-tab.is-active {
+    background: var(--brand);
+    color: #ffffff;
+    border-color: var(--brand);
+    box-shadow: var(--shadow-sm);
+}
+
+.settings-tab:focus-visible {
+    outline: none;
+    box-shadow: var(--focus);
+}
+
+.settings-content {
+    display: grid;
+    gap: 16px;
 }
 
 /* Gear overview */
