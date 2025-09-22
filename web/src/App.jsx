@@ -126,6 +126,14 @@ const PLAYER_NAV = [
 
 const RealtimeContext = createContext(null);
 
+const GEAR_TYPE_KEYWORDS = ["weapon", "armor", "accessory"];
+const GEAR_TYPE_PATTERNS = GEAR_TYPE_KEYWORDS.map((keyword) => new RegExp(`\\b${keyword}\\b`, "i"));
+
+function isGearCategory(type) {
+    if (typeof type !== "string") return false;
+    return GEAR_TYPE_PATTERNS.some((pattern) => pattern.test(type));
+}
+
 function parseAppLocation(loc) {
     if (!loc) {
         return { joinCode: null, game: null };
@@ -7245,7 +7253,6 @@ function ItemsTab({ game, me, onUpdate }) {
     const [busyRow, setBusyRow] = useState(null);
     const [selectedPlayerId, setSelectedPlayerId] = useState("");
     const [giveBusyId, setGiveBusyId] = useState(null);
-    const gearTypes = ["weapon", "armor", "accessory"]; // types reserved for gear
 
     const isDM = game.dmId === me.id;
     const canEdit = isDM || game.permissions?.canEditItems;
@@ -7304,12 +7311,8 @@ function ItemsTab({ game, me, onUpdate }) {
         }
     };
 
-    const itemList = premade.filter(
-        (it) => !gearTypes.some((t) => it.type?.toLowerCase().startsWith(t))
-    );
-    const gearList = premade.filter((it) =>
-        gearTypes.some((t) => it.type?.toLowerCase().startsWith(t))
-    );
+    const itemList = premade.filter((it) => !isGearCategory(it.type));
+    const gearList = premade.filter((it) => isGearCategory(it.type));
     const customItems = Array.isArray(game.items?.custom) ? game.items.custom : [];
     const customGear = Array.isArray(game.gear?.custom) ? game.gear.custom : [];
     const libraryItems = [...customItems, ...itemList];
@@ -8584,7 +8587,7 @@ function GearTab({ game, me, onUpdate }) {
     const [busySave, setBusySave] = useState(false);
     const [busyRow, setBusyRow] = useState(null);
     const [selectedPlayerId, setSelectedPlayerId] = useState("");
-    const gearTypes = ["weapon", "armor", "accessory"];
+    const [giveBusyId, setGiveBusyId] = useState(null);
 
     const isDM = game.dmId === me.id;
     const canEdit = isDM || game.permissions?.canEditGear;
@@ -8645,9 +8648,7 @@ function GearTab({ game, me, onUpdate }) {
         }
     };
 
-    const gearList = premade.filter((it) =>
-        gearTypes.some((t) => it.type?.toLowerCase().startsWith(t))
-    );
+    const gearList = premade.filter((it) => isGearCategory(it.type));
     const customGear = Array.isArray(game.gear?.custom) ? game.gear.custom : [];
     const players = (game.players || []).filter(
         (p) => (p?.role || "").toLowerCase() !== "dm"
@@ -8687,6 +8688,37 @@ function GearTab({ game, me, onUpdate }) {
         const self = players.find((p) => p.userId === me.id);
         return self ? [self] : [];
     }, [isDM, me.id, playerOptions, players, selectedPlayerId]);
+
+    const selectedPlayer = isDM ? visiblePlayers[0] : null;
+    const selectedPlayerLabel = useMemo(() => {
+        if (!selectedPlayer) return "";
+        return (
+            selectedPlayer.character?.name?.trim() ||
+            selectedPlayer.username ||
+            (selectedPlayer.userId ? `Player ${selectedPlayer.userId.slice(0, 6)}` : "Unclaimed slot")
+        );
+    }, [selectedPlayer]);
+    const canGiveToSelected = isDM && !!selectedPlayer?.userId;
+
+    const handleGiveCustom = useCallback(
+        async (item) => {
+            if (!isDM || !selectedPlayer?.userId || !item) return;
+            try {
+                setGiveBusyId(item.id);
+                await Games.addPlayerGearBag(game.id, selectedPlayer.userId, {
+                    name: item.name,
+                    type: item.type,
+                    desc: item.desc,
+                });
+                await onUpdate?.();
+            } catch (e) {
+                alert(e.message);
+            } finally {
+                setGiveBusyId(null);
+            }
+        },
+        [game.id, isDM, onUpdate, selectedPlayer?.userId]
+    );
 
     return (
         <div className="col" style={{ display: "grid", gap: 16 }}>
@@ -8729,6 +8761,13 @@ function GearTab({ game, me, onUpdate }) {
                     </div>
 
                     <h4 style={{ marginTop: 16 }}>Game Custom Gear</h4>
+                    {isDM && (
+                        <p className="text-muted text-small" style={{ marginTop: -4 }}>
+                            {canGiveToSelected
+                                ? `Give buttons target ${selectedPlayerLabel}.`
+                                : "Select a claimed player below to enable the Give button."}
+                        </p>
+                    )}
                     <div className="list">
                         {customGear.map((it) => (
                             <div key={it.id} className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -8736,25 +8775,51 @@ function GearTab({ game, me, onUpdate }) {
                                     <b>{it.name}</b> — {it.type || "—"}
                                     <div style={{ opacity: 0.85, fontSize: 12 }}>{it.desc}</div>
                                 </div>
-                                {canEdit && (
-                                    <div className="row" style={{ gap: 6 }}>
-                                        <button
-                                            className="btn"
-                                            onClick={() => {
-                                                setEditing(it);
-                                                setForm({ name: it.name || "", type: it.type || "", desc: it.desc || "" });
-                                            }}
-                                            disabled={busySave}
-                                        >
-                                            Edit
-                                        </button>
-                                        <button
-                                            className="btn"
-                                            onClick={() => remove(it.id)}
-                                            disabled={busyRow === it.id}
-                                        >
-                                            {busyRow === it.id ? "…" : "Remove"}
-                                        </button>
+                                {(isDM || canEdit) && (
+                                    <div className="row" style={{ gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                                        {isDM && (
+                                            <button
+                                                className="btn"
+                                                onClick={() => handleGiveCustom(it)}
+                                                disabled={!canGiveToSelected || giveBusyId === it.id}
+                                                title={
+                                                    !selectedPlayer?.userId
+                                                        ? "Select a player slot linked to a user to give this gear."
+                                                        : undefined
+                                                }
+                                            >
+                                                {giveBusyId === it.id
+                                                    ? "Giving…"
+                                                    : canGiveToSelected
+                                                    ? `Give to ${selectedPlayerLabel}`
+                                                    : "Give"}
+                                            </button>
+                                        )}
+                                        {canEdit && (
+                                            <>
+                                                <button
+                                                    className="btn"
+                                                    onClick={() => {
+                                                        setEditing(it);
+                                                        setForm({
+                                                            name: it.name || "",
+                                                            type: it.type || "",
+                                                            desc: it.desc || "",
+                                                        });
+                                                    }}
+                                                    disabled={busySave}
+                                                >
+                                                    Edit
+                                                </button>
+                                                <button
+                                                    className="btn"
+                                                    onClick={() => remove(it.id)}
+                                                    disabled={busyRow === it.id}
+                                                >
+                                                    {busyRow === it.id ? "…" : "Remove"}
+                                                </button>
+                                            </>
+                                        )}
                                     </div>
                                 )}
                             </div>
