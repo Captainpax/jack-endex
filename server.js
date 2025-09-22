@@ -29,6 +29,20 @@ const pendingPersonaRequests = new Map();
 const pendingTrades = new Map();
 const storyBroadcastQueue = new Map();
 const DISCORD_API_BASE = 'https://discord.com/api/v10';
+const readiness = {
+    db: false,
+    discord: false,
+    server: false,
+    ready: false,
+};
+
+function updateReadiness() {
+    readiness.ready = readiness.db && readiness.discord && readiness.server;
+}
+
+function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
 const PERSONA_REQUEST_TIMEOUT_MS = 120_000;
 const TRADE_TIMEOUT_MS = 180_000;
 const YOUTUBE_ID_REGEX = /^[A-Za-z0-9_-]{11}$/;
@@ -64,15 +78,8 @@ if (!MONGODB_URI) {
     process.exit(1);
 }
 
-try {
-    await mongoose.connect(MONGODB_URI, { dbName: MONGODB_DB_NAME || undefined });
-    console.log('[db] Connected to MongoDB');
-} catch (err) {
-    console.error('[db] Failed to connect to MongoDB', err);
-    process.exit(1);
-}
-
-await ensureInitialDemonDocs();
+const DB_CONNECT_MAX_ATTEMPTS = Math.max(1, envNumber('MONGODB_CONNECT_MAX_ATTEMPTS', 5) || 5);
+const DB_CONNECT_RETRY_DELAY_MS = Math.max(500, envNumber('MONGODB_CONNECT_RETRY_MS', 2000) || 2000);
 
 const SESSION_SECRET = envString('SESSION_SECRET', 'dev-secret');
 const DEFAULT_DISCORD_BOT_TOKEN = readBotToken(
@@ -96,6 +103,139 @@ const PRIMARY_DISCORD_INFO = {
     defaultChannelId: readSnowflake(DEFAULT_DISCORD_CHANNEL_ID) || null,
     pollIntervalMs: DEFAULT_DISCORD_POLL_INTERVAL_MS,
 };
+const DISCORD_STARTUP_MAX_ATTEMPTS = Math.max(1, envNumber('DISCORD_STARTUP_MAX_ATTEMPTS', 3) || 3);
+const DISCORD_STARTUP_RETRY_DELAY_MS = Math.max(1_000, envNumber('DISCORD_STARTUP_RETRY_MS', 2_000) || 2_000);
+
+mongoose.connection.on('connected', () => {
+    readiness.db = true;
+    updateReadiness();
+});
+
+mongoose.connection.on('disconnected', () => {
+    readiness.db = false;
+    updateReadiness();
+    console.warn('[db] Lost connection to MongoDB.');
+});
+
+mongoose.connection.on('reconnected', () => {
+    readiness.db = true;
+    updateReadiness();
+    console.log('[db] Reconnected to MongoDB.');
+});
+
+mongoose.connection.on('error', (err) => {
+    console.error('[db] MongoDB connection error:', err);
+});
+
+async function connectToDatabaseWithRetry(
+    uri,
+    options = {},
+    { attempts = DB_CONNECT_MAX_ATTEMPTS, delayMs = DB_CONNECT_RETRY_DELAY_MS } = {}
+) {
+    const totalAttempts = Math.max(1, Math.floor(attempts));
+    const baseDelay = Math.max(500, Math.floor(delayMs));
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
+        try {
+            await mongoose.connect(uri, options);
+            console.log(`[db] Connected to MongoDB (attempt ${attempt}/${totalAttempts}).`);
+            readiness.db = true;
+            updateReadiness();
+            return;
+        } catch (err) {
+            lastError = err;
+            readiness.db = false;
+            updateReadiness();
+            console.error(`[db] MongoDB connection attempt ${attempt} failed:`, err);
+            if (attempt >= totalAttempts) break;
+            const waitMs = Math.min(baseDelay * 2 ** (attempt - 1), 30_000);
+            console.log(`[db] Retrying MongoDB connection in ${waitMs}ms…`);
+            await delay(waitMs);
+        }
+    }
+
+    throw lastError ?? new Error('Failed to connect to MongoDB.');
+}
+
+async function ensureDiscordBotOnline({
+    retries = DISCORD_STARTUP_MAX_ATTEMPTS,
+    delayMs = DISCORD_STARTUP_RETRY_DELAY_MS,
+} = {}) {
+    const token = getDiscordBotToken();
+    if (!token) {
+        console.log('[discord] No Discord bot token configured; skipping availability check.');
+        readiness.discord = true;
+        updateReadiness();
+        return;
+    }
+
+    if (typeof globalThis.fetch !== 'function') {
+        console.warn('[discord] fetch API not available in this runtime; skipping availability check.');
+        readiness.discord = true;
+        updateReadiness();
+        return;
+    }
+
+    const totalAttempts = Math.max(1, Math.floor(retries));
+    const baseDelay = Math.max(1_000, Math.floor(delayMs));
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
+        try {
+            const res = await globalThis.fetch(`${DISCORD_API_BASE}/users/@me`, {
+                method: 'GET',
+                headers: {
+                    Authorization: `Bot ${token}`,
+                    'User-Agent': 'jack-endex/startup-check (+https://jack-endex.app)',
+                    Accept: 'application/json',
+                },
+            });
+
+            if (res.status === 401) {
+                throw new Error('Discord rejected the bot token (401 Unauthorized).');
+            }
+            if (!res.ok) {
+                let detail = '';
+                try {
+                    detail = await res.text();
+                } catch {
+                    // ignore body parsing errors
+                }
+                const snippet = detail ? `: ${detail.slice(0, 200)}` : '';
+                throw new Error(`Discord API responded with ${res.status}${snippet}`);
+            }
+
+            let identity = null;
+            try {
+                identity = await res.json();
+            } catch {
+                identity = null;
+            }
+
+            const username = identity?.username || 'bot';
+            const discriminator =
+                identity?.discriminator && identity.discriminator !== '0'
+                    ? `#${identity.discriminator}`
+                    : '';
+            console.log(`[discord] Bot ready as ${username}${discriminator}.`);
+            readiness.discord = true;
+            updateReadiness();
+            return;
+        } catch (err) {
+            lastError = err;
+            readiness.discord = false;
+            updateReadiness();
+            console.error(`[discord] Availability check attempt ${attempt}/${totalAttempts} failed:`, err);
+            if (attempt >= totalAttempts) break;
+            const waitMs = Math.min(baseDelay * 2 ** (attempt - 1), 30_000);
+            console.log(`[discord] Retrying bot availability check in ${waitMs}ms…`);
+            await delay(waitMs);
+        }
+    }
+
+    throw lastError ?? new Error('Discord bot did not become ready.');
+}
 
 function parseYouTubeTimecode(raw) {
     if (typeof raw !== 'string') return 0;
@@ -3025,6 +3165,23 @@ const sessionParser = session({
 
 app.use(sessionParser);
 
+app.get('/health', (_req, res) => {
+    const status = {
+        ready: readiness.ready,
+        components: {
+            db: readiness.db,
+            discord: readiness.discord,
+            server: readiness.server,
+        },
+    };
+    res.status(readiness.ready ? 200 : 503).json(status);
+});
+
+app.use((req, res, next) => {
+    if (readiness.ready) return next();
+    res.status(503).json({ error: 'server_initializing' });
+});
+
 function requireAuth(req, res, next) {
     if (!req.session.userId) return res.status(401).json({ error: 'unauthenticated' });
     next();
@@ -4937,6 +5094,10 @@ app.use((err, _req, res, next) => {
 });
 
 const server = http.createServer(app);
+server.on('close', () => {
+    readiness.server = false;
+    updateReadiness();
+});
 const wss = new WebSocketServer({ noServer: true });
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -4987,6 +5148,12 @@ server.on('upgrade', (req, socket, head) => {
         return;
     }
 
+    if (!readiness.ready) {
+        socket.write('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+    }
+
     sessionParser(req, {}, () => {
         if (!req.session || !req.session.userId) {
             socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
@@ -5004,5 +5171,33 @@ server.on('upgrade', (req, socket, head) => {
     });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`server listening on ${PORT}`));
+async function startServer() {
+    try {
+        await connectToDatabaseWithRetry(MONGODB_URI, { dbName: MONGODB_DB_NAME || undefined });
+
+        await ensureInitialDemonDocs();
+
+        await ensureDiscordBotOnline();
+
+        const port = process.env.PORT || 3000;
+        await new Promise((resolve, reject) => {
+            const onError = (err) => {
+                server.off('error', onError);
+                reject(err);
+            };
+            server.once('error', onError);
+            server.listen(port, () => {
+                server.off('error', onError);
+                readiness.server = true;
+                updateReadiness();
+                console.log(`server listening on ${port}`);
+                resolve();
+            });
+        });
+    } catch (err) {
+        console.error('[startup] Failed to initialize server:', err);
+        process.exit(1);
+    }
+}
+
+await startServer();
