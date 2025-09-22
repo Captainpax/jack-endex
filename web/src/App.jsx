@@ -13,6 +13,34 @@ const DEMON_IMAGE_FALLBACK_BASES = [
     "https://static.wikia.nocookie.net/megamitensei",
 ];
 const DEMON_IMAGE_FILE_RE = /\.(?:png|jpe?g|gif|webp|svg)$/i;
+const DEMON_IMAGE_PROXY_ORIGINS = [
+    "megatenwiki.com",
+    "www.megatenwiki.com",
+    "static.megatenwiki.com",
+    "megatenwiki.miraheze.org",
+    "static.miraheze.org",
+    "static.wikia.nocookie.net",
+];
+
+function shouldProxyDemonImage(url) {
+    if (typeof url !== "string") return false;
+    const trimmed = url.trim();
+    if (!trimmed || /^data:/i.test(trimmed) || /^blob:/i.test(trimmed)) return false;
+    let parsed;
+    try {
+        parsed = new URL(trimmed, "https://megatenwiki.com/");
+    } catch {
+        return false;
+    }
+    if (!/^https?:$/i.test(parsed.protocol)) return false;
+    const host = (parsed.host || "").toLowerCase();
+    if (!host) return false;
+    return DEMON_IMAGE_PROXY_ORIGINS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
+}
+
+function createProxiedImageSource(url) {
+    return `/api/personas/image-proxy?src=${encodeURIComponent(url)}`;
+}
 
 function computeDemonImageSources(imageUrl) {
     const trimmed = typeof imageUrl === "string" ? imageUrl.trim() : "";
@@ -141,7 +169,27 @@ function computeDemonImageSources(imageUrl) {
         addSpecialFallback();
     }
 
-    return sources;
+    if (sources.length === 0) {
+        return sources;
+    }
+
+    const finalSources = [];
+    const pushSource = (value) => {
+        if (!value) return;
+        const normalized = value.trim();
+        if (!normalized) return;
+        if (finalSources.includes(normalized)) return;
+        finalSources.push(normalized);
+    };
+
+    for (const source of sources) {
+        if (shouldProxyDemonImage(source)) {
+            pushSource(createProxiedImageSource(source));
+        }
+        pushSource(source);
+    }
+
+    return finalSources;
 }
 
 function DemonImage({ src, alt, onError, crossOrigin: crossOriginProp, referrerPolicy: referrerPolicyProp, ...imgProps }) {
