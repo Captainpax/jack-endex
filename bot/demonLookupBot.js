@@ -166,6 +166,12 @@ function startGateway() {
                 sequence = s;
             }
             switch (op) {
+                case 1: { // Heartbeat request
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ op: 1, d: sequence }));
+                    }
+                    break;
+                }
                 case 10: { // Hello
                     cleanup();
                     heartbeatInterval = setInterval(() => {
