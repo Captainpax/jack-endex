@@ -1,6 +1,6 @@
 // --- FILE: web/src/App.jsx ---
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Auth, Games, Help, Items, Personas, StoryLogs, onApiActivity } from "./api";
+import { ApiError, Auth, Games, Help, Items, Personas, StoryLogs, onApiActivity } from "./api";
 
 const EMPTY_ARRAY = Object.freeze([]);
 
@@ -116,6 +116,33 @@ function normalizeAlertEntry(entry) {
         : "Dungeon Master";
     const issuedAt = typeof entry.issuedAt === "string" ? entry.issuedAt : new Date().toISOString();
     return { id, message, senderName, issuedAt, senderId: entry.senderId || null };
+}
+
+function normalizePrimaryBot(primaryBot) {
+    if (!primaryBot || typeof primaryBot !== "object") {
+        return {
+            available: false,
+            inviteUrl: "",
+            applicationId: "",
+            defaultGuildId: "",
+            defaultChannelId: "",
+        };
+    }
+
+    const inviteUrl = typeof primaryBot.inviteUrl === "string" ? primaryBot.inviteUrl : "";
+    const applicationId = typeof primaryBot.applicationId === "string" ? primaryBot.applicationId : "";
+    const defaultGuildId = typeof primaryBot.defaultGuildId === "string" ? primaryBot.defaultGuildId : "";
+    const defaultChannelId = typeof primaryBot.defaultChannelId === "string"
+        ? primaryBot.defaultChannelId
+        : "";
+
+    return {
+        available: !!primaryBot.available,
+        inviteUrl,
+        applicationId,
+        defaultGuildId,
+        defaultChannelId,
+    };
 }
 
 const DM_NAV = [
@@ -1214,7 +1241,14 @@ function getDemonSkillList(demon) {
     if (!demon) return EMPTY_ARRAY;
     if (Array.isArray(demon.skills)) {
         return demon.skills
-            .map((entry) => (typeof entry === 'string' ? entry.trim() : String(entry ?? '')))
+            .map((entry) => {
+                if (typeof entry === 'string') return entry.trim();
+                if (entry && typeof entry === 'object') {
+                    if (typeof entry.name === 'string') return entry.name.trim();
+                    if (typeof entry.label === 'string') return entry.label.trim();
+                }
+                return '';
+            })
             .filter((entry) => entry.length > 0);
     }
     if (typeof demon.skills === 'string') {
@@ -6119,11 +6153,16 @@ function normalizeStorySettings(story) {
             botToken: "",
             allowPlayerPosts: false,
             scribeIds: [],
+            webhookConfigured: false,
+            botTokenConfigured: false,
+            primaryBot: normalizePrimaryBot(null),
         };
     }
     const ids = Array.isArray(story.scribeIds)
         ? story.scribeIds.filter((id) => typeof id === "string").sort()
         : [];
+    const webhookConfigured = !!(story.webhookConfigured || story.webhookUrl);
+    const botTokenConfigured = !!(story.botTokenConfigured || story.botToken);
     return {
         channelId: story.channelId || "",
         guildId: story.guildId || "",
@@ -6131,6 +6170,9 @@ function normalizeStorySettings(story) {
         botToken: typeof story.botToken === "string" ? story.botToken : "",
         allowPlayerPosts: !!story.allowPlayerPosts,
         scribeIds: ids,
+        webhookConfigured,
+        botTokenConfigured,
+        primaryBot: normalizePrimaryBot(story.primaryBot),
     };
 }
 
@@ -11411,6 +11453,25 @@ function DemonTab({ game, me, onUpdate }) {
             setNotes(p.description || "");
             setImage(p.image || "");
         } catch (e) {
+            if (e instanceof ApiError && (e.code === "persona_not_found" || e.message === "persona_not_found")) {
+                const suggestion = e.details?.closeMatch;
+                if (suggestion?.slug && suggestion.slug !== slug) {
+                    const displayName = suggestion.name || suggestion.slug;
+                    const confidence = typeof suggestion.confidence === "number"
+                        ? ` (confidence ${(suggestion.confidence * 100).toFixed(1)}%)`
+                        : "";
+                    if (
+                        confirm(
+                            `No demon matched "${slug}". Did you mean ${displayName}${confidence}?`
+                        )
+                    ) {
+                        await pick(suggestion.slug);
+                        return;
+                    }
+                }
+                alert(`No demon matched "${slug}".`);
+                return;
+            }
             alert(e.message);
         }
     };
@@ -11740,97 +11801,114 @@ function DemonTab({ game, me, onUpdate }) {
                         const skillList = getDemonSkillList(d);
                         const canShowSkillModal = skillList.length > 0 && combatSkills.length > 0;
                         return (
-                            <article key={d.id || d.name} className="card demon-card">
-                                <div className="demon-card__header">
+                                                        <article key={d.id || d.name} className="card demon-card">
+                                <header className="demon-card__top">
+                                    <div className="demon-card__identity">
+                                        <h4 className="demon-card__name">{d.name}</h4>
+                                        <div className="demon-card__chips">
+                                            <span className="demon-card__chip">{d.arcana ?? '—'}</span>
+                                            <span className="demon-card__chip">{d.alignment ?? '—'}</span>
+                                        </div>
+                                    </div>
+                                    <div className="demon-card__actions">
+                                        <span className="demon-card__level">LV {d.level ?? 0}</span>
+                                        {canEdit && (
+                                            <div className="demon-card__buttons">
+                                                <button
+                                                    type="button"
+                                                    className="btn ghost btn-small"
+                                                    onClick={() => startEdit(d)}
+                                                    disabled={busySave}
+                                                >
+                                                    Edit
+                                                </button>
+                                                {isDM && (
+                                                    <button
+                                                        type="button"
+                                                        className="btn ghost btn-small"
+                                                        onClick={() => remove(d.id)}
+                                                        disabled={busyDelete === d.id}
+                                                    >
+                                                        {busyDelete === d.id ? '…' : 'Remove'}
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                </header>
+                                {d.description && <p className="demon-card__description">{d.description}</p>}
+                                <div className="demon-card__body">
                                     {d.image && (
                                         <DemonImage
                                             src={d.image}
                                             alt={`${d.name} artwork`}
                                             loading="lazy"
                                             decoding="async"
-                                            className="demon-card__image"
+                                            className="demon-card__portrait"
                                         />
                                     )}
-                                    <div className="demon-card__title">
-                                        <div className="demon-card__name">
-                                            <strong>{d.name}</strong>
+                                    <div className="demon-card__info">
+                                        <div className="demon-card__stats-row">
+                                            {ABILITY_DEFS.map((ability) => {
+                                                const score = Number((d.stats || {})[ability.key]) || 0;
+                                                const mod = d.mods?.[ability.key] ?? abilityModifier(score);
+                                                return (
+                                                    <span key={ability.key} className="demon-card__stat">
+                                                        <span className="demon-card__stat-key">{ability.key}</span>
+                                                        <span className="demon-card__stat-value">{score} ({formatModifier(mod)})</span>
+                                                    </span>
+                                                );
+                                            })}
                                         </div>
-                                        <div className="demon-card__meta text-small">
-                                            <span>{d.arcana ?? "—"}</span>
-                                            <span> · </span>
-                                            <span>{d.alignment ?? "—"}</span>
-                                            <span> · Level {d.level ?? 0}</span>
+                                        <div className="demon-card__resist-grid">
+                                            <div className="demon-card__resist">
+                                                <span className="demon-card__resist-label">Weak</span>
+                                                <span className="demon-card__resist-values">{formatResistanceList(d.resistances?.weak, d.weak)}</span>
+                                            </div>
+                                            <div className="demon-card__resist">
+                                                <span className="demon-card__resist-label">Resist</span>
+                                                <span className="demon-card__resist-values">{formatResistanceList(d.resistances?.resist, d.resists)}</span>
+                                            </div>
+                                            <div className="demon-card__resist">
+                                                <span className="demon-card__resist-label">Null</span>
+                                                <span className="demon-card__resist-values">{formatResistanceList(d.resistances?.null, d.nullifies)}</span>
+                                            </div>
+                                            <div className="demon-card__resist">
+                                                <span className="demon-card__resist-label">Absorb</span>
+                                                <span className="demon-card__resist-values">{formatResistanceList(d.resistances?.absorb, d.absorbs)}</span>
+                                            </div>
+                                            <div className="demon-card__resist">
+                                                <span className="demon-card__resist-label">Reflect</span>
+                                                <span className="demon-card__resist-values">{formatResistanceList(d.resistances?.reflect, d.reflects)}</span>
+                                            </div>
                                         </div>
-                                    </div>
-                                    {canEdit && (
-                                        <div className="demon-card__actions">
-                                            <button
-                                                type="button"
-                                                className="btn ghost btn-small"
-                                                onClick={() => startEdit(d)}
-                                                disabled={busySave}
-                                            >
-                                                Edit
-                                            </button>
-                                            {isDM && (
-                                                <button
-                                                    type="button"
-                                                    className="btn ghost btn-small"
-                                                    onClick={() => remove(d.id)}
-                                                    disabled={busyDelete === d.id}
-                                                >
-                                                    {busyDelete === d.id ? "…" : "Remove"}
-                                                </button>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                                <div className="demon-card__stats">
-                                    {ABILITY_DEFS.map((ability) => {
-                                        const score = Number((d.stats || {})[ability.key]) || 0;
-                                        const mod = d.mods?.[ability.key] ?? abilityModifier(score);
-                                        return (
-                                            <span key={ability.key} className="pill">
-                                                {ability.key} {score} ({formatModifier(mod)})
-                                            </span>
-                                        );
-                                    })}
-                                </div>
-                                <div className="demon-card__resists text-small">
-                                    <div>
-                                        <strong>Weak:</strong> {formatResistanceList(d.resistances?.weak, d.weak)}
-                                    </div>
-                                    <div>
-                                        <strong>Resist:</strong> {formatResistanceList(d.resistances?.resist, d.resists)}
-                                    </div>
-                                    <div>
-                                        <strong>Null:</strong> {formatResistanceList(d.resistances?.null, d.nullifies)}
-                                    </div>
-                                    <div>
-                                        <strong>Absorb:</strong> {formatResistanceList(d.resistances?.absorb, d.absorbs)}
-                                    </div>
-                                    <div>
-                                        <strong>Reflect:</strong> {formatResistanceList(d.resistances?.reflect, d.reflects)}
-                                    </div>
-                                </div>
-                                {skillList.length > 0 && (
-                                    <div className="demon-card__skills text-small">
-                                        <div>
-                                            <strong>Skills:</strong> {skillList.join(', ')}
-                                        </div>
-                                        {canShowSkillModal && (
-                                            <button
-                                                type="button"
-                                                className="btn ghost btn-small demon-card__skills-btn"
-                                                onClick={() => openSkillModal(d)}
-                                            >
-                                                Combat skill details
-                                            </button>
+                                        {skillList.length > 0 && (
+                                            <div className="demon-card__skills">
+                                                <span className="demon-card__section-label">Skills</span>
+                                                <div className="demon-card__skill-list">
+                                                    {skillList.slice(0, 5).map((skill) => (
+                                                        <span key={skill} className="demon-card__skill-chip">{skill}</span>
+                                                    ))}
+                                                    {skillList.length > 5 && (
+                                                        <span className="demon-card__skill-chip">+{skillList.length - 5} more</span>
+                                                    )}
+                                                </div>
+                                                {canShowSkillModal && (
+                                                    <button
+                                                        type="button"
+                                                        className="btn ghost btn-small demon-card__skills-btn"
+                                                        onClick={() => openSkillModal(d)}
+                                                    >
+                                                        Combat skill details
+                                                    </button>
+                                                )}
+                                            </div>
                                         )}
                                     </div>
-                                )}
+                                </div>
                                 {d.notes && <div className="demon-card__notes text-small">{d.notes}</div>}
                             </article>
+
                         );
                     })}
                 </div>
@@ -12069,6 +12147,11 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
     );
 
     const mapStrokeCount = Array.isArray(game.map?.strokes) ? game.map.strokes.length : 0;
+    const storyBotTokenValue = typeof storyForm.botToken === "string" ? storyForm.botToken : "";
+    const hasCustomBotToken = storyBotTokenValue.trim().length > 0;
+    const storyPrimaryBot = storyForm.primaryBot || normalizePrimaryBot(null);
+    const sharedBotAvailable = !!storyPrimaryBot.available;
+    const usingSharedBot = sharedBotAvailable && !hasCustomBotToken;
 
     const applyMapSettings = useCallback(
         async (changes) => {
@@ -12264,17 +12347,86 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
             </>
         );
     } else if (activeSection === "story") {
+        const sharedStatusClass = `pill ${sharedBotAvailable ? "success" : "warn"}`;
+        const sharedStatusText = sharedBotAvailable ? "Shared bot ready" : "Shared bot unavailable";
+        const botModeDescription = hasCustomBotToken
+            ? "This campaign will authenticate with its own Discord bot token."
+            : usingSharedBot
+                ? "This campaign will use the shared Jack Endex bot configured on the server."
+                : "Add a bot token or rely on the shared bot to enable Discord syncing.";
+        const showPrimaryDefaults = !!(
+            storyPrimaryBot.defaultGuildId || storyPrimaryBot.defaultChannelId
+        );
         sectionContent = (
             <>
                 <h3>Discord story integration</h3>
                 <p className="text-muted text-small" style={{ marginTop: -4 }}>
                     Link your campaign to a Discord channel and webhook so the story tab can both read and post updates.
                 </p>
+                <div className="story-callout">
+                    <div
+                        className="row"
+                        style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}
+                    >
+                        <div className="col" style={{ gap: 4 }}>
+                            <strong>Shared bot status</strong>
+                            <span className="text-muted text-small">{botModeDescription}</span>
+                        </div>
+                        <span className={sharedStatusClass}>{sharedStatusText}</span>
+                    </div>
+                    {sharedBotAvailable ? (
+                        <>
+                            <p className="text-muted text-small" style={{ marginTop: 8 }}>
+                                Leave the token field blank to fall back to the shared bot.
+                                {storyPrimaryBot.inviteUrl
+                                    ? " Invite it to your server if it isn't already present."
+                                    : ""}
+                            </p>
+                            {storyPrimaryBot.inviteUrl && (
+                                <div className="row" style={{ marginTop: 4, justifyContent: "flex-start" }}>
+                                    <a
+                                        className="btn ghost btn-small"
+                                        href={storyPrimaryBot.inviteUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                    >
+                                        Invite the shared bot
+                                    </a>
+                                </div>
+                            )}
+                        </>
+                    ) : (
+                        <p className="text-muted text-small" style={{ marginTop: 8 }}>
+                            No shared bot token is configured on the server. Provide a bot token below to enable syncing.
+                        </p>
+                    )}
+                    {showPrimaryDefaults && (
+                        <div className="story-callout__grid">
+                            {storyPrimaryBot.defaultGuildId && (
+                                <div>
+                                    <span className="story-callout__label">Default guild</span>
+                                    <code>{storyPrimaryBot.defaultGuildId}</code>
+                                </div>
+                            )}
+                            {storyPrimaryBot.defaultChannelId && (
+                                <div>
+                                    <span className="story-callout__label">Default channel</span>
+                                    <code>{storyPrimaryBot.defaultChannelId}</code>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    {storyPrimaryBot.applicationId && (
+                        <span className="text-muted text-small">
+                            Application ID for slash commands: <code>{storyPrimaryBot.applicationId}</code>
+                        </span>
+                    )}
+                </div>
                 <label className="field" style={{ display: "grid", gap: 4 }}>
                     <span className="text-small">Bot token</span>
                     <input
                         type="password"
-                        value={storyForm.botToken}
+                        value={storyBotTokenValue}
                         onChange={(e) =>
                             setStoryForm((prev) => ({ ...prev, botToken: e.target.value }))
                         }
@@ -12283,9 +12435,11 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
                         spellCheck={false}
                         disabled={storySaving}
                     />
-                    <span className="text-muted text-small">
-                        Each campaign can use its own bot token. The bot must have access to the configured channel.
-                    </span>
+                    {!hasCustomBotToken && sharedBotAvailable && (
+                        <span className="text-muted text-small">
+                            Leave blank to use the shared token configured on the server.
+                        </span>
+                    )}
                 </label>
                 <label className="field" style={{ display: "grid", gap: 4 }}>
                     <span className="text-small">Channel ID</span>
@@ -12395,21 +12549,25 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
                             try {
                                 setStorySaving(true);
                                 const payload = {
-                                    botToken: storyForm.botToken.trim(),
+                                    botToken: storyBotTokenValue.trim(),
                                     channelId: storyForm.channelId.trim(),
                                     guildId: storyForm.guildId.trim(),
                                     webhookUrl: storyForm.webhookUrl.trim(),
                                     allowPlayerPosts: !!storyForm.allowPlayerPosts,
                                     scribeIds: storyForm.scribeIds,
                                 };
-                                await Games.setStorySettings(game.id, payload);
+                                const result = await StoryLogs.configure(game.id, payload);
                                 if (typeof onGameRefresh === "function") {
                                     await onGameRefresh();
                                 }
-                                setStoryForm(normalizeStorySettings({
-                                    ...storyForm,
-                                    ...payload,
-                                }));
+                                const nextStory =
+                                    result?.story && typeof result.story === "object"
+                                        ? normalizeStorySettings(result.story)
+                                        : normalizeStorySettings({
+                                              ...storyForm,
+                                              ...payload,
+                                          });
+                                setStoryForm(nextStory);
                             } catch (e) {
                                 alert(e.message);
                             } finally {

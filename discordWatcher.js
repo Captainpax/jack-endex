@@ -322,9 +322,14 @@ export function createDiscordWatcher({
 
 export function createWatcherFromEnv(env = process.env) {
     return createDiscordWatcher({
-        token: env.DISCORD_BOT_TOKEN || env.BOT_TOKEN,
-        guildId: env.DISCORD_GUILD_ID || env.DISCORD_SERVER_ID,
-        channelId: env.DISCORD_CHANNEL_ID,
+        token: env.DISCORD_BOT_TOKEN
+            || env.DISCORD_PRIMARY_BOT_TOKEN
+            || env.DISCORD_DEFAULT_BOT_TOKEN
+            || env.BOT_TOKEN,
+        guildId: env.DISCORD_GUILD_ID
+            || env.DISCORD_PRIMARY_GUILD_ID
+            || env.DISCORD_SERVER_ID,
+        channelId: env.DISCORD_CHANNEL_ID || env.DISCORD_PRIMARY_CHANNEL_ID,
         pollIntervalMs: env.DISCORD_POLL_INTERVAL_MS,
         maxMessages: env.DISCORD_MAX_MESSAGES,
     });
