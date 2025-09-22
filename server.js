@@ -36,11 +36,21 @@ const MAX_ALERT_LENGTH = 500;
 const HEX_COLOR_REGEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
 const MAX_MAP_STROKES = 800;
 const MAX_MAP_POINTS_PER_STROKE = 600;
+const MAX_MAP_LIBRARY_ENTRIES = 24;
+const MAX_MAP_SHAPES = 80;
 const DEFAULT_STROKE_COLOR = '#f97316';
 const DEFAULT_PLAYER_TOKEN_COLOR = '#38bdf8';
 const DEFAULT_DEMON_TOKEN_COLOR = '#f97316';
 const DEFAULT_CUSTOM_TOKEN_COLOR = '#a855f7';
 const DEFAULT_ENEMY_TOKEN_COLOR = '#ef4444';
+const DEFAULT_SHAPE_FILL = '#1e293b';
+const DEFAULT_SHAPE_STROKE = '#f8fafc';
+const DEFAULT_SHAPE_STROKE_WIDTH = 2;
+const DEFAULT_SHAPE_OPACITY = 0.6;
+const DEFAULT_BACKGROUND_SCALE = 1;
+const DEFAULT_BACKGROUND_OPACITY = 1;
+const MAP_SHAPE_TYPES = new Set(['rectangle', 'circle', 'line']);
+const MIN_SHAPE_SIZE = 0.02;
 const DEFAULT_DB_PATH = path.join(__dirname, 'data', 'db.json');
 
 await loadEnv({ root: __dirname });
@@ -210,6 +220,346 @@ function clamp01(value) {
     return num;
 }
 
+function normalizeRotation(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return 0;
+    const normalized = num % 360;
+    return normalized < 0 ? normalized + 360 : normalized;
+}
+
+function defaultMapBackground() {
+    return {
+        url: '',
+        x: 0.5,
+        y: 0.5,
+        scale: DEFAULT_BACKGROUND_SCALE,
+        rotation: 0,
+        opacity: DEFAULT_BACKGROUND_OPACITY,
+    };
+}
+
+function normalizeMapBackground(entry) {
+    const defaults = defaultMapBackground();
+    if (!entry || typeof entry !== 'object') {
+        return { ...defaults };
+    }
+    const url = typeof entry.url === 'string' ? entry.url.trim() : '';
+    const xSource = Object.prototype.hasOwnProperty.call(entry, 'x') ? entry.x : defaults.x;
+    const ySource = Object.prototype.hasOwnProperty.call(entry, 'y') ? entry.y : defaults.y;
+    const x = clamp01(xSource);
+    const y = clamp01(ySource);
+    const scaleRaw = Number(entry.scale);
+    const scale = Number.isFinite(scaleRaw) ? Math.min(8, Math.max(0.2, scaleRaw)) : defaults.scale;
+    const rotation = normalizeRotation(entry.rotation);
+    const opacityRaw = Number(entry.opacity);
+    const opacity = Number.isFinite(opacityRaw) ? Math.min(1, Math.max(0.05, opacityRaw)) : defaults.opacity;
+    return { url, x, y, scale, rotation, opacity };
+}
+
+function presentMapBackground(background) {
+    return normalizeMapBackground(background);
+}
+
+function normalizeMapShape(entry) {
+    if (!entry || typeof entry !== 'object') return null;
+    const typeRaw = typeof entry.type === 'string' ? entry.type.trim().toLowerCase() : 'rectangle';
+    const type = MAP_SHAPE_TYPES.has(typeRaw) ? typeRaw : 'rectangle';
+    const id = typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : uuid();
+    const createdAt = typeof entry.createdAt === 'string' ? entry.createdAt : new Date().toISOString();
+    const updatedAt = typeof entry.updatedAt === 'string' ? entry.updatedAt : createdAt;
+    const x = clamp01(Object.prototype.hasOwnProperty.call(entry, 'x') ? entry.x : 0.5);
+    const y = clamp01(Object.prototype.hasOwnProperty.call(entry, 'y') ? entry.y : 0.5);
+    const widthSource = Object.prototype.hasOwnProperty.call(entry, 'width') ? entry.width : 0.25;
+    const heightSource = Object.prototype.hasOwnProperty.call(entry, 'height') ? entry.height : widthSource;
+    let width = clamp01(widthSource);
+    let height = clamp01(heightSource);
+    if (!Number.isFinite(width) || width <= 0) width = 0.25;
+    if (!Number.isFinite(height) || height <= 0) height = type === 'line' ? MIN_SHAPE_SIZE : width;
+    width = Math.max(MIN_SHAPE_SIZE, Math.min(1, width));
+    height = Math.max(MIN_SHAPE_SIZE, Math.min(1, type === 'circle' ? width : height));
+    const rotation = normalizeRotation(entry.rotation);
+    const fill = sanitizeColor(entry.fill, type === 'line' ? DEFAULT_SHAPE_STROKE : DEFAULT_SHAPE_FILL);
+    const stroke = sanitizeColor(entry.stroke, DEFAULT_SHAPE_STROKE);
+    const strokeWidthRaw = Number(entry.strokeWidth);
+    const strokeWidth = Number.isFinite(strokeWidthRaw)
+        ? Math.min(20, Math.max(0, strokeWidthRaw))
+        : DEFAULT_SHAPE_STROKE_WIDTH;
+    const opacityRaw = Number(entry.opacity);
+    const opacity = Number.isFinite(opacityRaw)
+        ? Math.min(1, Math.max(0.05, opacityRaw))
+        : DEFAULT_SHAPE_OPACITY;
+    return {
+        id,
+        type,
+        x,
+        y,
+        width,
+        height: type === 'circle' ? width : height,
+        rotation,
+        fill,
+        stroke,
+        strokeWidth,
+        opacity,
+        createdAt,
+        updatedAt,
+    };
+}
+
+function presentMapShape(shape) {
+    if (!shape || typeof shape !== 'object') return null;
+    const normalized = normalizeMapShape(shape);
+    if (!normalized) return null;
+    return { ...normalized };
+}
+
+function findMapShape(map, shapeId) {
+    if (!map || !Array.isArray(map.shapes)) return null;
+    return map.shapes.find((shape) => shape && shape.id === shapeId) || null;
+}
+
+function applyMapShapeUpdate(shape, payload) {
+    if (!shape || !payload || typeof payload !== 'object') return false;
+    let changed = false;
+    if (Object.prototype.hasOwnProperty.call(payload, 'x')) {
+        const value = clamp01(payload.x);
+        if (shape.x !== value) {
+            shape.x = value;
+            changed = true;
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'y')) {
+        const value = clamp01(payload.y);
+        if (shape.y !== value) {
+            shape.y = value;
+            changed = true;
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'width')) {
+        const raw = clamp01(payload.width);
+        const value = Math.max(MIN_SHAPE_SIZE, Math.min(1, raw));
+        if (shape.width !== value) {
+            shape.width = value;
+            if (shape.type === 'circle') {
+                shape.height = value;
+            }
+            changed = true;
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'height')) {
+        const raw = clamp01(payload.height);
+        const value = Math.max(MIN_SHAPE_SIZE, Math.min(1, raw));
+        if (shape.type === 'circle') {
+            if (shape.width !== value) {
+                shape.width = value;
+                shape.height = value;
+                changed = true;
+            }
+        } else if (shape.height !== value) {
+            shape.height = value;
+            changed = true;
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'rotation')) {
+        const value = normalizeRotation(payload.rotation);
+        if (shape.rotation !== value) {
+            shape.rotation = value;
+            changed = true;
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'fill')) {
+        const fallback = shape.type === 'line' ? shape.stroke : shape.fill || DEFAULT_SHAPE_FILL;
+        const value = sanitizeColor(payload.fill, fallback);
+        if (shape.fill !== value) {
+            shape.fill = value;
+            changed = true;
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'stroke')) {
+        const value = sanitizeColor(payload.stroke, shape.stroke || DEFAULT_SHAPE_STROKE);
+        if (shape.stroke !== value) {
+            shape.stroke = value;
+            changed = true;
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'strokeWidth')) {
+        const raw = Number(payload.strokeWidth);
+        const value = Number.isFinite(raw) ? Math.min(20, Math.max(0, raw)) : shape.strokeWidth;
+        if (shape.strokeWidth !== value) {
+            shape.strokeWidth = value;
+            changed = true;
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'opacity')) {
+        const raw = Number(payload.opacity);
+        const value = Number.isFinite(raw) ? Math.min(1, Math.max(0.05, raw)) : shape.opacity;
+        if (shape.opacity !== value) {
+            shape.opacity = value;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+function applyBackgroundUpdate(map, payload) {
+    if (!map || !payload || typeof payload !== 'object') return false;
+    const target =
+        map.background && typeof map.background === 'object'
+            ? map.background
+            : (map.background = defaultMapBackground());
+    let changed = false;
+    if (Object.prototype.hasOwnProperty.call(payload, 'url')) {
+        const url = typeof payload.url === 'string' ? payload.url.trim() : '';
+        if (target.url !== url) {
+            target.url = url;
+            changed = true;
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'x')) {
+        const value = clamp01(payload.x);
+        if (target.x !== value) {
+            target.x = value;
+            changed = true;
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'y')) {
+        const value = clamp01(payload.y);
+        if (target.y !== value) {
+            target.y = value;
+            changed = true;
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'scale')) {
+        const raw = Number(payload.scale);
+        const value = Number.isFinite(raw) ? Math.min(8, Math.max(0.2, raw)) : target.scale;
+        if (target.scale !== value) {
+            target.scale = value;
+            changed = true;
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'rotation')) {
+        const value = normalizeRotation(payload.rotation);
+        if (target.rotation !== value) {
+            target.rotation = value;
+            changed = true;
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'opacity')) {
+        const raw = Number(payload.opacity);
+        const value = Number.isFinite(raw) ? Math.min(1, Math.max(0.05, raw)) : target.opacity;
+        if (target.opacity !== value) {
+            target.opacity = value;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+function clearMapBackground(map) {
+    if (!map) return false;
+    map.background = defaultMapBackground();
+    map.background.url = '';
+    return true;
+}
+
+function captureMapSnapshot(game) {
+    const map = ensureMapState(game);
+    return {
+        strokes: map.strokes.map((stroke) => ({ ...stroke })),
+        tokens: map.tokens.map((token) => ({ ...token })),
+        shapes: map.shapes.map((shape) => ({ ...shape })),
+        background: { ...(map.background || defaultMapBackground()) },
+        settings: { ...(map.settings || {}) },
+    };
+}
+
+function normalizeMapSnapshot(snapshot, game) {
+    const tempGame = { ...game, map: snapshot };
+    const map = ensureMapState(tempGame);
+    return {
+        strokes: map.strokes.map((stroke) => ({ ...stroke })),
+        tokens: map.tokens.map((token) => ({ ...token })),
+        shapes: map.shapes.map((shape) => ({ ...shape })),
+        background: { ...(map.background || defaultMapBackground()) },
+        settings: { ...(map.settings || {}) },
+    };
+}
+
+function normalizeMapLibraryEntry(entry, game) {
+    if (!entry || typeof entry !== 'object') return null;
+    const id = typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : uuid();
+    const name = sanitizeText(entry.name).trim() || 'Saved Battle Map';
+    const createdAt = typeof entry.createdAt === 'string' ? entry.createdAt : new Date().toISOString();
+    const updatedAt = typeof entry.updatedAt === 'string' ? entry.updatedAt : createdAt;
+    const snapshot = normalizeMapSnapshot(entry.snapshot || game?.map || {}, game);
+    const previewUrl =
+        typeof entry.previewUrl === 'string' && entry.previewUrl.trim()
+            ? entry.previewUrl.trim()
+            : snapshot.background?.url || '';
+    return { id, name, createdAt, updatedAt, snapshot, previewUrl };
+}
+
+function ensureMapLibrary(game) {
+    if (!game || typeof game !== 'object') return [];
+    if (!Array.isArray(game.mapLibrary)) {
+        game.mapLibrary = [];
+        return game.mapLibrary;
+    }
+    game.mapLibrary = game.mapLibrary
+        .map((entry) => normalizeMapLibraryEntry(entry, game))
+        .filter(Boolean);
+    if (game.mapLibrary.length > MAX_MAP_LIBRARY_ENTRIES) {
+        game.mapLibrary = game.mapLibrary
+            .sort((a, b) => {
+                const aKey = a.createdAt || '';
+                const bKey = b.createdAt || '';
+                return aKey.localeCompare(bKey);
+            })
+            .slice(game.mapLibrary.length - MAX_MAP_LIBRARY_ENTRIES);
+    }
+    return game.mapLibrary;
+}
+
+function presentMapLibraryEntry(entry) {
+    if (!entry || typeof entry !== 'object') return null;
+    return {
+        id: entry.id,
+        name: entry.name,
+        createdAt: entry.createdAt || null,
+        updatedAt: entry.updatedAt || entry.createdAt || null,
+        previewUrl: entry.previewUrl || '',
+    };
+}
+
+function presentMapLibrary(library) {
+    if (!Array.isArray(library)) return [];
+    return library
+        .slice()
+        .sort((a, b) => {
+            const aKey = a.updatedAt || a.createdAt || '';
+            const bKey = b.updatedAt || b.createdAt || '';
+            return bKey.localeCompare(aKey);
+        })
+        .map((entry) => presentMapLibraryEntry(entry))
+        .filter(Boolean);
+}
+
+function applyMapSnapshot(game, snapshot) {
+    if (!game) return null;
+    const current = ensureMapState(game);
+    const normalized = normalizeMapSnapshot(snapshot, game);
+    const timestamp = new Date().toISOString();
+    game.map = {
+        strokes: normalized.strokes,
+        tokens: normalized.tokens,
+        shapes: normalized.shapes,
+        background: normalized.background,
+        settings: { ...(normalized.settings || {}) },
+        paused: current.paused,
+        updatedAt: timestamp,
+    };
+    return game.map;
+}
+
 function sanitizeColor(value, fallback) {
     if (typeof value !== 'string') return fallback;
     const trimmed = value.trim();
@@ -372,8 +722,10 @@ function ensureMapState(game) {
         return {
             strokes: [],
             tokens: [],
+            shapes: [],
             settings: { allowPlayerDrawing: false, allowPlayerTokenMoves: false },
             paused: false,
+            background: defaultMapBackground(),
             updatedAt: new Date().toISOString(),
         };
     }
@@ -388,15 +740,23 @@ function ensureMapState(game) {
     const tokens = Array.isArray(raw.tokens)
         ? raw.tokens.map((token) => normalizeMapToken(token, game)).filter(Boolean)
         : [];
+    let shapes = Array.isArray(raw.shapes)
+        ? raw.shapes.map((shape) => normalizeMapShape(shape)).filter(Boolean)
+        : [];
+    if (shapes.length > MAX_MAP_SHAPES) {
+        shapes = shapes.slice(-MAX_MAP_SHAPES);
+    }
     const updatedAt = typeof raw.updatedAt === 'string' ? raw.updatedAt : new Date().toISOString();
     const mapState = {
         strokes,
         tokens,
+        shapes,
         settings: {
             allowPlayerDrawing: !!settingsRaw.allowPlayerDrawing,
             allowPlayerTokenMoves: !!settingsRaw.allowPlayerTokenMoves,
         },
         paused: !!raw.paused,
+        background: presentMapBackground(raw.background),
         updatedAt,
     };
     game.map = mapState;
@@ -408,8 +768,10 @@ function presentMapState(map) {
         return {
             strokes: [],
             tokens: [],
+            shapes: [],
             settings: { allowPlayerDrawing: false, allowPlayerTokenMoves: false },
             paused: false,
+            background: defaultMapBackground(),
             updatedAt: null,
         };
     }
@@ -419,14 +781,19 @@ function presentMapState(map) {
     const tokens = Array.isArray(map.tokens)
         ? map.tokens.map((token) => presentMapToken(token)).filter(Boolean)
         : [];
+    const shapes = Array.isArray(map.shapes)
+        ? map.shapes.map((shape) => presentMapShape(shape)).filter(Boolean)
+        : [];
     return {
         strokes,
         tokens,
+        shapes,
         settings: {
             allowPlayerDrawing: !!map.settings?.allowPlayerDrawing,
             allowPlayerTokenMoves: !!map.settings?.allowPlayerTokenMoves,
         },
         paused: !!map.paused,
+        background: presentMapBackground(map.background),
         updatedAt: typeof map.updatedAt === 'string' ? map.updatedAt : null,
     };
 }
@@ -525,6 +892,7 @@ function ensureGameShape(game) {
     game.combatSkills = ensureCombatSkills(game);
     game.media = ensureMediaState(game);
     game.map = ensureMapState(game);
+    game.mapLibrary = ensureMapLibrary(game);
     return game;
 }
 
@@ -557,6 +925,7 @@ function presentGame(game, { includeSecrets = false } = {}) {
         combatSkills,
         media: presentMediaState(normalized.media),
         map: presentMapState(normalized.map),
+        ...(includeSecrets ? { mapLibrary: presentMapLibrary(normalized.mapLibrary) } : {}),
     };
 }
 
@@ -2759,10 +3128,13 @@ app.post('/api/games', requireAuth, async (req, res) => {
         map: {
             strokes: [],
             tokens: [],
+            shapes: [],
             settings: { allowPlayerDrawing: false, allowPlayerTokenMoves: false },
             paused: false,
+            background: defaultMapBackground(),
             updatedAt: new Date().toISOString(),
         },
+        mapLibrary: [],
     };
     ensureWorldSkills(game);
     ensureMapState(game);
@@ -3059,6 +3431,162 @@ app.post('/api/games/:id/map/strokes/clear', requireAuth, async (req, res) => {
     res.json({ ok: true });
 });
 
+app.post('/api/games/:id/map/shapes', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const map = ensureMapState(game);
+    const payload = req.body?.shape || req.body || {};
+    const shape = normalizeMapShape(payload);
+    if (!shape) {
+        return res.status(400).json({ error: 'invalid_shape' });
+    }
+
+    const timestamp = new Date().toISOString();
+    shape.createdAt = timestamp;
+    shape.updatedAt = timestamp;
+    map.shapes.push(shape);
+    if (map.shapes.length > MAX_MAP_SHAPES) {
+        map.shapes = map.shapes.slice(-MAX_MAP_SHAPES);
+    }
+    map.updatedAt = timestamp;
+
+    await persistGame(db, game, {
+        reason: 'map:shape:add',
+        actorId: req.session.userId,
+        broadcast: !map.paused,
+    });
+
+    res.status(201).json(presentMapShape(shape));
+});
+
+app.put('/api/games/:id/map/shapes/:shapeId', requireAuth, async (req, res) => {
+    const { id, shapeId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const map = ensureMapState(game);
+    const shape = findMapShape(map, shapeId);
+    if (!shape) {
+        return res.status(404).json({ error: 'shape_not_found' });
+    }
+
+    const payload = req.body || {};
+    const changed = applyMapShapeUpdate(shape, payload);
+    if (!changed) {
+        return res.json(presentMapShape(shape));
+    }
+
+    const timestamp = new Date().toISOString();
+    shape.updatedAt = timestamp;
+    map.updatedAt = timestamp;
+
+    await persistGame(db, game, {
+        reason: 'map:shape:update',
+        actorId: req.session.userId,
+        broadcast: !map.paused,
+    });
+
+    res.json(presentMapShape(shape));
+});
+
+app.delete('/api/games/:id/map/shapes/:shapeId', requireAuth, async (req, res) => {
+    const { id, shapeId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const map = ensureMapState(game);
+    const before = map.shapes.length;
+    map.shapes = map.shapes.filter((shape) => shape && shape.id !== shapeId);
+    if (before === map.shapes.length) {
+        return res.status(404).json({ error: 'shape_not_found' });
+    }
+
+    map.updatedAt = new Date().toISOString();
+
+    await persistGame(db, game, {
+        reason: 'map:shape:remove',
+        actorId: req.session.userId,
+        broadcast: !map.paused,
+    });
+
+    res.json({ ok: true });
+});
+
+app.put('/api/games/:id/map/background', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const map = ensureMapState(game);
+    const changed = applyBackgroundUpdate(map, req.body || {});
+    if (!changed) {
+        return res.json(presentMapBackground(map.background));
+    }
+
+    map.updatedAt = new Date().toISOString();
+
+    await persistGame(db, game, {
+        reason: 'map:background',
+        actorId: req.session.userId,
+        broadcast: !map.paused,
+    });
+
+    res.json(presentMapBackground(map.background));
+});
+
+app.delete('/api/games/:id/map/background', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const map = ensureMapState(game);
+    const changed = clearMapBackground(map);
+    if (!changed) {
+        return res.json({ ok: true, background: presentMapBackground(map.background) });
+    }
+    map.updatedAt = new Date().toISOString();
+
+    await persistGame(db, game, {
+        reason: 'map:background:clear',
+        actorId: req.session.userId,
+        broadcast: !map.paused,
+    });
+
+    res.json({ ok: true, background: presentMapBackground(map.background) });
+});
+
 app.post('/api/games/:id/map/tokens', requireAuth, async (req, res) => {
     const { id } = req.params || {};
     const db = await readDB();
@@ -3208,6 +3736,105 @@ app.delete('/api/games/:id/map/tokens/:tokenId', requireAuth, async (req, res) =
         broadcast: !map.paused,
     });
     res.json({ ok: true });
+});
+
+app.get('/api/games/:id/map/library', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const library = ensureMapLibrary(game);
+    res.json({ maps: presentMapLibrary(library) });
+});
+
+app.post('/api/games/:id/map/library', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const library = ensureMapLibrary(game);
+    const nameInput = sanitizeText(req.body?.name).trim();
+    const entryName = nameInput || `Battle Map ${library.length + 1}`;
+    const timestamp = new Date().toISOString();
+    const snapshot = captureMapSnapshot(game);
+    const entry = {
+        id: uuid(),
+        name: entryName.slice(0, 80),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        snapshot,
+        previewUrl: snapshot.background?.url || '',
+    };
+    library.push(entry);
+    ensureMapLibrary(game);
+
+    await persistGame(db, game, { broadcast: false });
+
+    res.status(201).json({ entry: presentMapLibraryEntry(entry), maps: presentMapLibrary(game.mapLibrary) });
+});
+
+app.delete('/api/games/:id/map/library/:entryId', requireAuth, async (req, res) => {
+    const { id, entryId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const library = ensureMapLibrary(game);
+    const before = library.length;
+    game.mapLibrary = library.filter((entry) => entry && entry.id !== entryId);
+    if (before === game.mapLibrary.length) {
+        return res.status(404).json({ error: 'map_not_found' });
+    }
+
+    await persistGame(db, game, { broadcast: false });
+
+    res.json({ maps: presentMapLibrary(game.mapLibrary) });
+});
+
+app.post('/api/games/:id/map/library/:entryId/load', requireAuth, async (req, res) => {
+    const { id, entryId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const library = ensureMapLibrary(game);
+    const entry = library.find((item) => item && item.id === entryId);
+    if (!entry) {
+        return res.status(404).json({ error: 'map_not_found' });
+    }
+
+    const map = applyMapSnapshot(game, entry.snapshot);
+    entry.updatedAt = new Date().toISOString();
+
+    await persistGame(db, game, {
+        reason: 'map:library:load',
+        actorId: req.session.userId,
+        broadcast: true,
+    });
+
+    res.json({ map: presentMapState(map), entry: presentMapLibraryEntry(entry), maps: presentMapLibrary(game.mapLibrary) });
 });
 
 // --- World skills ---

@@ -465,6 +465,19 @@ export const Games = {
         api(`/api/games/${encodeURIComponent(id)}/map/strokes/${encodeURIComponent(strokeId)}`, { method: 'DELETE' }),
     clearMapStrokes: (id) =>
         api(`/api/games/${encodeURIComponent(id)}/map/strokes/clear`, { method: 'POST' }),
+    addMapShape: (id, shape) =>
+        api(`/api/games/${encodeURIComponent(id)}/map/shapes`, { method: 'POST', body: { shape } }),
+    updateMapShape: (id, shapeId, payload) =>
+        api(`/api/games/${encodeURIComponent(id)}/map/shapes/${encodeURIComponent(shapeId)}`, {
+            method: 'PUT',
+            body: payload,
+        }),
+    deleteMapShape: (id, shapeId) =>
+        api(`/api/games/${encodeURIComponent(id)}/map/shapes/${encodeURIComponent(shapeId)}`, { method: 'DELETE' }),
+    updateMapBackground: (id, payload) =>
+        api(`/api/games/${encodeURIComponent(id)}/map/background`, { method: 'PUT', body: payload }),
+    clearMapBackground: (id) =>
+        api(`/api/games/${encodeURIComponent(id)}/map/background`, { method: 'DELETE' }),
     addMapToken: (id, token) =>
         api(`/api/games/${encodeURIComponent(id)}/map/tokens`, { method: 'POST', body: token }),
     updateMapToken: (id, tokenId, payload) =>
@@ -474,6 +487,16 @@ export const Games = {
         }),
     deleteMapToken: (id, tokenId) =>
         api(`/api/games/${encodeURIComponent(id)}/map/tokens/${encodeURIComponent(tokenId)}`, { method: 'DELETE' }),
+    listMapLibrary: async (id) => {
+        const result = await api(`/api/games/${encodeURIComponent(id)}/map/library`);
+        return Array.isArray(result?.maps) ? result.maps : [];
+    },
+    saveMapLibrary: (id, name) =>
+        api(`/api/games/${encodeURIComponent(id)}/map/library`, { method: 'POST', body: { name } }),
+    deleteMapLibrary: (id, entryId) =>
+        api(`/api/games/${encodeURIComponent(id)}/map/library/${encodeURIComponent(entryId)}`, { method: 'DELETE' }),
+    loadMapLibrary: (id, entryId) =>
+        api(`/api/games/${encodeURIComponent(id)}/map/library/${encodeURIComponent(entryId)}/load`, { method: 'POST' }),
 
     // Optional: full pagination helper example if the backend supports it
     listAll: (query) => apiClient.getAllPages('/api/games', { query }),

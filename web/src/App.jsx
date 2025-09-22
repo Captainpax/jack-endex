@@ -2520,12 +2520,29 @@ const MAP_DEFAULT_SETTINGS = Object.freeze({
 const MAP_BRUSH_COLORS = ['#f97316', '#38bdf8', '#a855f7', '#22c55e', '#f472b6'];
 const MAP_ENEMY_DEFAULT_COLOR = '#ef4444';
 const MAP_MAX_POINTS_PER_STROKE = 600;
+const MAP_DEFAULT_BACKGROUND = Object.freeze({
+    url: '',
+    x: 0.5,
+    y: 0.5,
+    scale: 1,
+    rotation: 0,
+    opacity: 1,
+});
+const MAP_SHAPE_TYPES = ['rectangle', 'circle', 'line'];
 
 function mapClamp01(value) {
     const num = Number(value);
     if (!Number.isFinite(num)) return 0;
     if (num <= 0) return 0;
     if (num >= 1) return 1;
+    return num;
+}
+
+function clamp(value, min, max, fallback = min) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return fallback;
+    if (num <= min) return min;
+    if (num >= max) return max;
     return num;
 }
 
@@ -2595,13 +2612,67 @@ function normalizeClientMapToken(token) {
     };
 }
 
+function normalizeClientMapShape(shape) {
+    if (!shape || typeof shape !== 'object') return null;
+    const typeRaw = typeof shape.type === 'string' ? shape.type.toLowerCase() : 'rectangle';
+    const type = MAP_SHAPE_TYPES.includes(typeRaw) ? typeRaw : 'rectangle';
+    const id = typeof shape.id === 'string' && shape.id ? shape.id : `shape-${Math.random().toString(36).slice(2, 10)}`;
+    const x = mapClamp01(Object.prototype.hasOwnProperty.call(shape, 'x') ? shape.x : 0.5);
+    const y = mapClamp01(Object.prototype.hasOwnProperty.call(shape, 'y') ? shape.y : 0.5);
+    const width = clamp(shape.width, 0.02, 1, 0.25);
+    const height = type === 'circle' ? width : clamp(shape.height, 0.02, 1, width);
+    const rotationRaw = Number(shape.rotation);
+    const rotation = Number.isFinite(rotationRaw) ? ((rotationRaw % 360) + 360) % 360 : 0;
+    const fill = typeof shape.fill === 'string' && shape.fill ? shape.fill : '#1e293b';
+    const stroke = typeof shape.stroke === 'string' && shape.stroke ? shape.stroke : '#f8fafc';
+    const strokeWidth = clamp(shape.strokeWidth, 0, 20, 2);
+    const opacity = clamp(shape.opacity, 0.05, 1, 0.6);
+    const createdAt = typeof shape.createdAt === 'string' ? shape.createdAt : null;
+    const updatedAt = typeof shape.updatedAt === 'string' ? shape.updatedAt : createdAt;
+    return { id, type, x, y, width, height, rotation, fill, stroke, strokeWidth, opacity, createdAt, updatedAt };
+}
+
+function normalizeClientMapBackground(background) {
+    if (!background || typeof background !== 'object') {
+        return { ...MAP_DEFAULT_BACKGROUND };
+    }
+    const url = typeof background.url === 'string' ? background.url.trim() : '';
+    const xSource = Object.prototype.hasOwnProperty.call(background, 'x') ? background.x : MAP_DEFAULT_BACKGROUND.x;
+    const ySource = Object.prototype.hasOwnProperty.call(background, 'y') ? background.y : MAP_DEFAULT_BACKGROUND.y;
+    const x = mapClamp01(xSource);
+    const y = mapClamp01(ySource);
+    const scale = clamp(background.scale, 0.2, 8, MAP_DEFAULT_BACKGROUND.scale);
+    const rotationRaw = Number(background.rotation);
+    const rotation = Number.isFinite(rotationRaw) ? ((rotationRaw % 360) + 360) % 360 : MAP_DEFAULT_BACKGROUND.rotation;
+    const opacity = clamp(background.opacity, 0.05, 1, MAP_DEFAULT_BACKGROUND.opacity);
+    return { url, x, y, scale, rotation, opacity };
+}
+
+function normalizeMapLibraryEntry(entry) {
+    if (!entry || typeof entry !== 'object') return null;
+    const id = typeof entry.id === 'string' && entry.id ? entry.id : null;
+    if (!id) return null;
+    const name = typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : 'Saved map';
+    const createdAt = typeof entry.createdAt === 'string' ? entry.createdAt : null;
+    const updatedAt = typeof entry.updatedAt === 'string' ? entry.updatedAt : createdAt;
+    const previewUrl = typeof entry.previewUrl === 'string' ? entry.previewUrl : '';
+    return { id, name, createdAt, updatedAt, previewUrl };
+}
+
+function normalizeMapLibrary(list) {
+    if (!Array.isArray(list)) return [];
+    return list.map((entry) => normalizeMapLibraryEntry(entry)).filter(Boolean);
+}
+
 function normalizeClientMapState(map) {
     if (!map || typeof map !== 'object') {
         return {
             strokes: [],
             tokens: [],
+            shapes: [],
             settings: { ...MAP_DEFAULT_SETTINGS },
             paused: false,
+            background: { ...MAP_DEFAULT_BACKGROUND },
             updatedAt: null,
         };
     }
@@ -2611,14 +2682,19 @@ function normalizeClientMapState(map) {
     const tokens = Array.isArray(map.tokens)
         ? map.tokens.map((token) => normalizeClientMapToken(token)).filter(Boolean)
         : [];
+    const shapes = Array.isArray(map.shapes)
+        ? map.shapes.map((shape) => normalizeClientMapShape(shape)).filter(Boolean)
+        : [];
     return {
         strokes,
         tokens,
+        shapes,
         settings: {
             allowPlayerDrawing: !!map.settings?.allowPlayerDrawing,
             allowPlayerTokenMoves: !!map.settings?.allowPlayerTokenMoves,
         },
         paused: !!map.paused,
+        background: normalizeClientMapBackground(map.background),
         updatedAt: typeof map.updatedAt === 'string' ? map.updatedAt : null,
     };
 }
@@ -2661,9 +2737,31 @@ function describeDemonTooltip(demon) {
 function MapTab({ game, me }) {
     const isDM = game.dmId === me.id;
     const [mapState, setMapState] = useState(() => normalizeClientMapState(game?.map));
+    const [mapLibrary, setMapLibrary] = useState(() => normalizeMapLibrary(game?.mapLibrary));
+    const [backgroundDraft, setBackgroundDraft] = useState(() => mapState.background);
+    const backgroundDraftRef = useRef(mapState.background);
+    const latestBackgroundRef = useRef(mapState.background);
+    const backgroundUpdateTimerRef = useRef(null);
     useEffect(() => {
         setMapState(normalizeClientMapState(game?.map));
     }, [game.id, game?.map]);
+    useEffect(() => {
+        setMapLibrary(normalizeMapLibrary(game?.mapLibrary));
+    }, [game.id, game?.mapLibrary]);
+    useEffect(() => {
+        setBackgroundDraft(mapState.background);
+    }, [mapState.background]);
+    useEffect(() => {
+        backgroundDraftRef.current = backgroundDraft;
+    }, [backgroundDraft]);
+    useEffect(() => {
+        latestBackgroundRef.current = mapState.background;
+    }, [mapState.background]);
+    useEffect(() => () => {
+        if (backgroundUpdateTimerRef.current) {
+            window.clearTimeout(backgroundUpdateTimerRef.current);
+        }
+    }, []);
 
     useEffect(() => {
         if (typeof window === 'undefined') return () => {};
@@ -2683,6 +2781,10 @@ function MapTab({ game, me }) {
                     if (prev.updatedAt !== normalized.updatedAt) return normalized;
                     if (prev.tokens.length !== normalized.tokens.length) return normalized;
                     if (prev.strokes.length !== normalized.strokes.length) return normalized;
+                    if (prev.shapes.length !== normalized.shapes.length) return normalized;
+                    const prevBg = prev.background?.url || '';
+                    const nextBg = normalized.background?.url || '';
+                    if (prevBg !== nextBg) return normalized;
                     return prev;
                 });
             } catch (err) {
@@ -2702,6 +2804,34 @@ function MapTab({ game, me }) {
             }
         };
     }, [game?.id]);
+
+    const refreshMapLibrary = useCallback(async () => {
+        if (!isDM) return;
+        try {
+            const maps = await Games.listMapLibrary(game.id);
+            setMapLibrary(normalizeMapLibrary(maps));
+        } catch (err) {
+            console.warn('Failed to load battle map library', err);
+        }
+    }, [game.id, isDM]);
+
+    useEffect(() => {
+        if (!isDM) return () => {};
+        let cancelled = false;
+        (async () => {
+            try {
+                const maps = await Games.listMapLibrary(game.id);
+                if (!cancelled) {
+                    setMapLibrary(normalizeMapLibrary(maps));
+                }
+            } catch (err) {
+                console.warn('Failed to load battle map library', err);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [game.id, isDM]);
 
     const [tool, setTool] = useState('select');
     const [brushColor, setBrushColor] = useState(MAP_BRUSH_COLORS[0]);
@@ -2726,6 +2856,8 @@ function MapTab({ game, me }) {
     useEffect(() => {
         if (!isDM && tool === 'draw' && (!mapState.settings.allowPlayerDrawing || mapState.paused)) {
             setTool('select');
+        } else if (!isDM && tool === 'background') {
+            setTool('select');
         }
     }, [isDM, mapState.paused, mapState.settings.allowPlayerDrawing, tool]);
 
@@ -2749,7 +2881,17 @@ function MapTab({ game, me }) {
 
     const canDraw = isDM || (!mapState.paused && mapState.settings.allowPlayerDrawing);
     const canPaint = canDraw && tool === 'draw';
-    const tokenLayerPointerEvents = canPaint ? 'none' : 'auto';
+    const isBackgroundTool = tool === 'background';
+    const tokenLayerPointerEvents = canPaint || isBackgroundTool ? 'none' : 'auto';
+    const shapeLayerPointerEvents = canPaint || isBackgroundTool ? 'none' : 'auto';
+    const canvasPointerEvents = isBackgroundTool ? 'none' : 'auto';
+    const backgroundDisplay = useMemo(() => {
+        const base = mapState.background || MAP_DEFAULT_BACKGROUND;
+        if (dragPreview && dragPreview.kind === 'background') {
+            return { ...base, x: dragPreview.x, y: dragPreview.y };
+        }
+        return base;
+    }, [dragPreview, mapState.background]);
 
     const playerMap = useMemo(() => {
         const map = new Map();
@@ -2835,6 +2977,127 @@ function MapTab({ game, me }) {
             return { x: mapClamp01(x), y: mapClamp01(y) };
         },
         []
+    );
+
+    const handleUpdateBackground = useCallback(
+        async (patch) => {
+            if (!isDM) return;
+            try {
+                const response = await Games.updateMapBackground(game.id, patch);
+                const normalized = normalizeClientMapBackground(response);
+                setMapState((prev) => ({
+                    ...prev,
+                    background: normalized,
+                    updatedAt: new Date().toISOString(),
+                }));
+                setBackgroundDraft(normalized);
+            } catch (err) {
+                alert(err.message);
+            }
+        },
+        [game.id, isDM]
+    );
+
+    const queueBackgroundUpdate = useCallback(
+        (updates) => {
+            setBackgroundDraft((prev) => ({ ...prev, ...updates }));
+            if (backgroundUpdateTimerRef.current) {
+                window.clearTimeout(backgroundUpdateTimerRef.current);
+            }
+            backgroundUpdateTimerRef.current = window.setTimeout(() => {
+                const base = latestBackgroundRef.current || MAP_DEFAULT_BACKGROUND;
+                const target = backgroundDraftRef.current || base;
+                const patch = {};
+                if ((target.url || '') !== (base.url || '')) patch.url = target.url;
+                if (Math.abs(target.x - base.x) > 0.0005) patch.x = target.x;
+                if (Math.abs(target.y - base.y) > 0.0005) patch.y = target.y;
+                if (Math.abs(target.scale - base.scale) > 0.001) patch.scale = target.scale;
+                if (Math.abs(target.rotation - base.rotation) > 0.5) patch.rotation = target.rotation;
+                if (Math.abs(target.opacity - base.opacity) > 0.01) patch.opacity = target.opacity;
+                if (Object.keys(patch).length === 0) return;
+                handleUpdateBackground(patch);
+            }, 200);
+        },
+        [handleUpdateBackground]
+    );
+
+    const handleClearBackground = useCallback(async () => {
+        if (!isDM) return;
+        try {
+            const response = await Games.clearMapBackground(game.id);
+            const normalized = response?.background
+                ? normalizeClientMapBackground(response.background)
+                : { ...MAP_DEFAULT_BACKGROUND };
+            setMapState((prev) => ({
+                ...prev,
+                background: normalized,
+                updatedAt: new Date().toISOString(),
+            }));
+            setBackgroundDraft(normalized);
+        } catch (err) {
+            alert(err.message);
+        }
+    }, [game.id, isDM]);
+
+    const handleBackgroundPointerDown = useCallback(
+        (event) => {
+            if (!isDM || !isBackgroundTool) return;
+            event.preventDefault();
+            const { x, y } = getPointerPosition(event);
+            const base = mapState.background || MAP_DEFAULT_BACKGROUND;
+            const offsetX = x - base.x;
+            const offsetY = y - base.y;
+            const target = event.currentTarget;
+            if (target?.setPointerCapture) {
+                try {
+                    target.setPointerCapture(event.pointerId);
+                } catch {
+                    // ignore capture errors
+                }
+            }
+            setDragging({ kind: 'background', pointerId: event.pointerId, offsetX, offsetY });
+            setDragPreview({ kind: 'background', x: mapClamp01(x - offsetX), y: mapClamp01(y - offsetY) });
+        },
+        [getPointerPosition, isBackgroundTool, isDM, mapState.background]
+    );
+
+    const handleBackgroundPointerMove = useCallback(
+        (event) => {
+            if (!dragging || dragging.kind !== 'background') return;
+            const { x, y } = getPointerPosition(event);
+            setDragPreview({
+                kind: 'background',
+                x: mapClamp01(x - dragging.offsetX),
+                y: mapClamp01(y - dragging.offsetY),
+            });
+        },
+        [dragging, getPointerPosition]
+    );
+
+    const handleBackgroundPointerUp = useCallback(
+        (event) => {
+            if (!dragging || dragging.kind !== 'background') return;
+            const target = event.currentTarget;
+            if (target?.releasePointerCapture) {
+                try {
+                    target.releasePointerCapture(dragging.pointerId);
+                } catch {
+                    // ignore release errors
+                }
+            }
+            const coords =
+                dragPreview && dragPreview.kind === 'background'
+                    ? { x: dragPreview.x, y: dragPreview.y }
+                    : { x: mapState.background?.x ?? 0.5, y: mapState.background?.y ?? 0.5 };
+            setDragging(null);
+            setDragPreview(null);
+            setMapState((prev) => ({
+                ...prev,
+                background: { ...prev.background, ...coords },
+            }));
+            queueBackgroundUpdate(coords);
+        },
+        [dragPreview, dragging, mapState.background?.x, mapState.background?.y, queueBackgroundUpdate]
     );
 
     const sendStroke = useCallback(
@@ -2991,24 +3254,24 @@ function MapTab({ game, me }) {
                 }
             }
             const { x, y } = getPointerPosition(event);
-            setDragging({ id: token.id, pointerId: event.pointerId });
-            setDragPreview({ id: token.id, x, y });
+            setDragging({ kind: 'token', id: token.id, pointerId: event.pointerId });
+            setDragPreview({ kind: 'token', id: token.id, x, y });
         },
         [canMoveToken, getPointerPosition]
     );
 
     const handleTokenPointerMove = useCallback(
         (token, event) => {
-            if (!dragging || dragging.id !== token.id) return;
+            if (!dragging || dragging.kind !== 'token' || dragging.id !== token.id) return;
             const { x, y } = getPointerPosition(event);
-            setDragPreview({ id: token.id, x, y });
+            setDragPreview({ kind: 'token', id: token.id, x, y });
         },
         [dragging, getPointerPosition]
     );
 
     const handleTokenPointerUp = useCallback(
         (token, event) => {
-            if (!dragging || dragging.id !== token.id) return;
+            if (!dragging || dragging.kind !== 'token' || dragging.id !== token.id) return;
             const target = event.currentTarget;
             if (target?.releasePointerCapture) {
                 try {
@@ -3018,7 +3281,7 @@ function MapTab({ game, me }) {
                 }
             }
             const coords =
-                dragPreview && dragPreview.id === token.id
+                dragPreview && dragPreview.kind === 'token' && dragPreview.id === token.id
                     ? { x: dragPreview.x, y: dragPreview.y }
                     : { x: token.x, y: token.y };
             setDragging(null);
@@ -3156,6 +3419,221 @@ function MapTab({ game, me }) {
         }
     }, [enemyForm, game.id]);
 
+    const handleAddShape = useCallback(
+        async (type) => {
+            if (!isDM) return;
+            try {
+                const response = await Games.addMapShape(game.id, { type });
+                const normalized = normalizeClientMapShape(response);
+                if (normalized) {
+                    setMapState((prev) => ({
+                        ...prev,
+                        shapes: prev.shapes.concat(normalized),
+                        updatedAt: response?.updatedAt || prev.updatedAt,
+                    }));
+                }
+            } catch (err) {
+                alert(err.message);
+            }
+        },
+        [game.id, isDM]
+    );
+
+    const handleUpdateShape = useCallback(
+        async (shapeId, patch) => {
+            if (!isDM) return;
+            try {
+                const response = await Games.updateMapShape(game.id, shapeId, patch);
+                const normalized = normalizeClientMapShape(response);
+                if (normalized) {
+                    setMapState((prev) => ({
+                        ...prev,
+                        shapes: prev.shapes.map((shape) => (shape.id === shapeId ? normalized : shape)),
+                        updatedAt: response?.updatedAt || prev.updatedAt,
+                    }));
+                }
+            } catch (err) {
+                alert(err.message);
+            }
+        },
+        [game.id, isDM]
+    );
+
+    const handleRemoveShape = useCallback(
+        async (shapeId) => {
+            if (!isDM) return;
+            if (!shapeId) return;
+            if (!window.confirm('Remove this shape from the map?')) return;
+            try {
+                await Games.deleteMapShape(game.id, shapeId);
+                setMapState((prev) => ({
+                    ...prev,
+                    shapes: prev.shapes.filter((shape) => shape.id !== shapeId),
+                    updatedAt: new Date().toISOString(),
+                }));
+            } catch (err) {
+                alert(err.message);
+            }
+        },
+        [game.id, isDM]
+    );
+
+    const handleShapePointerDown = useCallback(
+        (shape, event) => {
+            if (!shape || !isDM || isBackgroundTool || tool === 'draw') return;
+            event.preventDefault();
+            event.stopPropagation();
+            const { x, y } = getPointerPosition(event);
+            const offsetX = x - shape.x;
+            const offsetY = y - shape.y;
+            const target = event.currentTarget;
+            if (target?.setPointerCapture) {
+                try {
+                    target.setPointerCapture(event.pointerId);
+                } catch {
+                    // ignore capture errors
+                }
+            }
+            setDragging({ kind: 'shape', id: shape.id, pointerId: event.pointerId, offsetX, offsetY });
+            setDragPreview({ kind: 'shape', id: shape.id, x: mapClamp01(x - offsetX), y: mapClamp01(y - offsetY) });
+        },
+        [getPointerPosition, isBackgroundTool, isDM, tool]
+    );
+
+    const handleShapePointerMove = useCallback(
+        (shape, event) => {
+            if (!shape || !dragging || dragging.kind !== 'shape' || dragging.id !== shape.id) return;
+            const { x, y } = getPointerPosition(event);
+            setDragPreview({
+                kind: 'shape',
+                id: shape.id,
+                x: mapClamp01(x - dragging.offsetX),
+                y: mapClamp01(y - dragging.offsetY),
+            });
+        },
+        [dragging, getPointerPosition]
+    );
+
+    const handleShapePointerUp = useCallback(
+        (shape, event) => {
+            if (!shape || !dragging || dragging.kind !== 'shape' || dragging.id !== shape.id) return;
+            const target = event.currentTarget;
+            if (target?.releasePointerCapture) {
+                try {
+                    target.releasePointerCapture(dragging.pointerId);
+                } catch {
+                    // ignore release errors
+                }
+            }
+            const coords =
+                dragPreview && dragPreview.kind === 'shape' && dragPreview.id === shape.id
+                    ? { x: dragPreview.x, y: dragPreview.y }
+                    : { x: shape.x, y: shape.y };
+            setDragging(null);
+            setDragPreview(null);
+            setMapState((prev) => ({
+                ...prev,
+                shapes: prev.shapes.map((entry) => (entry.id === shape.id ? { ...entry, ...coords } : entry)),
+            }));
+            handleUpdateShape(shape.id, coords);
+        },
+        [dragPreview, dragging, handleUpdateShape]
+    );
+
+    const storyConfigured = !!game.story?.webhookConfigured;
+
+    const handleShareMapToStory = useCallback(
+        async () => {
+            if (!isDM) return;
+            if (!storyConfigured) {
+                alert('Connect a story log webhook in Campaign Settings to share battle maps.');
+                return;
+            }
+            const lines = ['Battle map update from the DM board.'];
+            if (mapState.background?.url) {
+                lines.push(mapState.background.url);
+            }
+            const tokenSummary = mapState.tokens.map((token) => token.label).filter(Boolean).join(', ');
+            if (tokenSummary) {
+                lines.push(`Tokens in play: ${tokenSummary}`);
+            }
+            try {
+                await StoryLogs.post(game.id, { persona: 'dm', content: lines.join('\n') });
+            } catch (err) {
+                alert(err.message);
+            }
+        },
+        [game.id, isDM, mapState.background?.url, mapState.tokens, storyConfigured]
+    );
+
+    const handleSaveMap = useCallback(async () => {
+        if (!isDM) return;
+        const defaultName = `Battle Map ${mapLibrary.length + 1}`;
+        const name = typeof window !== 'undefined' ? window.prompt('Name this battle map', defaultName) : defaultName;
+        if (name === null) return;
+        try {
+            const response = await Games.saveMapLibrary(game.id, name);
+            if (Array.isArray(response?.maps)) {
+                setMapLibrary(normalizeMapLibrary(response.maps));
+            } else if (response?.entry) {
+                setMapLibrary((prev) => normalizeMapLibrary(prev.concat(response.entry)));
+            } else {
+                await refreshMapLibrary();
+            }
+        } catch (err) {
+            alert(err.message);
+        }
+    }, [game.id, isDM, mapLibrary.length, refreshMapLibrary]);
+
+    const handleLoadSavedMap = useCallback(
+        async (entry) => {
+            if (!isDM || !entry?.id) return;
+            if (typeof window !== 'undefined') {
+                const confirmed = window.confirm(`Load "${entry.name}" and replace the current battle map?`);
+                if (!confirmed) return;
+            }
+            try {
+                const response = await Games.loadMapLibrary(game.id, entry.id);
+                if (response?.map) {
+                    setMapState(normalizeClientMapState(response.map));
+                }
+                if (Array.isArray(response?.maps)) {
+                    setMapLibrary(normalizeMapLibrary(response.maps));
+                } else if (response?.entry) {
+                    setMapLibrary((prev) =>
+                        normalizeMapLibrary(prev.map((item) => (item.id === response.entry.id ? response.entry : item)))
+                    );
+                } else {
+                    await refreshMapLibrary();
+                }
+            } catch (err) {
+                alert(err.message);
+            }
+        },
+        [game.id, isDM, refreshMapLibrary]
+    );
+
+    const handleDeleteSavedMap = useCallback(
+        async (entry) => {
+            if (!isDM || !entry?.id) return;
+            if (typeof window !== 'undefined') {
+                const confirmed = window.confirm(`Delete "${entry.name}" from your saved battle maps?`);
+                if (!confirmed) return;
+            }
+            try {
+                const response = await Games.deleteMapLibrary(game.id, entry.id);
+                if (Array.isArray(response?.maps)) {
+                    setMapLibrary(normalizeMapLibrary(response.maps));
+                } else {
+                    setMapLibrary((prev) => prev.filter((item) => item.id !== entry.id));
+                }
+            } catch (err) {
+                alert(err.message);
+            }
+        },
+        [game.id, isDM]
+    );
+
     const handleTogglePause = useCallback(async () => {
         try {
             const updated = await Games.updateMapSettings(game.id, { paused: !mapState.paused });
@@ -3187,6 +3665,15 @@ function MapTab({ game, me }) {
                             >
                                 Draw
                             </button>
+                            {isDM && (
+                                <button
+                                    type="button"
+                                    className={`btn btn-small${tool === 'background' ? ' is-active' : ' secondary'}`}
+                                    onClick={() => setTool('background')}
+                                >
+                                    Background
+                                </button>
+                            )}
                         </div>
                     </div>
                     <div className="map-toolbar__status">
@@ -3196,6 +3683,21 @@ function MapTab({ game, me }) {
                         {isDM && (
                             <button type="button" className="btn btn-small" onClick={handleTogglePause}>
                                 {mapState.paused ? 'Resume sharing' : 'Pause updates'}
+                            </button>
+                        )}
+                        {isDM && (
+                            <button
+                                type="button"
+                                className="btn btn-small secondary"
+                                onClick={handleShareMapToStory}
+                                disabled={!storyConfigured}
+                                title={
+                                    storyConfigured
+                                        ? 'Post the current map background and token summary to the story log.'
+                                        : 'Connect a story log webhook in Campaign Settings to share battle maps.'
+                                }
+                            >
+                                Share to story log
                             </button>
                         )}
                     </div>
@@ -3245,22 +3747,81 @@ function MapTab({ game, me }) {
             </div>
             <div className="map-layout">
                 <div className="map-board card" ref={boardRef}>
+                    <div
+                        className="map-board__background"
+                        style={{ pointerEvents: isDM && isBackgroundTool ? 'auto' : 'none' }}
+                    >
+                        {backgroundDisplay.url && (
+                            <img
+                                src={backgroundDisplay.url}
+                                alt=""
+                                className="map-board__background-image"
+                                style={{
+                                    left: `${backgroundDisplay.x * 100}%`,
+                                    top: `${backgroundDisplay.y * 100}%`,
+                                    width: `${backgroundDisplay.scale * 100}%`,
+                                    opacity: backgroundDisplay.opacity,
+                                    transform: `translate(-50%, -50%) rotate(${backgroundDisplay.rotation}deg)`,
+                                }}
+                                draggable={false}
+                                onPointerDown={handleBackgroundPointerDown}
+                                onPointerMove={handleBackgroundPointerMove}
+                                onPointerUp={handleBackgroundPointerUp}
+                                onPointerCancel={handleBackgroundPointerUp}
+                            />
+                        )}
+                    </div>
                     <canvas
                         ref={canvasRef}
                         className="map-board__canvas"
+                        style={{ pointerEvents: canvasPointerEvents }}
                         onPointerDown={handleCanvasPointerDown}
                         onPointerMove={handleCanvasPointerMove}
                         onPointerUp={handleCanvasPointerFinish}
                         onPointerCancel={handleCanvasPointerFinish}
                         onPointerLeave={handleCanvasPointerFinish}
                     />
+                    <div className="map-board__shapes" style={{ pointerEvents: shapeLayerPointerEvents }}>
+                        {mapState.shapes.map((shape) => {
+                            const display =
+                                dragPreview && dragPreview.kind === 'shape' && dragPreview.id === shape.id
+                                    ? { ...shape, x: dragPreview.x, y: dragPreview.y }
+                                    : shape;
+                            const widthPercent = Math.max(display.width * 100, 1);
+                            const heightPercent = Math.max(display.height * 100, 1);
+                            const style = {
+                                left: `${display.x * 100}%`,
+                                top: `${display.y * 100}%`,
+                                width: `${widthPercent}%`,
+                                height: `${heightPercent}%`,
+                                transform: `translate(-50%, -50%) rotate(${display.rotation}deg)`,
+                                background: display.type === 'line' ? display.stroke : display.fill,
+                                opacity: display.opacity,
+                                borderColor: display.stroke,
+                                borderWidth: display.type === 'line' ? 0 : `${display.strokeWidth}px`,
+                                borderStyle: 'solid',
+                            };
+                            return (
+                                <div
+                                    key={shape.id}
+                                    className={`map-shape map-shape--${display.type}`}
+                                    style={style}
+                                    onPointerDown={(event) => handleShapePointerDown(shape, event)}
+                                    onPointerMove={(event) => handleShapePointerMove(shape, event)}
+                                    onPointerUp={(event) => handleShapePointerUp(shape, event)}
+                                    onPointerCancel={(event) => handleShapePointerUp(shape, event)}
+                                />
+                            );
+                        })}
+                    </div>
                     <div className="map-board__tokens" style={{ pointerEvents: tokenLayerPointerEvents }}>
                         {mapState.tokens.map((token) => {
                             const player = token.kind === 'player' ? playerMap.get(token.refId) : null;
                             const demon = token.kind === 'demon' ? demonMap.get(token.refId) : null;
-                            const display = dragPreview && dragPreview.id === token.id
-                                ? { ...token, x: dragPreview.x, y: dragPreview.y }
-                                : token;
+                            const display =
+                                dragPreview && dragPreview.kind === 'token' && dragPreview.id === token.id
+                                    ? { ...token, x: dragPreview.x, y: dragPreview.y }
+                                    : token;
                             const showTooltip = token.showTooltip && token.tooltip;
                             const canDrag = canMoveToken(token);
                             const label = token.label || (player ? describePlayerName(player) : demon ? demon.name : 'Marker');
@@ -3543,6 +4104,374 @@ function MapTab({ game, me }) {
                             </div>
                         )}
                     </div>
+                    {isDM && (
+                        <div className="map-panel card">
+                            <h3>Background image</h3>
+                            <label className="text-small" htmlFor="map-background-url">Image URL</label>
+                            <input
+                                id="map-background-url"
+                                type="text"
+                                value={backgroundDraft.url}
+                                onChange={(event) =>
+                                    setBackgroundDraft((prev) => ({ ...prev, url: event.target.value || '' }))
+                                }
+                                placeholder="https://example.com/map.png"
+                            />
+                            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                                <button
+                                    type="button"
+                                    className="btn btn-small"
+                                    onClick={() => {
+                                        const trimmed = (backgroundDraft.url || '').trim();
+                                        if (!trimmed) return;
+                                        handleUpdateBackground({ url: trimmed });
+                                    }}
+                                    disabled={!backgroundDraft.url || !backgroundDraft.url.trim()}
+                                >
+                                    Apply URL
+                                </button>
+                                <button
+                                    type="button"
+                                    className="btn btn-small ghost"
+                                    onClick={handleClearBackground}
+                                    disabled={!mapState.background?.url}
+                                >
+                                    Clear
+                                </button>
+                            </div>
+                            <div className="map-background-controls">
+                                <label className="map-background-slider">
+                                    <span className="text-small">Horizontal</span>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="100"
+                                        value={Math.round((backgroundDraft.x ?? 0.5) * 100)}
+                                        onChange={(event) => {
+                                            const value = clamp(Number(event.target.value) / 100, 0, 1, backgroundDraft.x ?? 0.5);
+                                            queueBackgroundUpdate({ x: value });
+                                        }}
+                                    />
+                                </label>
+                                <label className="map-background-slider">
+                                    <span className="text-small">Vertical</span>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="100"
+                                        value={Math.round((backgroundDraft.y ?? 0.5) * 100)}
+                                        onChange={(event) => {
+                                            const value = clamp(Number(event.target.value) / 100, 0, 1, backgroundDraft.y ?? 0.5);
+                                            queueBackgroundUpdate({ y: value });
+                                        }}
+                                    />
+                                </label>
+                                <label className="map-background-slider">
+                                    <span className="text-small">Scale ({backgroundDraft.scale.toFixed(2)}x)</span>
+                                    <input
+                                        type="range"
+                                        min="20"
+                                        max="400"
+                                        value={Math.round((backgroundDraft.scale ?? 1) * 100)}
+                                        onChange={(event) => {
+                                            const value = clamp(Number(event.target.value) / 100, 0.2, 4, backgroundDraft.scale ?? 1);
+                                            queueBackgroundUpdate({ scale: value });
+                                        }}
+                                    />
+                                </label>
+                                <label className="map-background-slider">
+                                    <span className="text-small">Rotation ({Math.round(backgroundDraft.rotation)}°)</span>
+                                    <input
+                                        type="range"
+                                        min="0"
+                                        max="360"
+                                        value={Math.round(backgroundDraft.rotation)}
+                                        onChange={(event) => {
+                                            const value = clamp(Number(event.target.value), 0, 360, backgroundDraft.rotation);
+                                            queueBackgroundUpdate({ rotation: value });
+                                        }}
+                                    />
+                                </label>
+                                <label className="map-background-slider">
+                                    <span className="text-small">Opacity ({Math.round(backgroundDraft.opacity * 100)}%)</span>
+                                    <input
+                                        type="range"
+                                        min="10"
+                                        max="100"
+                                        value={Math.round((backgroundDraft.opacity ?? 1) * 100)}
+                                        onChange={(event) => {
+                                            const value = clamp(Number(event.target.value) / 100, 0.1, 1, backgroundDraft.opacity ?? 1);
+                                            queueBackgroundUpdate({ opacity: value });
+                                        }}
+                                    />
+                                </label>
+                            </div>
+                        </div>
+                    )}
+                    <div className="map-panel card">
+                        <h3>Battle shapes</h3>
+                        {isDM && (
+                            <div className="map-panel__add">
+                                <span className="text-small">Add shape</span>
+                                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                                    {MAP_SHAPE_TYPES.map((type) => (
+                                        <button
+                                            key={type}
+                                            type="button"
+                                            className="btn btn-small secondary"
+                                            onClick={() => handleAddShape(type)}
+                                        >
+                                            {type === 'rectangle' ? 'Rectangle' : type === 'circle' ? 'Circle' : 'Line'}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        {mapState.shapes.length === 0 ? (
+                            <p className="map-empty text-muted">No shapes placed.</p>
+                        ) : (
+                            <div className="list">
+                                {mapState.shapes.map((shape, index) => (
+                                    <div key={shape.id} className="map-shape-row">
+                                        <div className="map-shape-row__header">
+                                            <strong>
+                                                {`${shape.type.charAt(0).toUpperCase()}${shape.type.slice(1)} ${index + 1}`}
+                                            </strong>
+                                            {isDM && (
+                                                <button
+                                                    type="button"
+                                                    className="btn ghost btn-small"
+                                                    onClick={() => handleRemoveShape(shape.id)}
+                                                >
+                                                    Remove
+                                                </button>
+                                            )}
+                                        </div>
+                                        {isDM && (
+                                            <div className="map-shape-row__controls">
+                                                {shape.type !== 'line' && (
+                                                    <label className="color-input">
+                                                        <span className="text-small">Fill</span>
+                                                        <input
+                                                            type="color"
+                                                            value={shape.fill}
+                                                            onChange={(event) => {
+                                                                const value = event.target.value || shape.fill;
+                                                                setMapState((prev) => ({
+                                                                    ...prev,
+                                                                    shapes: prev.shapes.map((entry) =>
+                                                                        entry.id === shape.id
+                                                                            ? { ...entry, fill: value }
+                                                                            : entry
+                                                                    ),
+                                                                }));
+                                                                handleUpdateShape(shape.id, { fill: value });
+                                                            }}
+                                                        />
+                                                        <span className="text-muted text-small">{shape.fill.toUpperCase()}</span>
+                                                    </label>
+                                                )}
+                                                <label className="color-input">
+                                                    <span className="text-small">Stroke</span>
+                                                    <input
+                                                        type="color"
+                                                        value={shape.stroke}
+                                                        onChange={(event) => {
+                                                            const value = event.target.value || shape.stroke;
+                                                            setMapState((prev) => ({
+                                                                ...prev,
+                                                                shapes: prev.shapes.map((entry) =>
+                                                                    entry.id === shape.id
+                                                                        ? { ...entry, stroke: value }
+                                                                        : entry
+                                                                ),
+                                                            }));
+                                                            handleUpdateShape(shape.id, { stroke: value });
+                                                        }}
+                                                    />
+                                                    <span className="text-muted text-small">{shape.stroke.toUpperCase()}</span>
+                                                </label>
+                                                <label className="map-shape-slider">
+                                                    <span className="text-small">Width ({Math.round(shape.width * 100)}%)</span>
+                                                    <input
+                                                        type="range"
+                                                        min="5"
+                                                        max="100"
+                                                        value={Math.round(shape.width * 100)}
+                                                        onChange={(event) => {
+                                                            const value = clamp(Number(event.target.value) / 100, 0.05, 1, shape.width);
+                                                            setMapState((prev) => ({
+                                                                ...prev,
+                                                                shapes: prev.shapes.map((entry) =>
+                                                                    entry.id === shape.id
+                                                                        ? {
+                                                                              ...entry,
+                                                                              width: value,
+                                                                              ...(entry.type === 'circle' ? { height: value } : {}),
+                                                                          }
+                                                                        : entry
+                                                                ),
+                                                            }));
+                                                            handleUpdateShape(shape.id, {
+                                                                width: value,
+                                                                ...(shape.type === 'circle' ? { height: value } : {}),
+                                                            });
+                                                        }}
+                                                    />
+                                                </label>
+                                                {shape.type !== 'circle' && (
+                                                    <label className="map-shape-slider">
+                                                        <span className="text-small">Height ({Math.round(shape.height * 100)}%)</span>
+                                                        <input
+                                                            type="range"
+                                                            min="5"
+                                                            max="100"
+                                                            value={Math.round(shape.height * 100)}
+                                                            onChange={(event) => {
+                                                                const value = clamp(
+                                                                    Number(event.target.value) / 100,
+                                                                    0.05,
+                                                                    1,
+                                                                    shape.height
+                                                                );
+                                                                setMapState((prev) => ({
+                                                                    ...prev,
+                                                                    shapes: prev.shapes.map((entry) =>
+                                                                        entry.id === shape.id
+                                                                            ? { ...entry, height: value }
+                                                                            : entry
+                                                                    ),
+                                                                }));
+                                                                handleUpdateShape(shape.id, { height: value });
+                                                            }}
+                                                        />
+                                                    </label>
+                                                )}
+                                                <label className="map-shape-slider">
+                                                    <span className="text-small">Stroke ({Math.round(shape.strokeWidth)}px)</span>
+                                                    <input
+                                                        type="range"
+                                                        min="0"
+                                                        max="20"
+                                                        value={Math.round(shape.strokeWidth)}
+                                                        onChange={(event) => {
+                                                            const value = clamp(Number(event.target.value), 0, 20, shape.strokeWidth);
+                                                            setMapState((prev) => ({
+                                                                ...prev,
+                                                                shapes: prev.shapes.map((entry) =>
+                                                                    entry.id === shape.id
+                                                                        ? { ...entry, strokeWidth: value }
+                                                                        : entry
+                                                                ),
+                                                            }));
+                                                            handleUpdateShape(shape.id, { strokeWidth: value });
+                                                        }}
+                                                    />
+                                                </label>
+                                                <label className="map-shape-slider">
+                                                    <span className="text-small">Rotation ({Math.round(shape.rotation)}°)</span>
+                                                    <input
+                                                        type="range"
+                                                        min="0"
+                                                        max="360"
+                                                        value={Math.round(shape.rotation)}
+                                                        onChange={(event) => {
+                                                            const value = clamp(Number(event.target.value), 0, 360, shape.rotation);
+                                                            setMapState((prev) => ({
+                                                                ...prev,
+                                                                shapes: prev.shapes.map((entry) =>
+                                                                    entry.id === shape.id
+                                                                        ? { ...entry, rotation: value }
+                                                                        : entry
+                                                                ),
+                                                            }));
+                                                            handleUpdateShape(shape.id, { rotation: value });
+                                                        }}
+                                                    />
+                                                </label>
+                                                <label className="map-shape-slider">
+                                                    <span className="text-small">Opacity ({Math.round(shape.opacity * 100)}%)</span>
+                                                    <input
+                                                        type="range"
+                                                        min="10"
+                                                        max="100"
+                                                        value={Math.round(shape.opacity * 100)}
+                                                        onChange={(event) => {
+                                                            const value = clamp(Number(event.target.value) / 100, 0.1, 1, shape.opacity);
+                                                            setMapState((prev) => ({
+                                                                ...prev,
+                                                                shapes: prev.shapes.map((entry) =>
+                                                                    entry.id === shape.id
+                                                                        ? { ...entry, opacity: value }
+                                                                        : entry
+                                                                ),
+                                                            }));
+                                                            handleUpdateShape(shape.id, { opacity: value });
+                                                        }}
+                                                    />
+                                                </label>
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    {isDM && (
+                        <div className="map-panel card">
+                            <h3>Saved battle maps</h3>
+                            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                                <button type="button" className="btn btn-small" onClick={handleSaveMap}>
+                                    Save current map
+                                </button>
+                                <button type="button" className="btn btn-small secondary" onClick={refreshMapLibrary}>
+                                    Refresh
+                                </button>
+                            </div>
+                            {mapLibrary.length === 0 ? (
+                                <p className="map-empty text-muted">No saved maps yet.</p>
+                            ) : (
+                                <div className="list">
+                                    {mapLibrary.map((entry) => {
+                                        const updatedLabel = entry.updatedAt || entry.createdAt;
+                                        return (
+                                            <div key={entry.id} className="map-library-row">
+                                                <div className="map-library-row__info">
+                                                    <strong>{entry.name}</strong>
+                                                    {updatedLabel && (
+                                                        <div className="text-muted text-small">
+                                                            Updated {new Date(updatedLabel).toLocaleString()}
+                                                        </div>
+                                                    )}
+                                                    {entry.previewUrl && (
+                                                        <div className="map-library-row__preview text-small text-muted">
+                                                            {entry.previewUrl}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                                                    <button
+                                                        type="button"
+                                                        className="btn btn-small"
+                                                        onClick={() => handleLoadSavedMap(entry)}
+                                                    >
+                                                        Load
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="btn btn-small ghost"
+                                                        onClick={() => handleDeleteSavedMap(entry)}
+                                                    >
+                                                        Delete
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </aside>
             </div>
         </div>
