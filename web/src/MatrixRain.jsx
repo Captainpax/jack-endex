@@ -9,12 +9,57 @@ function randomGlyph() {
     return GLYPHS[Math.floor(Math.random() * GLYPHS.length)];
 }
 
+function useLocationSignal() {
+    const [signal, setSignal] = useState(() => (typeof window !== 'undefined' ? window.location.href : ''));
+    useEffect(() => {
+        if (typeof window === 'undefined') return undefined;
+        let lastHref = window.location.href;
+        const notify = () => {
+            const current = window.location.href;
+            if (current !== lastHref) {
+                lastHref = current;
+                setSignal(`${current}#${Date.now()}`);
+            }
+        };
+        const handlePop = () => notify();
+        window.addEventListener('popstate', handlePop);
+        const { pushState, replaceState } = window.history;
+        window.history.pushState = function patchedPushState(...args) {
+            const result = pushState.apply(this, args);
+            notify();
+            return result;
+        };
+        window.history.replaceState = function patchedReplaceState(...args) {
+            const result = replaceState.apply(this, args);
+            notify();
+            return result;
+        };
+        return () => {
+            window.removeEventListener('popstate', handlePop);
+            window.history.pushState = pushState;
+            window.history.replaceState = replaceState;
+        };
+    }, []);
+    return signal;
+}
+
+function createColumns() {
+    return Array.from({ length: COLUMN_COUNT }, (_, i) => ({
+        id: i,
+        left: Math.random() * 100,
+        duration: 1.6 + Math.random() * 1.8,
+        delay: Math.random() * 1.5,
+        chars: Array.from({ length: ROWS }, randomGlyph),
+    }));
+}
+
 // Simple matrix-style rain shown when API requests are active
 export default function MatrixRain() {
     const [active, setActive] = useState(false);
     const [visible, setVisible] = useState(false);
     const [columns, setColumns] = useState(() => []);
     const fadeTimer = useRef(null);
+    const locationSignal = useLocationSignal();
 
     useEffect(() => {
         const unsubscribe = onApiActivity(setActive);
@@ -30,15 +75,7 @@ export default function MatrixRain() {
     useEffect(() => {
         if (active) {
             setVisible(true);
-            setColumns(() =>
-                Array.from({ length: COLUMN_COUNT }, (_, i) => ({
-                    id: i,
-                    left: Math.random() * 100,
-                    duration: 1.6 + Math.random() * 1.8,
-                    delay: Math.random() * 1.5,
-                    chars: Array.from({ length: ROWS }, randomGlyph),
-                }))
-            );
+            setColumns(() => createColumns());
         } else {
             if (fadeTimer.current) clearTimeout(fadeTimer.current);
             fadeTimer.current = setTimeout(() => setVisible(false), 400);
@@ -50,6 +87,11 @@ export default function MatrixRain() {
             }
         };
     }, [active]);
+
+    useEffect(() => {
+        if (!visible) return;
+        setColumns(() => createColumns());
+    }, [locationSignal, visible]);
 
     useEffect(() => {
         if (!active) return undefined;

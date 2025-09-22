@@ -1,5 +1,4 @@
 /* eslint-env node */
-/* global process */
 import http from 'http';
 import express from 'express';
 import session from 'express-session';
@@ -8,13 +7,17 @@ import { v4 as uuid } from 'uuid';
 import path from 'path';
 import fs from 'fs/promises';
 import crypto from 'crypto';
-import personas from './routes/personas.routes.js';
+import mongoose from './lib/mongoose.js';
 import { fileURLToPath } from 'url';
 import cors from 'cors';
+
+import personas from './routes/personas.routes.js';
 import { createDiscordWatcher } from './discordWatcher.js';
+import { loadEnv, envString, envNumber } from './config/env.js';
+import User from './models/User.js';
+import Game from './models/Game.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const loadedEnvKeys = new Set();
 const storyWatchers = new Map();
 const storySubscribers = new Map();
 const gameSubscribers = new Map();
@@ -35,6 +38,48 @@ const DEFAULT_PLAYER_TOKEN_COLOR = '#38bdf8';
 const DEFAULT_DEMON_TOKEN_COLOR = '#f97316';
 const DEFAULT_CUSTOM_TOKEN_COLOR = '#a855f7';
 const DEFAULT_ENEMY_TOKEN_COLOR = '#ef4444';
+
+await loadEnv({ root: __dirname });
+
+mongoose.set('strictQuery', false);
+
+const MONGODB_URI = envString('MONGODB_URI');
+const MONGODB_DB_NAME = envString('MONGODB_DB_NAME');
+if (!MONGODB_URI) {
+    console.error('Missing MONGODB_URI environment variable. Set it in .env to connect to MongoDB.');
+    process.exit(1);
+}
+
+try {
+    await mongoose.connect(MONGODB_URI, { dbName: MONGODB_DB_NAME || undefined });
+    console.log('[db] Connected to MongoDB');
+} catch (err) {
+    console.error('[db] Failed to connect to MongoDB', err);
+    process.exit(1);
+}
+
+const SESSION_SECRET = envString('SESSION_SECRET', 'dev-secret');
+const DEFAULT_DISCORD_BOT_TOKEN = readBotToken(
+    envString('DISCORD_PRIMARY_BOT_TOKEN') ||
+    envString('DISCORD_DEFAULT_BOT_TOKEN') ||
+    envString('DISCORD_BOT_TOKEN') ||
+    envString('BOT_TOKEN')
+);
+const DEFAULT_DISCORD_INVITE = envString('DISCORD_PRIMARY_BOT_INVITE') || envString('DISCORD_BOT_INVITE');
+const DEFAULT_DISCORD_APPLICATION_ID = envString('DISCORD_APPLICATION_ID');
+const DEFAULT_DISCORD_GUILD_ID = envString('DISCORD_PRIMARY_GUILD_ID')
+    || envString('DISCORD_GUILD_ID')
+    || envString('DISCORD_SERVER_ID');
+const DEFAULT_DISCORD_CHANNEL_ID = envString('DISCORD_PRIMARY_CHANNEL_ID') || envString('DISCORD_CHANNEL_ID');
+const DEFAULT_DISCORD_POLL_INTERVAL_MS = envNumber('DISCORD_POLL_INTERVAL_MS', 15_000) || 15_000;
+const PRIMARY_DISCORD_INFO = {
+    available: !!DEFAULT_DISCORD_BOT_TOKEN,
+    inviteUrl: DEFAULT_DISCORD_INVITE || null,
+    applicationId: DEFAULT_DISCORD_APPLICATION_ID || null,
+    defaultGuildId: readSnowflake(DEFAULT_DISCORD_GUILD_ID) || null,
+    defaultChannelId: readSnowflake(DEFAULT_DISCORD_CHANNEL_ID) || null,
+    pollIntervalMs: DEFAULT_DISCORD_POLL_INTERVAL_MS,
+};
 
 function parseYouTubeTimecode(raw) {
     if (typeof raw !== 'string') return 0;
@@ -412,62 +457,15 @@ function findMapToken(map, tokenId) {
  * @returns {string|null}
  */
 function getDiscordBotToken(env = process.env) {
-    const token = env.DISCORD_BOT_TOKEN || env.BOT_TOKEN;
-    return typeof token === 'string' && token.trim() ? token.trim() : null;
-}
-
-function parseEnvFile(content) {
-    const entries = new Map();
-    for (const rawLine of content.split(/\r?\n/)) {
-        const line = rawLine.trim();
-        if (!line || line.startsWith('#')) continue;
-        const withoutExport = line.startsWith('export ') ? line.slice(7).trim() : line;
-        const eqIndex = withoutExport.indexOf('=');
-        if (eqIndex === -1) continue;
-        const key = withoutExport.slice(0, eqIndex).trim();
-        if (!key) continue;
-        let value = withoutExport.slice(eqIndex + 1).trim();
-        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-            value = value.slice(1, -1);
-        } else {
-            const commentIndex = value.indexOf(' #');
-            if (commentIndex !== -1) {
-                value = value.slice(0, commentIndex).trimEnd();
-            }
-        }
-        entries.set(key, value);
+    if (env && typeof env.DISCORD_BOT_TOKEN === 'string' && env.DISCORD_BOT_TOKEN.trim()) {
+        return readBotToken(env.DISCORD_BOT_TOKEN);
     }
-    return entries;
-}
-
-function applyEnv(entries, { overrideLoaded = false } = {}) {
-    for (const [key, value] of entries) {
-        const hasExisting = Object.prototype.hasOwnProperty.call(process.env, key);
-        if (!hasExisting || (overrideLoaded && loadedEnvKeys.has(key))) {
-            process.env[key] = value;
-            loadedEnvKeys.add(key);
-        }
+    if (env && typeof env.BOT_TOKEN === 'string' && env.BOT_TOKEN.trim()) {
+        return readBotToken(env.BOT_TOKEN);
     }
+    return DEFAULT_DISCORD_BOT_TOKEN || null;
 }
 
-async function loadEnvFiles() {
-    const files = ['.env', '.env.local'];
-    for (const file of files) {
-        const filepath = path.join(__dirname, file);
-        try {
-            const content = await fs.readFile(filepath, 'utf8');
-            const entries = parseEnvFile(content.replace(/^\uFEFF/, ''));
-            applyEnv(entries, { overrideLoaded: file.endsWith('.local') });
-        } catch (err) {
-            if (err && err.code !== 'ENOENT') {
-                console.warn(`Failed to read ${file}:`, err);
-            }
-        }
-    }
-}
-
-await loadEnvFiles();
-const DB_PATH = path.join(__dirname, 'data', 'db.json');
 const ITEMS_PATH = path.join(__dirname, 'data', 'premade-items.json');
 const TXT_DOCS_PATH = path.join(__dirname, 'txtdocs');
 const INDEX_CANDIDATES = [
@@ -1120,6 +1118,13 @@ function presentStoryConfig(story, { includeSecrets = false } = {}) {
             : 15_000,
         webhookConfigured: !!normalized.webhookUrl,
         botTokenConfigured: !!(normalized.botToken || getDiscordBotToken()),
+        primaryBot: {
+            available: PRIMARY_DISCORD_INFO.available,
+            inviteUrl: PRIMARY_DISCORD_INFO.inviteUrl,
+            applicationId: PRIMARY_DISCORD_INFO.applicationId,
+            defaultGuildId: PRIMARY_DISCORD_INFO.defaultGuildId,
+            defaultChannelId: PRIMARY_DISCORD_INFO.defaultChannelId,
+        },
     };
     if (includeSecrets) {
         output.webhookUrl = normalized.webhookUrl || '';
@@ -2345,7 +2350,7 @@ function ensureStoryConfig(game) {
     const pollMsRaw = Number(raw.pollIntervalMs);
     const pollIntervalMs = Number.isFinite(pollMsRaw)
         ? Math.min(120_000, Math.max(5_000, Math.round(pollMsRaw)))
-        : 15_000;
+        : DEFAULT_DISCORD_POLL_INTERVAL_MS;
     const allowedPlayers = new Set(
         Array.isArray(game?.players)
             ? game.players.map((p) => (p && typeof p.userId === 'string' ? p.userId : null)).filter(Boolean)
@@ -2428,17 +2433,47 @@ function normalizeDB(raw) {
     };
 }
 
+function stripMongoMetadata(doc) {
+    if (!doc || typeof doc !== 'object') return doc;
+    const { _id, __v, createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = doc;
+    return rest;
+}
+
 async function readDB() {
-    try {
-        const json = await fs.readFile(DB_PATH, 'utf8');
-        return normalizeDB(JSON.parse(json));
-    } catch {
-        return { users: [], games: [] };
-    }
+    const [users, games] = await Promise.all([
+        User.find().lean(),
+        Game.find().lean(),
+    ]);
+    return normalizeDB({
+        users: users.map((doc) => stripMongoMetadata(doc)),
+        games: games.map((doc) => stripMongoMetadata(doc)),
+    });
 }
 
 async function writeDB(db) {
-    await fs.writeFile(DB_PATH, JSON.stringify(normalizeDB(db), null, 2));
+    const normalized = normalizeDB(db);
+    const userDocs = normalized.users.map((doc) => stripMongoMetadata(doc));
+    const gameDocs = normalized.games.map((doc) => stripMongoMetadata(doc));
+
+    if (userDocs.length > 0) {
+        await User.bulkWrite(userDocs.map((user) => ({
+            updateOne: { filter: { id: user.id }, update: { $set: user }, upsert: true },
+        })));
+        const ids = userDocs.map((user) => user.id);
+        await User.deleteMany({ id: { $nin: ids } });
+    } else {
+        await User.deleteMany({});
+    }
+
+    if (gameDocs.length > 0) {
+        await Game.bulkWrite(gameDocs.map((game) => ({
+            replaceOne: { filter: { id: game.id }, replacement: game, upsert: true },
+        })));
+        const ids = gameDocs.map((game) => game.id);
+        await Game.deleteMany({ id: { $nin: ids } });
+    } else {
+        await Game.deleteMany({});
+    }
 }
 
 function hash(pw, salt) {
@@ -2459,7 +2494,7 @@ app.use(express.json());
 // app.set('trust proxy', 1);
 
 const sessionParser = session({
-    secret: 'dev-secret',
+    secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
