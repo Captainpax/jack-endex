@@ -447,6 +447,24 @@ export const Games = {
     updateDemon: (id, demonId, body) => api(`/api/games/${encodeURIComponent(id)}/demons/${encodeURIComponent(demonId)}`, { method: 'PUT', body }),
     delDemon: (id, demonId) => api(`/api/games/${encodeURIComponent(id)}/demons/${encodeURIComponent(demonId)}`, { method: 'DELETE' }),
 
+    updateMapSettings: (id, settings) =>
+        api(`/api/games/${encodeURIComponent(id)}/map/settings`, { method: 'PUT', body: settings }),
+    addMapStroke: (id, stroke) =>
+        api(`/api/games/${encodeURIComponent(id)}/map/strokes`, { method: 'POST', body: { stroke } }),
+    deleteMapStroke: (id, strokeId) =>
+        api(`/api/games/${encodeURIComponent(id)}/map/strokes/${encodeURIComponent(strokeId)}`, { method: 'DELETE' }),
+    clearMapStrokes: (id) =>
+        api(`/api/games/${encodeURIComponent(id)}/map/strokes/clear`, { method: 'POST' }),
+    addMapToken: (id, token) =>
+        api(`/api/games/${encodeURIComponent(id)}/map/tokens`, { method: 'POST', body: token }),
+    updateMapToken: (id, tokenId, payload) =>
+        api(`/api/games/${encodeURIComponent(id)}/map/tokens/${encodeURIComponent(tokenId)}`, {
+            method: 'PUT',
+            body: payload,
+        }),
+    deleteMapToken: (id, tokenId) =>
+        api(`/api/games/${encodeURIComponent(id)}/map/tokens/${encodeURIComponent(tokenId)}`, { method: 'DELETE' }),
+
     // Optional: full pagination helper example if the backend supports it
     listAll: (query) => apiClient.getAllPages('/api/games', { query }),
 };

@@ -376,6 +376,234 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     background: var(--surface);
 }
 
+/* Battle map */
+.map-tab {
+    display: grid;
+    gap: 16px;
+}
+
+.map-toolbar {
+    display: grid;
+    gap: 12px;
+}
+
+.map-toolbar__row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.map-toolbar__tools {
+    display: grid;
+    gap: 6px;
+}
+
+.map-toolbar__buttons {
+    display: flex;
+    gap: 8px;
+}
+
+.map-toolbar .btn.is-active {
+    box-shadow: var(--focus);
+}
+
+.map-toolbar__status {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.map-toolbar__brush {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    flex-wrap: wrap;
+}
+
+.map-toolbar__colors {
+    display: flex;
+    gap: 6px;
+}
+
+.map-color {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: transform var(--trans-fast), border-color var(--trans-fast), box-shadow var(--trans-fast);
+}
+
+.map-color:hover {
+    transform: translateY(-2px);
+}
+
+.map-color.is-active {
+    border-color: rgba(255, 255, 255, 0.8);
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35), 0 0 0 4px rgba(15, 23, 42, 0.2);
+}
+
+.map-brush-size {
+    display: grid;
+    gap: 6px;
+    min-width: 160px;
+}
+
+.map-toolbar__settings {
+    gap: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.map-layout {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    align-items: start;
+}
+
+@media (max-width: 960px) {
+    .map-layout {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.map-board {
+    position: relative;
+    padding: 0;
+    overflow: hidden;
+    min-height: 400px;
+    border-radius: var(--radius-lg);
+}
+
+.map-board__canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    touch-action: none;
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.06), rgba(59, 130, 246, 0.12));
+}
+
+.map-board__tokens {
+    position: absolute;
+    inset: 0;
+}
+
+.map-token {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    border-radius: 999px;
+    min-width: 34px;
+    min-height: 34px;
+    border: 2px solid rgba(255, 255, 255, 0.75);
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.35);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: 700;
+    letter-spacing: .05em;
+    cursor: default;
+    transition: transform var(--trans-fast), box-shadow var(--trans-fast);
+}
+
+.map-token.is-draggable {
+    cursor: grab;
+}
+
+.map-token.is-draggable:hover {
+    transform: translate(-50%, -50%) scale(1.06);
+    box-shadow: 0 10px 20px rgba(15, 23, 42, 0.45);
+}
+
+.map-token__label {
+    pointer-events: none;
+}
+
+.map-token__tooltip {
+    position: absolute;
+    bottom: calc(100% + 10px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(15, 23, 42, 0.92);
+    color: #fff;
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--trans-fast), transform var(--trans-fast);
+}
+
+.map-token:hover .map-token__tooltip {
+    opacity: 1;
+    transform: translate(-50%, -2px);
+}
+
+.map-token--player {
+    border-color: rgba(56, 189, 248, 0.75);
+}
+
+.map-token--demon {
+    border-color: rgba(249, 115, 22, 0.75);
+}
+
+.map-board__overlay {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: rgba(15, 23, 42, 0.55);
+    padding: 24px;
+    text-align: center;
+}
+
+.map-board__overlay-content {
+    background: rgba(17, 24, 39, 0.85);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    max-width: min(420px, 90%);
+    color: #e5e7eb;
+    display: grid;
+    gap: 8px;
+}
+
+.map-sidebar {
+    display: grid;
+    gap: 16px;
+}
+
+.map-panel {
+    display: grid;
+    gap: 12px;
+}
+
+.map-panel__add {
+    display: grid;
+    gap: 8px;
+}
+
+.map-token-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.map-token-row:last-child {
+    border-bottom: none;
+}
+
+.map-empty {
+    margin: 4px 0 0;
+}
+
 /* Gear overview */
 .gear-overview-card {
     display: grid;
