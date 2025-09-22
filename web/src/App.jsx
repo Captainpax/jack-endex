@@ -2902,7 +2902,6 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     const classLabel = ch?.profile?.class?.trim() || "";
     const arcanaLabel = ch?.profile?.arcana?.trim() || "";
     const alignmentLabel = ch?.profile?.alignment?.trim() || "";
-    const pronounLabel = ch?.profile?.pronouns?.trim() || "";
     const handlerName = ch?.profile?.player?.trim() || slot?.username || me.username;
 
     const initiativeValueRaw = get(ch, "resources.initiative");
@@ -3055,10 +3054,7 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                             {headlineParts.length > 0 && (
                                 <p className="sheet-spotlight__meta">{headlineParts.join(" · ")}</p>
                             )}
-                            <p className="text-muted text-small">
-                                Handler: {handlerName}
-                                {pronounLabel ? ` · Pronouns ${pronounLabel}` : ""}
-                            </p>
+                            <p className="text-muted text-small">Handler: {handlerName}</p>
                         </div>
                         <div className="sheet-spotlight__stats">
                             <div className="sheet-spotlight__stat">
@@ -3113,20 +3109,18 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                         <div className="section-header">
                             <h4>Adventurer profile</h4>
                             <p className="text-muted text-small">
-                                Capture the essentials, from pronouns to alignment and arcana.
+                                Capture the essentials, from alignment and arcana to class.
                             </p>
                         </div>
                         <div className="sheet-grid">
                             {textField("Character name", "name")}
                             {textField("Player / handler", "profile.player", { placeholder: slot?.username || me.username })}
-                            {textField("Pronouns", "profile.pronouns")}
                             {textField("Concept / class", "profile.class")}
                             {selectField(
                                 "Arcana",
                                 "profile.arcana",
                                 ARCANA_DATA.map((opt) => ({ ...opt, value: opt.label }))
                             )}
-                            {textField("Negotiator title", "profile.negotiator")}
                             {textField("Alignment", "profile.alignment")}
                             {textField("Race / origin", "profile.race")}
                             {textField("Age", "profile.age")}
@@ -3834,10 +3828,8 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName, 
             <div className="wizard-grid">
                 {conceptField("Character name", "name")}
                 {conceptField("Player / handler", "player", { placeholder: playerName || "" })}
-                {conceptField("Pronouns", "pronouns")}
                 {conceptField("Concept / class", "class")}
                 {conceptField("Alignment", "alignment")}
-                {conceptField("Negotiator title", "negotiator")}
                 {conceptField("Race / origin", "race")}
                 {conceptField("Age", "age")}
                 {conceptField("Gender", "gender")}
@@ -4123,10 +4115,6 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName, 
                                 <dd>{concept.alignment || "Neutral"}</dd>
                             </div>
                             <div>
-                                <dt>Pronouns</dt>
-                                <dd>{concept.pronouns || "—"}</dd>
-                            </div>
-                            <div>
                                 <dt>Origin</dt>
                                 <dd>{concept.race || "—"}</dd>
                             </div>
@@ -4273,11 +4261,9 @@ function buildInitialWizardState(character, playerName, worldSkills = DEFAULT_WO
     const concept = {
         name: normalized.name || "",
         player: normalized.profile?.player || playerName || "",
-        pronouns: normalized.profile?.pronouns || "",
         class: normalized.profile?.class || "",
         arcana: normalized.profile?.arcana || "",
         alignment: normalized.profile?.alignment || "",
-        negotiator: normalized.profile?.negotiator || "",
         race: normalized.profile?.race || "",
         age: normalized.profile?.age || "",
         gender: normalized.profile?.gender || "",
@@ -4304,11 +4290,9 @@ function buildCharacterFromWizard(state, base, worldSkills = DEFAULT_WORLD_SKILL
     merged.profile = {
         ...normalized.profile,
         player: state.concept.player || normalized.profile?.player || "",
-        pronouns: state.concept.pronouns || "",
         class: state.concept.class || "",
         arcana: state.concept.arcana || "",
         alignment: state.concept.alignment || "",
-        negotiator: state.concept.negotiator || "",
         race: state.concept.race || "",
         age: state.concept.age || "",
         gender: state.concept.gender || "",
