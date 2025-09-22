@@ -56,7 +56,7 @@ function computeDemonImageSources(imageUrl) {
     return sources;
 }
 
-function DemonImage({ src, alt, onError, ...imgProps }) {
+function DemonImage({ src, alt, onError, crossOrigin: crossOriginProp, referrerPolicy: referrerPolicyProp, ...imgProps }) {
     const sources = useMemo(() => computeDemonImageSources(src), [src]);
     const [index, setIndex] = useState(0);
 
@@ -79,7 +79,19 @@ function DemonImage({ src, alt, onError, ...imgProps }) {
         return null;
     }
 
-    return <img {...imgProps} alt={alt} src={sources[index]} onError={handleError} />;
+    const crossOrigin = crossOriginProp ?? "anonymous";
+    const referrerPolicy = referrerPolicyProp ?? "no-referrer";
+
+    return (
+        <img
+            {...imgProps}
+            alt={alt}
+            src={sources[index]}
+            onError={handleError}
+            crossOrigin={crossOrigin}
+            referrerPolicy={referrerPolicy}
+        />
+    );
 }
 
 function normalizeMediaSnapshot(snapshot) {
@@ -805,6 +817,30 @@ const ABILITY_SORT_INDEX = ABILITY_DEFS.reduce((map, ability, index) => {
     return map;
 }, {});
 
+const DEMON_RESISTANCE_SORTS = [
+    { key: "weak", label: "Weakness slots (fewest → most)", direction: "asc" },
+    { key: "resist", label: "Resistances (most → fewest)", direction: "desc" },
+    { key: "null", label: "Nullifications (most → fewest)", direction: "desc" },
+    { key: "absorb", label: "Absorptions (most → fewest)", direction: "desc" },
+    { key: "reflect", label: "Reflections (most → fewest)", direction: "desc" },
+];
+
+const DEMON_SORT_OPTIONS = [
+    { value: "name", label: "Name (A → Z)" },
+    { value: "arcana", label: "Arcana (A → Z)" },
+    { value: "levelHigh", label: "Level (high → low)" },
+    { value: "levelLow", label: "Level (low → high)" },
+    ...ABILITY_DEFS.map((ability) => ({
+        value: `stat:${ability.key}`,
+        label: `${ability.label} (high → low)`,
+    })),
+    ...DEMON_RESISTANCE_SORTS.map((entry) => ({
+        value: `resist:${entry.key}`,
+        label: entry.label,
+    })),
+    { value: "skillCount", label: "Skills (most → fewest)" },
+];
+
 const COMBAT_TIER_ORDER = ["WEAK", "MEDIUM", "HEAVY", "SEVERE"];
 const COMBAT_TIER_INDEX = COMBAT_TIER_ORDER.reduce((map, tier, index) => {
     map[tier] = index;
@@ -1130,6 +1166,64 @@ function formatResistanceList(primary, fallback) {
         return source;
     }
     return '—';
+}
+
+function normalizeStringList(value) {
+    if (!value && value !== 0) return EMPTY_ARRAY;
+    if (Array.isArray(value)) {
+        return value
+            .map((entry) => (typeof entry === 'string' ? entry.trim() : String(entry ?? '')))
+            .filter((entry) => entry.length > 0);
+    }
+    if (typeof value === 'string') {
+        return value
+            .split(/[\n,]/)
+            .map((entry) => entry.trim())
+            .filter((entry) => entry.length > 0);
+    }
+    const text = String(value ?? '').trim();
+    return text ? [text] : EMPTY_ARRAY;
+}
+
+function getResistanceValues(demon, key) {
+    if (!demon) return EMPTY_ARRAY;
+    const primary = demon.resistances?.[key];
+    const fallback = demon[key];
+    const primaryList = normalizeStringList(primary);
+    if (primaryList.length > 0) return primaryList;
+    return normalizeStringList(fallback);
+}
+
+function collectResistanceTerms(demon) {
+    if (!demon) return EMPTY_ARRAY;
+    const keys = ['weak', 'resist', 'null', 'absorb', 'reflect'];
+    const values = [];
+    for (const key of keys) {
+        for (const entry of getResistanceValues(demon, key)) {
+            values.push(entry.toLowerCase());
+        }
+    }
+    return values;
+}
+
+function getResistanceCount(demon, key) {
+    return getResistanceValues(demon, key).length;
+}
+
+function getDemonSkillList(demon) {
+    if (!demon) return EMPTY_ARRAY;
+    if (Array.isArray(demon.skills)) {
+        return demon.skills
+            .map((entry) => (typeof entry === 'string' ? entry.trim() : String(entry ?? '')))
+            .filter((entry) => entry.length > 0);
+    }
+    if (typeof demon.skills === 'string') {
+        return demon.skills
+            .split(/[\n,]/)
+            .map((entry) => entry.trim())
+            .filter((entry) => entry.length > 0);
+    }
+    return EMPTY_ARRAY;
 }
 
 function makeWorldSkillId(label, seen) {
@@ -10777,6 +10871,129 @@ function GearTab({ game, me, onUpdate }) {
 }
 
 // ---------- Demons ----------
+function DemonCombatSkillDialog({ demon, skills, onClose }) {
+    const [query, setQuery] = useState("");
+    const demonSkillList = useMemo(() => getDemonSkillList(demon), [demon]);
+    const demonSkillSet = useMemo(() => {
+        return new Set(demonSkillList.map((name) => name.toLowerCase()));
+    }, [demonSkillList]);
+    const matchedSkills = useMemo(() => {
+        if (!Array.isArray(skills) || skills.length === 0 || demonSkillSet.size === 0) return EMPTY_ARRAY;
+        return skills.filter((skill) => demonSkillSet.has(skill.label.toLowerCase()));
+    }, [demonSkillSet, skills]);
+    const unmatchedSkills = useMemo(() => {
+        if (demonSkillList.length === 0) return EMPTY_ARRAY;
+        const matchedLabels = new Set(matchedSkills.map((skill) => skill.label.toLowerCase()));
+        return demonSkillList.filter((label) => !matchedLabels.has(label.toLowerCase()));
+    }, [demonSkillList, matchedSkills]);
+    const filteredSkills = useMemo(() => {
+        if (matchedSkills.length === 0) return matchedSkills;
+        const term = query.trim().toLowerCase();
+        if (!term) return matchedSkills;
+        return matchedSkills.filter((skill) => {
+            const tierLabel = (COMBAT_TIER_LABELS[skill.tier] || "").toLowerCase();
+            const categoryLabel = (COMBAT_CATEGORY_LABELS[skill.category] || "").toLowerCase();
+            const notes = (skill.notes || "").toLowerCase();
+            const cost = (skill.cost || "").toLowerCase();
+            return (
+                skill.label.toLowerCase().includes(term) ||
+                skill.ability.toLowerCase().includes(term) ||
+                tierLabel.includes(term) ||
+                categoryLabel.includes(term) ||
+                notes.includes(term) ||
+                cost.includes(term)
+            );
+        });
+    }, [matchedSkills, query]);
+
+    useEffect(() => {
+        const handleKey = (event) => {
+            if (event.key === "Escape") {
+                event.preventDefault();
+                onClose?.();
+            }
+        };
+        window.addEventListener("keydown", handleKey);
+        return () => window.removeEventListener("keydown", handleKey);
+    }, [onClose]);
+
+    useEffect(() => {
+        const previous = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        return () => {
+            document.body.style.overflow = previous;
+        };
+    }, []);
+
+    if (!demon) return null;
+
+    const demonName = demon.name || "Demon";
+
+    return (
+        <div className="demon-skill-overlay" role="dialog" aria-modal="true" aria-labelledby="demon-skill-title">
+            <div className="demon-skill-modal">
+                <header className="demon-skill-modal__header">
+                    <div>
+                        <h3 id="demon-skill-title">{demonName} combat skills</h3>
+                        <p className="text-small text-muted">
+                            Matching entries from the Combat Skills tab.
+                        </p>
+                    </div>
+                    <button type="button" className="btn ghost btn-small" onClick={onClose}>
+                        Close
+                    </button>
+                </header>
+                {matchedSkills.length > 0 ? (
+                    <>
+                        <label className="field">
+                            <span className="field__label">Filter skills</span>
+                            <input
+                                type="search"
+                                value={query}
+                                onChange={(event) => setQuery(event.target.value)}
+                                placeholder="Search by name, ability, or notes"
+                                autoFocus
+                            />
+                        </label>
+                        <div className="demon-skill-modal__list">
+                            {filteredSkills.map((skill) => (
+                                <article key={skill.id} className="demon-skill-modal__item">
+                                    <div className="demon-skill-modal__item-header">
+                                        <h4>{skill.label}</h4>
+                                        <div className="demon-skill-modal__badges">
+                                            <span className="pill">{COMBAT_TIER_LABELS[skill.tier] || "Tier"}</span>
+                                            <span className="pill light">{skill.ability} mod</span>
+                                            <span className="pill light">{COMBAT_CATEGORY_LABELS[skill.category] || "Other"}</span>
+                                        </div>
+                                    </div>
+                                    {skill.cost && <div className="text-small">Cost: {skill.cost}</div>}
+                                    {skill.notes && <p className="text-small">{skill.notes}</p>}
+                                </article>
+                            ))}
+                            {filteredSkills.length === 0 && (
+                                <div className="demon-skill-modal__empty text-small text-muted">
+                                    No combat skills match that filter.
+                                </div>
+                            )}
+                        </div>
+                    </>
+                ) : (
+                    <div className="demon-skill-modal__empty text-small text-muted">
+                        {demonSkillList.length === 0
+                            ? "This demon does not list any combat skills yet."
+                            : "No combat skills in the codex match these names."}
+                    </div>
+                )}
+                {unmatchedSkills.length > 0 && (
+                    <div className="demon-skill-modal__unmatched text-small">
+                        <strong>Unlinked skills:</strong> {unmatchedSkills.join(', ')}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
 function DemonTab({ game, me, onUpdate }) {
     const [name, setName] = useState("");
     const [arcana, setArc] = useState("");
@@ -10803,10 +11020,16 @@ function DemonTab({ game, me, onUpdate }) {
     const [busySearch, setBusySearch] = useState(false);
     const [busyDelete, setBusyDelete] = useState(null);
     const [demonSortMode, setDemonSortMode] = useState("name");
+    const [demonSearch, setDemonSearch] = useState("");
+    const [arcanaFilter, setArcanaFilter] = useState("");
+    const [skillFilter, setSkillFilter] = useState("");
+    const [resistanceFilter, setResistanceFilter] = useState("");
+    const [skillModalDemon, setSkillModalDemon] = useState(null);
     const demonCollator = useMemo(
         () => new Intl.Collator(undefined, { numeric: true, sensitivity: "base" }),
         [],
     );
+    const combatSkills = useMemo(() => normalizeCombatSkillDefs(game.combatSkills), [game.combatSkills]);
 
     const isDM = game.dmId === me.id;
     const canEdit = isDM || game.permissions?.canEditDemons;
@@ -10878,36 +11101,120 @@ function DemonTab({ game, me, onUpdate }) {
         }
     };
 
-    const sortedDemons = useMemo(() => {
-        if (!Array.isArray(game.demons) || game.demons.length === 0) {
-            return game.demons || EMPTY_ARRAY;
+    const filteredDemons = useMemo(() => {
+        const source = Array.isArray(game.demons) ? game.demons : EMPTY_ARRAY;
+        if (source.length === 0) return source;
+        const searchTerm = demonSearch.trim().toLowerCase();
+        const arcanaTerm = arcanaFilter.trim().toLowerCase();
+        const skillTerm = skillFilter.trim().toLowerCase();
+        const resistanceTerm = resistanceFilter.trim().toLowerCase();
+        if (!searchTerm && !arcanaTerm && !skillTerm && !resistanceTerm) {
+            return source;
         }
-        const arr = [...game.demons];
+        return source.filter((demon) => {
+            if (!demon) return false;
+            const name = (demon.name || "").toLowerCase();
+            const arcana = (demon.arcana || "").toLowerCase();
+            const alignment = (demon.alignment || "").toLowerCase();
+            const notesText = (demon.notes || "").toLowerCase();
+            const description = (demon.description || "").toLowerCase();
+            const skillsLower = getDemonSkillList(demon).map((skill) => skill.toLowerCase());
+            const resistanceTerms = collectResistanceTerms(demon);
+            if (arcanaTerm && !arcana.includes(arcanaTerm)) {
+                return false;
+            }
+            if (skillTerm && !skillsLower.some((entry) => entry.includes(skillTerm))) {
+                return false;
+            }
+            if (resistanceTerm && !resistanceTerms.some((entry) => entry.includes(resistanceTerm))) {
+                return false;
+            }
+            if (searchTerm) {
+                const matchesSearch =
+                    name.includes(searchTerm) ||
+                    arcana.includes(searchTerm) ||
+                    alignment.includes(searchTerm) ||
+                    notesText.includes(searchTerm) ||
+                    description.includes(searchTerm) ||
+                    skillsLower.some((entry) => entry.includes(searchTerm)) ||
+                    resistanceTerms.some((entry) => entry.includes(searchTerm));
+                if (!matchesSearch) return false;
+            }
+            return true;
+        });
+    }, [arcanaFilter, demonSearch, game.demons, resistanceFilter, skillFilter]);
+
+    const sortedDemons = useMemo(() => {
+        if (!Array.isArray(filteredDemons) || filteredDemons.length === 0) {
+            return Array.isArray(filteredDemons) ? filteredDemons : EMPTY_ARRAY;
+        }
+        const list = [...filteredDemons];
         const getName = (d) => (typeof d?.name === "string" ? d.name.trim() : "");
         const getArcana = (d) => (typeof d?.arcana === "string" ? d.arcana.trim() : "");
         const getLevel = (d) => {
             const raw = Number(d?.level);
             return Number.isFinite(raw) ? raw : 0;
         };
-        arr.sort((a, b) => {
-            if (demonSortMode === "levelHigh" || demonSortMode === "levelLow") {
-                const aLevel = getLevel(a);
-                const bLevel = getLevel(b);
-                if (aLevel !== bLevel) {
-                    return demonSortMode === "levelHigh" ? bLevel - aLevel : aLevel - bLevel;
+        const getStatValue = (d, key) => {
+            const raw = Number(d?.stats?.[key]);
+            return Number.isFinite(raw) ? raw : 0;
+        };
+        const getSkillCount = (d) => getDemonSkillList(d).length;
+
+        list.sort((a, b) => {
+            if (demonSortMode.startsWith("stat:")) {
+                const key = demonSortMode.slice(5);
+                const valueA = getStatValue(a, key);
+                const valueB = getStatValue(b, key);
+                if (valueA !== valueB) {
+                    return valueB - valueA;
+                }
+            } else if (demonSortMode.startsWith("resist:")) {
+                const key = demonSortMode.slice(7);
+                const config = DEMON_RESISTANCE_SORTS.find((entry) => entry.key === key);
+                if (config) {
+                    const countA = getResistanceCount(a, key);
+                    const countB = getResistanceCount(b, key);
+                    if (countA !== countB) {
+                        return config.direction === "asc" ? countA - countB : countB - countA;
+                    }
+                }
+            } else if (demonSortMode === "levelHigh" || demonSortMode === "levelLow") {
+                const levelA = getLevel(a);
+                const levelB = getLevel(b);
+                if (levelA !== levelB) {
+                    return demonSortMode === "levelHigh" ? levelB - levelA : levelA - levelB;
                 }
             } else if (demonSortMode === "arcana") {
                 const cmpArc = demonCollator.compare(getArcana(a), getArcana(b));
                 if (cmpArc !== 0) return cmpArc;
+            } else if (demonSortMode === "skillCount") {
+                const countA = getSkillCount(a);
+                const countB = getSkillCount(b);
+                if (countA !== countB) {
+                    return countB - countA;
+                }
             }
-            const cmpName = demonCollator.compare(getName(a), getName(b));
-            if (cmpName !== 0) return cmpName;
-            const cmpArc = demonCollator.compare(getArcana(a), getArcana(b));
-            if (cmpArc !== 0) return cmpArc;
-            return getLevel(a) - getLevel(b);
+            return demonCollator.compare(getName(a), getName(b));
         });
-        return arr;
-    }, [demonCollator, demonSortMode, game.demons]);
+
+        return list;
+    }, [demonCollator, demonSortMode, filteredDemons]);
+
+    const hasDemonFilters =
+        demonSearch.trim().length > 0 ||
+        arcanaFilter.trim().length > 0 ||
+        skillFilter.trim().length > 0 ||
+        resistanceFilter.trim().length > 0;
+
+    const openSkillModal = useCallback((demon) => {
+        if (!demon) return;
+        setSkillModalDemon(demon);
+    }, []);
+
+    const closeSkillModal = useCallback(() => {
+        setSkillModalDemon(null);
+    }, []);
 
     // Debounced search
     const debounceRef = useRef(0);
@@ -11217,94 +11524,180 @@ function DemonTab({ game, me, onUpdate }) {
                 </div>
             </div>
 
-            <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                <label className="field" style={{ minWidth: 200 }}>
-                    <span className="field__label">Sort demons by</span>
-                    <select value={demonSortMode} onChange={(e) => setDemonSortMode(e.target.value)}>
-                        <option value="name">Name (A → Z)</option>
-                        <option value="arcana">Arcana (A → Z)</option>
-                        <option value="levelHigh">Level (high → low)</option>
-                        <option value="levelLow">Level (low → high)</option>
+            <div className="demon-codex__filters">
+                <label className="field demon-codex__filter">
+                    <span className="field__label">Search demons</span>
+                    <input
+                        type="search"
+                        value={demonSearch}
+                        onChange={(event) => setDemonSearch(event.target.value)}
+                        placeholder="Name, alignment, notes…"
+                    />
+                </label>
+                <label className="field demon-codex__filter">
+                    <span className="field__label">Arcana</span>
+                    <input
+                        type="search"
+                        value={arcanaFilter}
+                        onChange={(event) => setArcanaFilter(event.target.value)}
+                        placeholder="e.g., Fool"
+                    />
+                </label>
+                <label className="field demon-codex__filter">
+                    <span className="field__label">Skill contains</span>
+                    <input
+                        type="search"
+                        value={skillFilter}
+                        onChange={(event) => setSkillFilter(event.target.value)}
+                        placeholder="e.g., Agidyne"
+                    />
+                </label>
+                <label className="field demon-codex__filter">
+                    <span className="field__label">Resistance contains</span>
+                    <input
+                        type="search"
+                        value={resistanceFilter}
+                        onChange={(event) => setResistanceFilter(event.target.value)}
+                        placeholder="e.g., Fire"
+                    />
+                </label>
+                <label className="field demon-codex__filter">
+                    <span className="field__label">Sort demons</span>
+                    <select value={demonSortMode} onChange={(event) => setDemonSortMode(event.target.value)}>
+                        {DEMON_SORT_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                                {option.label}
+                            </option>
+                        ))}
                     </select>
                 </label>
+                {hasDemonFilters && (
+                    <button
+                        type="button"
+                        className="btn ghost btn-small demon-codex__clear"
+                        onClick={() => {
+                            setDemonSearch("");
+                            setArcanaFilter("");
+                            setSkillFilter("");
+                            setResistanceFilter("");
+                        }}
+                    >
+                        Clear filters
+                    </button>
+                )}
             </div>
 
-            <div className="list" style={{ marginTop: 12, gap: 12 }}>
-                {sortedDemons.map((d) => (
-                    <div key={d.id} className="card" style={{ padding: 12 }}>
-                        <div
-                            className="row"
-                            style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}
-                        >
-                            <div className="row" style={{ gap: 12, alignItems: "flex-start", flex: 1 }}>
-                                {d.image && (
-                                    <DemonImage
-                                        src={d.image}
-                                        alt={`${d.name} artwork`}
-                                        loading="lazy"
-                                        decoding="async"
-                                        style={{
-                                            width: 96,
-                                            height: "auto",
-                                            background: "#0b0c10",
-                                            borderRadius: 8,
-                                            border: "1px solid #1f2937",
-                                            objectFit: "cover",
-                                        }}
-                                    />
-                                )}
-                                <div>
-                                    <div><b>{d.name}</b> · {d.arcana ?? "—"} · {d.alignment ?? "—"}</div>
-                                    <div style={{ opacity: 0.75, fontSize: 12 }}>Level {d.level ?? 0}</div>
-                                </div>
-                            </div>
-                            {canEdit && (
-                                <div className="row" style={{ gap: 8 }}>
-                                    <button className="btn" onClick={() => startEdit(d)} disabled={busySave}>
-                                        Edit
-                                    </button>
-                                    {isDM && (
-                                        <button
-                                            className="btn"
-                                            onClick={() => remove(d.id)}
-                                            disabled={busyDelete === d.id}
-                                        >
-                                            {busyDelete === d.id ? "…" : "Remove"}
-                                        </button>
+            {sortedDemons.length === 0 ? (
+                <div className="demon-codex__empty text-muted">
+                    {Array.isArray(game.demons) && game.demons.length > 0
+                        ? "No demons match the current filters."
+                        : "No demons in the pool yet."}
+                </div>
+            ) : (
+                <div className="demon-codex__grid">
+                    {sortedDemons.map((d) => {
+                        const skillList = getDemonSkillList(d);
+                        const canShowSkillModal = skillList.length > 0 && combatSkills.length > 0;
+                        return (
+                            <article key={d.id || d.name} className="card demon-card">
+                                <div className="demon-card__header">
+                                    {d.image && (
+                                        <DemonImage
+                                            src={d.image}
+                                            alt={`${d.name} artwork`}
+                                            loading="lazy"
+                                            decoding="async"
+                                            className="demon-card__image"
+                                        />
+                                    )}
+                                    <div className="demon-card__title">
+                                        <div className="demon-card__name">
+                                            <strong>{d.name}</strong>
+                                        </div>
+                                        <div className="demon-card__meta text-small">
+                                            <span>{d.arcana ?? "—"}</span>
+                                            <span> · </span>
+                                            <span>{d.alignment ?? "—"}</span>
+                                            <span> · Level {d.level ?? 0}</span>
+                                        </div>
+                                    </div>
+                                    {canEdit && (
+                                        <div className="demon-card__actions">
+                                            <button
+                                                type="button"
+                                                className="btn ghost btn-small"
+                                                onClick={() => startEdit(d)}
+                                                disabled={busySave}
+                                            >
+                                                Edit
+                                            </button>
+                                            {isDM && (
+                                                <button
+                                                    type="button"
+                                                    className="btn ghost btn-small"
+                                                    onClick={() => remove(d.id)}
+                                                    disabled={busyDelete === d.id}
+                                                >
+                                                    {busyDelete === d.id ? "…" : "Remove"}
+                                                </button>
+                                            )}
+                                        </div>
                                     )}
                                 </div>
-                            )}
-                        </div>
-                        <div className="row" style={{ gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-                            {ABILITY_DEFS.map((ability) => {
-                                const score = Number((d.stats || {})[ability.key]) || 0;
-                                const mod = d.mods?.[ability.key] ?? abilityModifier(score);
-                                return (
-                                    <span key={ability.key} className="pill">
-                                        {ability.key} {score} ({formatModifier(mod)})
-                                    </span>
-                                );
-                            })}
-                        </div>
-                        <div style={{ marginTop: 8, fontSize: 12 }}>
-                            <div><b>Weak:</b> {formatResistanceList(d.resistances?.weak, d.weak)}</div>
-                            <div><b>Resist:</b> {formatResistanceList(d.resistances?.resist, d.resists)}</div>
-                            <div><b>Null:</b> {formatResistanceList(d.resistances?.null, d.nullifies)}</div>
-                            <div><b>Absorb:</b> {formatResistanceList(d.resistances?.absorb, d.absorbs)}</div>
-                            <div><b>Reflect:</b> {formatResistanceList(d.resistances?.reflect, d.reflects)}</div>
-                        </div>
-                        {Array.isArray(d.skills) && d.skills.length > 0 && (
-                            <div style={{ marginTop: 8, fontSize: 12 }}>
-                                <b>Skills:</b> {d.skills.join(', ')}
-                            </div>
-                        )}
-                        {d.notes && (
-                            <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>{d.notes}</div>
-                        )}
-                    </div>
-                ))}
-                {sortedDemons.length === 0 && <div style={{ opacity: 0.7 }}>No demons in the pool yet.</div>}
-            </div>
+                                <div className="demon-card__stats">
+                                    {ABILITY_DEFS.map((ability) => {
+                                        const score = Number((d.stats || {})[ability.key]) || 0;
+                                        const mod = d.mods?.[ability.key] ?? abilityModifier(score);
+                                        return (
+                                            <span key={ability.key} className="pill">
+                                                {ability.key} {score} ({formatModifier(mod)})
+                                            </span>
+                                        );
+                                    })}
+                                </div>
+                                <div className="demon-card__resists text-small">
+                                    <div>
+                                        <strong>Weak:</strong> {formatResistanceList(d.resistances?.weak, d.weak)}
+                                    </div>
+                                    <div>
+                                        <strong>Resist:</strong> {formatResistanceList(d.resistances?.resist, d.resists)}
+                                    </div>
+                                    <div>
+                                        <strong>Null:</strong> {formatResistanceList(d.resistances?.null, d.nullifies)}
+                                    </div>
+                                    <div>
+                                        <strong>Absorb:</strong> {formatResistanceList(d.resistances?.absorb, d.absorbs)}
+                                    </div>
+                                    <div>
+                                        <strong>Reflect:</strong> {formatResistanceList(d.resistances?.reflect, d.reflects)}
+                                    </div>
+                                </div>
+                                {skillList.length > 0 && (
+                                    <div className="demon-card__skills text-small">
+                                        <div>
+                                            <strong>Skills:</strong> {skillList.join(', ')}
+                                        </div>
+                                        {canShowSkillModal && (
+                                            <button
+                                                type="button"
+                                                className="btn ghost btn-small demon-card__skills-btn"
+                                                onClick={() => openSkillModal(d)}
+                                            >
+                                                Combat skill details
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
+                                {d.notes && <div className="demon-card__notes text-small">{d.notes}</div>}
+                            </article>
+                        );
+                    })}
+                </div>
+            )}
+
+            {skillModalDemon && (
+                <DemonCombatSkillDialog demon={skillModalDemon} skills={combatSkills} onClose={closeSkillModal} />
+            )}
         </div>
     );
 }
