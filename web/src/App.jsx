@@ -1062,6 +1062,33 @@ const ARCANA_DATA = [
     { key: "knight", label: "Knight", bonus: "+1 DEX, +1 STR", penalty: "-1 CHA, -1 CON" },
 ];
 
+const CONCEPT_PROMPTS = Object.freeze([
+    {
+        key: "reluctant-binder",
+        title: "Reluctant Binder",
+        hook: "You made a desperate pact with a demon to save someone dear to you.",
+        question: "What clause still keeps you awake at night?",
+    },
+    {
+        key: "wandering-scholar",
+        title: "Wandering Scholar",
+        hook: "Your research into forgotten Arcana drew the attention of rival cults.",
+        question: "Which taboo discovery are you hiding from the party?",
+    },
+    {
+        key: "fallen-prodigy",
+        title: "Fallen Prodigy",
+        hook: "Once a celebrated exorcist, you vanished after a mission went wrong.",
+        question: "Who from your old order is still hunting you down?",
+    },
+    {
+        key: "masked-mediator",
+        title: "Masked Mediator",
+        hook: "You broker truces between mortals and demons in neutral ground night markets.",
+        question: "What price will you demand for the party's first favour?",
+    },
+]);
+
 const DEFAULT_WORLD_SKILLS = [
     { key: "balance", label: "Balance", ability: "DEX" },
     { key: "bluff", label: "Bluff", ability: "CHA" },
@@ -6155,12 +6182,25 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName, 
         [baseCharacter, normalizedWorldSkills, playerName]
     );
 
+    const promptCount = CONCEPT_PROMPTS.length;
+    const displayName = playerName?.trim() ? playerName.trim() : "adventurer";
+
     const [step, setStep] = useState(0);
     const [concept, setConcept] = useState(initial.concept);
     const [abilities, setAbilities] = useState(initial.abilities);
     const [resources, setResources] = useState(initial.resources);
     const [skills, setSkills] = useState(initial.skills);
     const [rolled, setRolled] = useState([]);
+    const [conceptPromptIndex, setConceptPromptIndex] = useState(() =>
+        promptCount ? Math.floor(Math.random() * promptCount) : 0
+    );
+    const [promptApplied, setPromptApplied] = useState(false);
+
+    const conceptPrompt = CONCEPT_PROMPTS[conceptPromptIndex] || null;
+    const conceptPromptSnippet = conceptPrompt
+        ? [conceptPrompt.hook, conceptPrompt.question].filter(Boolean).join("\n")
+        : "";
+    const progress = Math.round(((step + 1) / steps.length) * 100);
 
     useEffect(() => {
         if (!open) return;
@@ -6170,7 +6210,17 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName, 
         setResources(initial.resources);
         setSkills(initial.skills);
         setRolled([]);
-    }, [open, initial]);
+        setPromptApplied(false);
+        if (promptCount) {
+            setConceptPromptIndex(Math.floor(Math.random() * promptCount));
+        }
+    }, [initial, open, promptCount]);
+
+    useEffect(() => {
+        if (!promptApplied) return undefined;
+        const timer = setTimeout(() => setPromptApplied(false), 2400);
+        return () => clearTimeout(timer);
+    }, [promptApplied]);
 
     const abilityRows = useMemo(
         () =>
@@ -6311,6 +6361,35 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName, 
         });
     }, [suggestedHP, suggestedMP, suggestedSP, suggestedTP]);
 
+    const cyclePrompt = useCallback(() => {
+        if (!promptCount) return;
+        setConceptPromptIndex((prev) => {
+            if (promptCount <= 1) return prev;
+            let next = prev;
+            while (next === prev) {
+                next = Math.floor(Math.random() * promptCount);
+            }
+            return next;
+        });
+        setPromptApplied(false);
+    }, [promptCount, setConceptPromptIndex, setPromptApplied]);
+
+    const applyPromptToBackground = useCallback(() => {
+        if (!conceptPromptSnippet) return;
+        setConcept((prev) => {
+            const existing = typeof prev.background === "string" ? prev.background : "";
+            if (existing.includes(conceptPromptSnippet)) {
+                return prev;
+            }
+            const trimmed = existing.trim();
+            const nextBackground = trimmed
+                ? `${trimmed}\n\n${conceptPromptSnippet}`
+                : conceptPromptSnippet;
+            return { ...prev, background: nextBackground };
+        });
+        setPromptApplied(true);
+    }, [conceptPromptSnippet, setConcept, setPromptApplied]);
+
     const goNext = useCallback(() => {
         setStep((prev) => Math.min(prev + 1, steps.length - 1));
     }, [steps.length]);
@@ -6382,9 +6461,34 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName, 
     const renderConcept = () => (
         <div className="wizard-stack">
             <p>
-                Collaborate with your table on tone and party balance. Mix and match archetypes, and
-                remember that demon allies can round out any gaps.
+                Welcome, {displayName}! Collaborate with your table on tone and party balance. Mix and
+                match archetypes, and remember that demon allies can round out any gaps. If inspiration
+                runs dry, try the prompt generator below.
             </p>
+            {conceptPrompt && (
+                <div className="wizard-prompt" role="status" aria-live="polite">
+                    <div className="wizard-prompt__body">
+                        <span className="wizard-prompt__title">{conceptPrompt.title}</span>
+                        <p className="wizard-prompt__hook">{conceptPrompt.hook}</p>
+                        <p className="wizard-prompt__question">{conceptPrompt.question}</p>
+                    </div>
+                    <div className="wizard-prompt__actions">
+                        <button type="button" className="btn ghost" onClick={cyclePrompt}>
+                            New idea
+                        </button>
+                        <button
+                            type="button"
+                            className="btn secondary"
+                            onClick={applyPromptToBackground}
+                        >
+                            Add to background
+                        </button>
+                    </div>
+                    {promptApplied && (
+                        <span className="wizard-prompt__hint">Prompt added to background</span>
+                    )}
+                </div>
+            )}
             <div className="wizard-grid">
                 {conceptField("Character name", "name")}
                 {conceptField("Player / handler", "player", { placeholder: playerName || "" })}
@@ -6746,13 +6850,26 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName, 
         <div className="wizard-backdrop" role="dialog" aria-modal="true">
             <div className="wizard-panel">
                 <header className="wizard-header">
-                    <div>
+                    <div className="wizard-header__text">
                         <h3>New player setup</h3>
                         <p className="text-muted text-small">{steps[step]?.blurb || ""}</p>
+                        <div className="wizard-progress__meta">Step {step + 1} of {steps.length}</div>
+                        <div
+                            className="wizard-progress"
+                            role="progressbar"
+                            aria-valuenow={progress}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-label="Setup progress"
+                        >
+                            <span className="wizard-progress__bar" style={{ width: `${progress}%` }} />
+                        </div>
                     </div>
-                    <button type="button" className="btn ghost" onClick={onClose}>
-                        Close
-                    </button>
+                    <div className="wizard-header__actions">
+                        <button type="button" className="btn ghost" onClick={onClose}>
+                            Close
+                        </button>
+                    </div>
                 </header>
                 <div className="wizard-stepper">
                     {steps.map((item, index) => (
