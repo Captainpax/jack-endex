@@ -257,6 +257,7 @@ function ensureGameShape(game) {
     if (!Array.isArray(game.invites)) game.invites = [];
     game.story = ensureStoryConfig(game);
     game.worldSkills = ensureWorldSkills(game);
+    game.combatSkills = ensureCombatSkills(game);
     game.media = ensureMediaState(game);
     return game;
 }
@@ -266,6 +267,7 @@ function presentGame(game, { includeSecrets = false } = {}) {
     if (!normalized) return null;
     const story = ensureStoryConfig(normalized);
     const worldSkills = ensureWorldSkills(normalized);
+    const combatSkills = ensureCombatSkills(normalized);
     return {
         id: normalized.id,
         name: normalized.name,
@@ -279,6 +281,7 @@ function presentGame(game, { includeSecrets = false } = {}) {
         invites: normalized.invites,
         story: presentStoryConfig(story, { includeSecrets }),
         worldSkills,
+        combatSkills,
         media: presentMediaState(normalized.media),
     };
 }
@@ -437,6 +440,81 @@ function ensureWorldSkills(game) {
         }
     }
     game.worldSkills = normalized;
+    return normalized;
+}
+
+const COMBAT_TIER_ORDER = ['WEAK', 'MEDIUM', 'HEAVY', 'SEVERE'];
+const COMBAT_CATEGORY_ALIASES = new Map([
+    ['physical', 'physical'],
+    ['phys', 'physical'],
+    ['melee', 'physical'],
+    ['gun', 'gun'],
+    ['ranged', 'gun'],
+    ['shoot', 'gun'],
+    ['spell', 'spell'],
+    ['magic', 'spell'],
+    ['caster', 'spell'],
+    ['support', 'support'],
+    ['buff', 'support'],
+    ['heal', 'support'],
+    ['hybrid', 'hybrid'],
+    ['other', 'hybrid'],
+    ['tech', 'hybrid'],
+]);
+const COMBAT_CATEGORY_LIST = ['physical', 'gun', 'spell', 'support', 'hybrid'];
+
+function normalizeCombatCategory(raw) {
+    if (typeof raw !== 'string') return 'physical';
+    const key = raw.trim().toLowerCase();
+    if (!key) return 'physical';
+    if (COMBAT_CATEGORY_ALIASES.has(key)) {
+        return COMBAT_CATEGORY_ALIASES.get(key);
+    }
+    return COMBAT_CATEGORY_LIST.includes(key) ? key : 'hybrid';
+}
+
+function slugifyCombatSkillLabel(label) {
+    const base = label
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    return base || `combat-${uuid().slice(0, 8)}`;
+}
+
+function normalizeCombatSkillEntry(entry, seen) {
+    if (!entry || typeof entry !== 'object') return null;
+    const label = sanitizeText(entry.label ?? entry.name).trim();
+    if (!label) return null;
+    const abilityRaw = typeof entry.ability === 'string' ? entry.ability.trim().toUpperCase() : '';
+    const ability = ABILITY_CODES.has(abilityRaw) ? abilityRaw : 'STR';
+    const tierRaw = typeof entry.tier === 'string' ? entry.tier.trim().toUpperCase() : '';
+    const tier = COMBAT_TIER_ORDER.includes(tierRaw) ? tierRaw : COMBAT_TIER_ORDER[0];
+    const category = normalizeCombatCategory(entry.category ?? entry.type);
+    const cost = sanitizeText(entry.cost ?? entry.resource ?? '').trim();
+    const notes = sanitizeText(entry.notes ?? entry.description ?? '').trim();
+    let id = typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : null;
+    if (!id && typeof entry.key === 'string' && entry.key.trim()) id = entry.key.trim();
+    if (!id) id = slugifyCombatSkillLabel(label);
+    let unique = id;
+    let attempt = 1;
+    while (seen.has(unique)) {
+        attempt += 1;
+        unique = `${id}-${attempt}`;
+    }
+    seen.add(unique);
+    return { id: unique, key: unique, label, ability, tier, category, cost, notes };
+}
+
+function ensureCombatSkills(game) {
+    if (!game || typeof game !== 'object') return [];
+    const source = Array.isArray(game.combatSkills) ? game.combatSkills : [];
+    const seen = new Set();
+    const normalized = [];
+    for (const entry of source) {
+        const skill = normalizeCombatSkillEntry(entry, seen);
+        if (skill) normalized.push(skill);
+    }
+    game.combatSkills = normalized;
     return normalized;
 }
 
@@ -2372,6 +2450,147 @@ app.put('/api/games/:id/character', requireAuth, async (req, res) => {
 });
 
 // --- World skills ---
+app.post('/api/games/:id/combat-skills', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const list = ensureCombatSkills(game);
+    const payload = req.body?.skill || req.body || {};
+    const seen = new Set(list.map((skill) => skill.id));
+    const entry = normalizeCombatSkillEntry(payload, seen);
+    if (!entry) {
+        return res.status(400).json({ error: 'invalid_skill' });
+    }
+
+    list.push(entry);
+    await persistGame(db, game, { reason: 'combatSkill:add', actorId: req.session.userId });
+    res.json(entry);
+});
+
+app.put('/api/games/:id/combat-skills/:skillId', requireAuth, async (req, res) => {
+    const { id, skillId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const list = ensureCombatSkills(game);
+    const idx = list.findIndex((skill) => skill && skill.id === skillId);
+    if (idx === -1) {
+        return res.status(404).json({ error: 'skill_not_found' });
+    }
+
+    const payload = req.body?.skill || req.body || {};
+    const target = list[idx];
+    let changed = false;
+
+    const hasLabelField =
+        Object.prototype.hasOwnProperty.call(payload, 'label') ||
+        Object.prototype.hasOwnProperty.call(payload, 'name');
+    if (hasLabelField) {
+        const nextLabel = sanitizeText(payload.label ?? payload.name).trim();
+        if (!nextLabel) {
+            return res.status(400).json({ error: 'invalid_label' });
+        }
+        if (nextLabel !== target.label) {
+            target.label = nextLabel;
+            changed = true;
+        }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(payload, 'ability')) {
+        const abilityRaw = typeof payload.ability === 'string' ? payload.ability.trim().toUpperCase() : '';
+        if (!ABILITY_CODES.has(abilityRaw)) {
+            return res.status(400).json({ error: 'invalid_ability' });
+        }
+        if (abilityRaw !== target.ability) {
+            target.ability = abilityRaw;
+            changed = true;
+        }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(payload, 'tier')) {
+        const tierRaw = typeof payload.tier === 'string' ? payload.tier.trim().toUpperCase() : '';
+        if (!COMBAT_TIER_ORDER.includes(tierRaw)) {
+            return res.status(400).json({ error: 'invalid_tier' });
+        }
+        if (tierRaw !== target.tier) {
+            target.tier = tierRaw;
+            changed = true;
+        }
+    }
+
+    const hasCategoryField =
+        Object.prototype.hasOwnProperty.call(payload, 'category') ||
+        Object.prototype.hasOwnProperty.call(payload, 'type');
+    if (hasCategoryField) {
+        const nextCategory = normalizeCombatCategory(payload.category ?? payload.type ?? target.category);
+        if (nextCategory !== target.category) {
+            target.category = nextCategory;
+            changed = true;
+        }
+    }
+
+    if (
+        Object.prototype.hasOwnProperty.call(payload, 'cost') ||
+        Object.prototype.hasOwnProperty.call(payload, 'resource')
+    ) {
+        const nextCost = sanitizeText(payload.cost ?? payload.resource ?? '').trim();
+        if (nextCost !== (target.cost || '')) {
+            target.cost = nextCost;
+            changed = true;
+        }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(payload, 'notes')) {
+        const nextNotes = sanitizeText(payload.notes).trim();
+        if (nextNotes !== (target.notes || '')) {
+            target.notes = nextNotes;
+            changed = true;
+        }
+    }
+
+    if (!changed) {
+        return res.status(400).json({ error: 'no_changes' });
+    }
+
+    await persistGame(db, game, { reason: 'combatSkill:update', actorId: req.session.userId });
+    res.json(target);
+});
+
+app.delete('/api/games/:id/combat-skills/:skillId', requireAuth, async (req, res) => {
+    const { id, skillId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const list = ensureCombatSkills(game);
+    const next = list.filter((skill) => skill && skill.id !== skillId);
+    if (next.length === list.length) {
+        return res.status(404).json({ error: 'skill_not_found' });
+    }
+    game.combatSkills = next;
+
+    await persistGame(db, game, { reason: 'combatSkill:delete', actorId: req.session.userId });
+    res.json({ ok: true });
+});
+
 app.post('/api/games/:id/world-skills', requireAuth, async (req, res) => {
     const { id } = req.params || {};
     const db = await readDB();

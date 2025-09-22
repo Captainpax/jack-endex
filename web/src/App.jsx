@@ -60,6 +60,11 @@ const DM_NAV = [
         description: "Review party proficiencies",
     },
     {
+        key: "combatSkills",
+        label: "Combat Skills",
+        description: "Build combat formulas and helpers",
+    },
+    {
         key: "demons",
         label: "Demon Codex",
         description: "Summoned allies and spirits",
@@ -106,6 +111,11 @@ const PLAYER_NAV = [
         key: "worldSkills",
         label: "World Skills",
         description: "Ranks, modifiers, and totals",
+    },
+    {
+        key: "combatSkills",
+        label: "Combat Skills",
+        description: "Damage calculators and tier references",
     },
     {
         key: "demons",
@@ -702,6 +712,155 @@ const ABILITY_DEFS = [
     },
 ];
 
+const ABILITY_SORT_INDEX = ABILITY_DEFS.reduce((map, ability, index) => {
+    map[ability.key] = index;
+    return map;
+}, {});
+
+const COMBAT_TIER_ORDER = ["WEAK", "MEDIUM", "HEAVY", "SEVERE"];
+const COMBAT_TIER_INDEX = COMBAT_TIER_ORDER.reduce((map, tier, index) => {
+    map[tier] = index;
+    return map;
+}, {});
+const COMBAT_TIER_LABELS = {
+    WEAK: "Weak",
+    MEDIUM: "Medium",
+    HEAVY: "Heavy",
+    SEVERE: "Severe",
+};
+const COMBAT_TIER_INFO = {
+    WEAK: { label: "Weak", dice: "1d6", modMultiplier: 1 },
+    MEDIUM: { label: "Medium", dice: "2d8", modMultiplier: 2 },
+    HEAVY: { label: "Heavy", dice: "3d12", modMultiplier: 3 },
+    SEVERE: { label: "Severe", dice: "4d20", modMultiplier: 4 },
+};
+
+const COMBAT_CATEGORY_OPTIONS = [
+    { value: "physical", label: "Physical" },
+    { value: "gun", label: "Gun" },
+    { value: "spell", label: "Spell" },
+    { value: "support", label: "Support" },
+    { value: "hybrid", label: "Hybrid / Other" },
+];
+const COMBAT_CATEGORY_ALIASES = {
+    physical: "physical",
+    phys: "physical",
+    melee: "physical",
+    gun: "gun",
+    ranged: "gun",
+    shoot: "gun",
+    spell: "spell",
+    magic: "spell",
+    caster: "spell",
+    support: "support",
+    buff: "support",
+    heal: "support",
+    hybrid: "hybrid",
+    other: "hybrid",
+    tech: "hybrid",
+};
+const COMBAT_CATEGORY_INDEX = COMBAT_CATEGORY_OPTIONS.reduce((map, option, index) => {
+    map[option.value] = index;
+    return map;
+}, {});
+const COMBAT_CATEGORY_LABELS = COMBAT_CATEGORY_OPTIONS.reduce((map, option) => {
+    map[option.value] = option.label;
+    return map;
+}, {});
+const DEFAULT_COMBAT_CATEGORY = COMBAT_CATEGORY_OPTIONS[0]?.value || "physical";
+
+const NEW_COMBAT_SKILL_ID = "__new_combat_skill__";
+
+function compareByNameAsc(a, b) {
+    return a.label.localeCompare(b.label);
+}
+
+function compareByNameDesc(a, b) {
+    return b.label.localeCompare(a.label);
+}
+
+function compareByAbilityAsc(a, b) {
+    const aIndex = ABILITY_SORT_INDEX[a.ability] ?? 999;
+    const bIndex = ABILITY_SORT_INDEX[b.ability] ?? 999;
+    if (aIndex !== bIndex) return aIndex - bIndex;
+    return compareByNameAsc(a, b);
+}
+
+function compareByAbilityDesc(a, b) {
+    const aIndex = ABILITY_SORT_INDEX[a.ability] ?? -1;
+    const bIndex = ABILITY_SORT_INDEX[b.ability] ?? -1;
+    if (aIndex !== bIndex) return bIndex - aIndex;
+    return compareByNameDesc(a, b);
+}
+
+function compareByTierAsc(a, b) {
+    const aIndex = COMBAT_TIER_INDEX[a.tier] ?? 0;
+    const bIndex = COMBAT_TIER_INDEX[b.tier] ?? 0;
+    if (aIndex !== bIndex) return aIndex - bIndex;
+    return compareByNameAsc(a, b);
+}
+
+function compareByTierDesc(a, b) {
+    const aIndex = COMBAT_TIER_INDEX[a.tier] ?? 0;
+    const bIndex = COMBAT_TIER_INDEX[b.tier] ?? 0;
+    if (aIndex !== bIndex) return bIndex - aIndex;
+    return compareByNameAsc(a, b);
+}
+
+function compareByCategoryAsc(a, b) {
+    const aIndex = COMBAT_CATEGORY_INDEX[a.category] ?? 999;
+    const bIndex = COMBAT_CATEGORY_INDEX[b.category] ?? 999;
+    if (aIndex !== bIndex) return aIndex - bIndex;
+    return compareByNameAsc(a, b);
+}
+
+function compareByCategoryDesc(a, b) {
+    const aIndex = COMBAT_CATEGORY_INDEX[a.category] ?? -1;
+    const bIndex = COMBAT_CATEGORY_INDEX[b.category] ?? -1;
+    if (aIndex !== bIndex) return bIndex - aIndex;
+    return compareByNameAsc(a, b);
+}
+
+const WORLD_SKILL_SORT_OPTIONS = [
+    { value: "default", label: "Default order" },
+    { value: "nameAsc", label: "Name (A → Z)" },
+    { value: "nameDesc", label: "Name (Z → A)" },
+    { value: "abilityAsc", label: "Ability (STR → CHA)" },
+    { value: "abilityDesc", label: "Ability (CHA → STR)" },
+];
+
+const WORLD_SKILL_SORTERS = {
+    default: null,
+    nameAsc: compareByNameAsc,
+    nameDesc: compareByNameDesc,
+    abilityAsc: compareByAbilityAsc,
+    abilityDesc: compareByAbilityDesc,
+};
+
+const COMBAT_SKILL_SORT_OPTIONS = [
+    { value: "default", label: "Default order" },
+    { value: "nameAsc", label: "Name (A → Z)" },
+    { value: "nameDesc", label: "Name (Z → A)" },
+    { value: "tierAsc", label: "Tier (Weak → Severe)" },
+    { value: "tierDesc", label: "Tier (Severe → Weak)" },
+    { value: "abilityAsc", label: "Ability (STR → CHA)" },
+    { value: "abilityDesc", label: "Ability (CHA → STR)" },
+    { value: "categoryAsc", label: "Category A → Z" },
+    { value: "categoryDesc", label: "Category Z → A" },
+];
+
+const COMBAT_SKILL_SORTERS = {
+    default: null,
+    nameAsc: compareByNameAsc,
+    nameDesc: compareByNameDesc,
+    abilityAsc: compareByAbilityAsc,
+    abilityDesc: compareByAbilityDesc,
+    tierAsc: compareByTierAsc,
+    tierDesc: compareByTierDesc,
+    categoryAsc: compareByCategoryAsc,
+    categoryDesc: compareByCategoryDesc,
+};
+
 const ARCANA_DATA = [
     { key: "fool", label: "Fool", bonus: "+1 SP on level", penalty: "No bonus stats on creation" },
     { key: "magician", label: "Magician", bonus: "+2 INT", penalty: "-2 STR" },
@@ -900,6 +1059,35 @@ function makeWorldSkillId(label, seen) {
     return id;
 }
 
+function makeCombatSkillId(label, seen) {
+    const base = label
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+    const fallback = base || `combat-${Math.random().toString(36).slice(2, 8)}`;
+    let id = fallback;
+    let attempt = 1;
+    while (seen.has(id)) {
+        attempt += 1;
+        id = `${fallback}-${attempt}`;
+    }
+    seen.add(id);
+    return id;
+}
+
+function normalizeCombatCategoryValue(raw) {
+    if (typeof raw === "string" && raw.trim()) {
+        const key = raw.trim().toLowerCase();
+        if (COMBAT_CATEGORY_ALIASES[key]) {
+            return COMBAT_CATEGORY_ALIASES[key];
+        }
+        if (Object.prototype.hasOwnProperty.call(COMBAT_CATEGORY_INDEX, key)) {
+            return key;
+        }
+    }
+    return DEFAULT_COMBAT_CATEGORY;
+}
+
 function normalizeWorldSkillDefs(raw) {
     const allowEmpty = Array.isArray(raw);
     const source = allowEmpty ? raw : DEFAULT_WORLD_SKILLS;
@@ -935,6 +1123,77 @@ function normalizeWorldSkillDefs(raw) {
         }));
     }
     return normalized;
+}
+
+function normalizeCombatSkillDefs(raw) {
+    const source = Array.isArray(raw) ? raw : [];
+    const seen = new Set();
+    const normalized = [];
+    for (const entry of source) {
+        if (!entry || typeof entry !== "object") continue;
+        const labelValue =
+            typeof entry.label === "string"
+                ? entry.label.trim()
+                : typeof entry.name === "string"
+                ? entry.name.trim()
+                : "";
+        if (!labelValue) continue;
+        let id = typeof entry.id === "string" ? entry.id.trim() : "";
+        if (!id && typeof entry.key === "string") id = entry.key.trim();
+        if (!id || seen.has(id)) {
+            id = makeCombatSkillId(labelValue, seen);
+        } else {
+            seen.add(id);
+        }
+        const abilityRaw = typeof entry.ability === "string" ? entry.ability.trim().toUpperCase() : "";
+        const ability = ABILITY_KEY_SET.has(abilityRaw) ? abilityRaw : ABILITY_DEFS[0]?.key || "INT";
+        const tierRaw = typeof entry.tier === "string" ? entry.tier.trim().toUpperCase() : "";
+        const tier = COMBAT_TIER_ORDER.includes(tierRaw) ? tierRaw : COMBAT_TIER_ORDER[0];
+        const categoryValue =
+            typeof entry.category === "string"
+                ? entry.category
+                : typeof entry.type === "string"
+                ? entry.type
+                : DEFAULT_COMBAT_CATEGORY;
+        const category = normalizeCombatCategoryValue(categoryValue);
+        const cost = typeof entry.cost === "string" ? entry.cost.trim() : typeof entry.resource === "string" ? entry.resource.trim() : "";
+        const notes =
+            typeof entry.notes === "string"
+                ? entry.notes.trim()
+                : typeof entry.description === "string"
+                ? entry.description.trim()
+                : "";
+        normalized.push({ id, key: id, label: labelValue, ability, tier, category, cost, notes });
+    }
+    return normalized;
+}
+
+function computeCombatSkillDamage({ tier, abilityMod, roll, bonus = 0, buff = 1, critical = false }) {
+    const info = COMBAT_TIER_INFO[tier] || COMBAT_TIER_INFO.WEAK;
+    const rollValue = Number(roll);
+    const abilityValue = Number(abilityMod);
+    const bonusValue = Number(bonus);
+    let buffValue = Number(buff);
+    if (!Number.isFinite(rollValue) || !Number.isFinite(abilityValue) || !Number.isFinite(bonusValue)) {
+        return null;
+    }
+    if (!Number.isFinite(buffValue) || buffValue <= 0) {
+        buffValue = 1;
+    }
+    const abilityContribution = abilityValue * info.modMultiplier;
+    const base = rollValue + abilityContribution + bonusValue;
+    const critMultiplier = critical ? 1.75 : 1;
+    const preBuff = base * critMultiplier;
+    const total = Math.ceil(preBuff * buffValue);
+    return {
+        total,
+        baseRoll: rollValue,
+        abilityContribution,
+        bonus: bonusValue,
+        critMultiplier,
+        buffMultiplier: buffValue,
+        preBuff,
+    };
 }
 
 const SAVE_DEFS = [
@@ -1894,6 +2153,17 @@ function GameView({
 
                     {tab === "gear" && (
                         <GearTab
+                            game={game}
+                            me={me}
+                            onUpdate={async () => {
+                                const full = await Games.get(game.id);
+                                setActive(full);
+                            }}
+                        />
+                    )}
+
+                    {tab === "combatSkills" && (
+                        <CombatSkillsTab
                             game={game}
                             me={me}
                             onUpdate={async () => {
@@ -6082,6 +6352,572 @@ function formatDuration(ms) {
 }
 
 // ---------- Items ----------
+
+function CombatSkillsTab({ game, me, onUpdate }) {
+    const isDM = game.dmId === me.id;
+    const abilityDefault = ABILITY_DEFS[0]?.key || "INT";
+    const combatSkills = useMemo(() => normalizeCombatSkillDefs(game.combatSkills), [game.combatSkills]);
+    const worldSkills = useMemo(() => normalizeWorldSkillDefs(game.worldSkills), [game.worldSkills]);
+    const [skillQuery, setSkillQuery] = useState("");
+    const [skillSort, setSkillSort] = useState("default");
+    const [editingSkillId, setEditingSkillId] = useState(null);
+    const [form, setForm] = useState({
+        label: "",
+        ability: abilityDefault,
+        tier: COMBAT_TIER_ORDER[0],
+        category: DEFAULT_COMBAT_CATEGORY,
+        cost: "",
+        notes: "",
+    });
+    const [busy, setBusy] = useState(false);
+    const [rowBusy, setRowBusy] = useState(null);
+
+    useEffect(() => {
+        setSkillQuery("");
+        setSkillSort("default");
+        setEditingSkillId(null);
+        setForm({
+            label: "",
+            ability: abilityDefault,
+            tier: COMBAT_TIER_ORDER[0],
+            category: DEFAULT_COMBAT_CATEGORY,
+            cost: "",
+            notes: "",
+        });
+    }, [game.id, abilityDefault]);
+
+    const editingSkill = useMemo(() => {
+        if (!editingSkillId || editingSkillId === NEW_COMBAT_SKILL_ID) return null;
+        return combatSkills.find((skill) => skill.id === editingSkillId) || null;
+    }, [editingSkillId, combatSkills]);
+
+    useEffect(() => {
+        if (editingSkill) {
+            setForm({
+                label: editingSkill.label || "",
+                ability: ABILITY_KEY_SET.has(editingSkill.ability) ? editingSkill.ability : abilityDefault,
+                tier: COMBAT_TIER_ORDER.includes(editingSkill.tier) ? editingSkill.tier : COMBAT_TIER_ORDER[0],
+                category: normalizeCombatCategoryValue(editingSkill.category),
+                cost: editingSkill.cost || "",
+                notes: editingSkill.notes || "",
+            });
+        } else {
+            setForm((prev) =>
+                prev.label === "" &&
+                prev.ability === abilityDefault &&
+                prev.tier === COMBAT_TIER_ORDER[0] &&
+                prev.category === DEFAULT_COMBAT_CATEGORY &&
+                prev.cost === "" &&
+                prev.notes === ""
+                    ? prev
+                    : {
+                          label: "",
+                          ability: abilityDefault,
+                          tier: COMBAT_TIER_ORDER[0],
+                          category: DEFAULT_COMBAT_CATEGORY,
+                          cost: "",
+                          notes: "",
+                      }
+            );
+        }
+    }, [editingSkill, abilityDefault]);
+
+    const filteredSkills = useMemo(() => {
+        const q = skillQuery.trim().toLowerCase();
+        let list = combatSkills.slice();
+        if (q) {
+            list = list.filter((skill) => {
+                const label = skill.label.toLowerCase();
+                const ability = skill.ability.toLowerCase();
+                const tierLabel = COMBAT_TIER_LABELS[skill.tier]?.toLowerCase() || "";
+                const categoryLabel = COMBAT_CATEGORY_LABELS[skill.category]?.toLowerCase() || "";
+                const notes = (skill.notes || "").toLowerCase();
+                const cost = (skill.cost || "").toLowerCase();
+                return (
+                    label.includes(q) ||
+                    ability.includes(q) ||
+                    tierLabel.includes(q) ||
+                    categoryLabel.includes(q) ||
+                    notes.includes(q) ||
+                    cost.includes(q)
+                );
+            });
+        }
+        const comparator = COMBAT_SKILL_SORTERS[skillSort] || null;
+        if (comparator) list.sort(comparator);
+        return list;
+    }, [combatSkills, skillQuery, skillSort]);
+
+    const displaySkills = useMemo(() => {
+        if (!editingSkill) return filteredSkills;
+        if (filteredSkills.some((skill) => skill.id === editingSkill.id)) return filteredSkills;
+        return [editingSkill, ...filteredSkills];
+    }, [editingSkill, filteredSkills]);
+
+    const hasFilters = skillQuery.trim().length > 0 || skillSort !== "default";
+
+    const playerOptions = useMemo(() => {
+        const players = (game.players || []).filter((p) => (p?.role || "").toLowerCase() !== "dm");
+        return players
+            .filter((p) => isDM || p.userId === me.id)
+            .map((p) => {
+                const character = normalizeCharacter(p.character, worldSkills);
+                const label = character?.name?.trim() || p.username || "Unnamed Adventurer";
+                const mods = ABILITY_DEFS.reduce((acc, ability) => {
+                    acc[ability.key] = abilityModifier(character?.stats?.[ability.key]);
+                    return acc;
+                }, {});
+                return { value: p.userId || `slot-${label}`, label, mods };
+            });
+    }, [game.players, isDM, me.id, worldSkills]);
+
+    const startCreate = useCallback(() => {
+        setEditingSkillId(NEW_COMBAT_SKILL_ID);
+        setForm({
+            label: "",
+            ability: abilityDefault,
+            tier: COMBAT_TIER_ORDER[0],
+            category: DEFAULT_COMBAT_CATEGORY,
+            cost: "",
+            notes: "",
+        });
+    }, [abilityDefault]);
+
+    const startEdit = useCallback((skill) => {
+        if (!skill) {
+            setEditingSkillId(null);
+            return;
+        }
+        setEditingSkillId(skill.id);
+    }, []);
+
+    const cancelEdit = useCallback(() => {
+        setEditingSkillId(null);
+    }, []);
+
+    const handleSubmit = useCallback(async () => {
+        if (!isDM) return;
+        const label = form.label.trim();
+        if (!label) {
+            alert("Skill needs a name");
+            return;
+        }
+        const payload = {
+            label,
+            ability: ABILITY_KEY_SET.has(form.ability) ? form.ability : abilityDefault,
+            tier: COMBAT_TIER_ORDER.includes(form.tier) ? form.tier : COMBAT_TIER_ORDER[0],
+            category: normalizeCombatCategoryValue(form.category),
+            cost: form.cost.trim(),
+            notes: form.notes.trim(),
+        };
+        try {
+            if (editingSkillId === NEW_COMBAT_SKILL_ID) {
+                setBusy(true);
+                await Games.addCombatSkill(game.id, payload);
+            } else if (editingSkill) {
+                setRowBusy(editingSkill.id);
+                await Games.updateCombatSkill(game.id, editingSkill.id, payload);
+            }
+            setEditingSkillId(null);
+            await onUpdate?.();
+        } catch (err) {
+            alert(err?.message || "Failed to save combat skill");
+        } finally {
+            setBusy(false);
+            setRowBusy(null);
+        }
+    }, [abilityDefault, editingSkill, editingSkillId, form, game.id, isDM, onUpdate]);
+
+    const handleDelete = useCallback(
+        async (skill) => {
+            if (!isDM || !skill) return;
+            const confirmed = confirm(`Delete ${skill.label}? This cannot be undone.`);
+            if (!confirmed) return;
+            try {
+                setRowBusy(skill.id);
+                await Games.deleteCombatSkill(game.id, skill.id);
+                await onUpdate?.();
+            } catch (err) {
+                alert(err?.message || "Failed to delete combat skill");
+            } finally {
+                setRowBusy(null);
+            }
+        },
+        [game.id, isDM, onUpdate]
+    );
+
+    const renderSkillEditor = (mode) => {
+        const disableSubmit = busy || (mode === "edit" && rowBusy === editingSkill?.id);
+        const submitLabel = mode === "create" ? "Add skill" : "Save changes";
+        return (
+            <form
+                className="combat-skill-editor"
+                onSubmit={(evt) => {
+                    evt.preventDefault();
+                    handleSubmit();
+                }}
+            >
+                <label className="text-small" htmlFor={`${mode}-combat-name`}>
+                    Name
+                    <input
+                        id={`${mode}-combat-name`}
+                        type="text"
+                        value={form.label}
+                        onChange={(e) => setForm((prev) => ({ ...prev, label: e.target.value }))}
+                        disabled={disableSubmit}
+                    />
+                </label>
+                <div className="row wrap" style={{ gap: 12 }}>
+                    <label className="col text-small">
+                        Ability
+                        <select
+                            value={form.ability}
+                            onChange={(e) => setForm((prev) => ({ ...prev, ability: e.target.value }))}
+                            disabled={disableSubmit}
+                        >
+                            {ABILITY_DEFS.map((ability) => (
+                                <option key={ability.key} value={ability.key}>
+                                    {ability.key} · {ability.label}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                    <label className="col text-small">
+                        Tier
+                        <select
+                            value={form.tier}
+                            onChange={(e) => setForm((prev) => ({ ...prev, tier: e.target.value }))}
+                            disabled={disableSubmit}
+                        >
+                            {COMBAT_TIER_ORDER.map((tier) => (
+                                <option key={tier} value={tier}>
+                                    {COMBAT_TIER_LABELS[tier]}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                    <label className="col text-small">
+                        Category
+                        <select
+                            value={form.category}
+                            onChange={(e) => setForm((prev) => ({ ...prev, category: e.target.value }))}
+                            disabled={disableSubmit}
+                        >
+                            {COMBAT_CATEGORY_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                    {option.label}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                </div>
+                <label className="text-small" htmlFor={`${mode}-combat-cost`}>
+                    Cost / resources
+                    <input
+                        id={`${mode}-combat-cost`}
+                        type="text"
+                        value={form.cost}
+                        onChange={(e) => setForm((prev) => ({ ...prev, cost: e.target.value }))}
+                        disabled={disableSubmit}
+                    />
+                </label>
+                <label className="text-small" htmlFor={`${mode}-combat-notes`}>
+                    Notes
+                    <textarea
+                        id={`${mode}-combat-notes`}
+                        value={form.notes}
+                        rows={3}
+                        onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))}
+                        disabled={disableSubmit}
+                    />
+                </label>
+                <div className="combat-skill-editor__actions">
+                    <button type="submit" className="btn" disabled={disableSubmit}>
+                        {disableSubmit ? "…" : submitLabel}
+                    </button>
+                    <button type="button" className="btn ghost" onClick={cancelEdit} disabled={disableSubmit}>
+                        Cancel
+                    </button>
+                </div>
+            </form>
+        );
+    };
+
+    return (
+        <div className="stack-lg combat-skill-tab">
+            <div className="card">
+                <div className="combat-skill-manager__header">
+                    <div>
+                        <h3>Combat Skills</h3>
+                        <p className="text-muted text-small">
+                            Share combat techniques and guide players through the Battle Math quick reference.
+                        </p>
+                    </div>
+                </div>
+                <div className="combat-skill-manager__filters row wrap">
+                    <label className="text-small" style={{ flexGrow: 1 }}>
+                        Search
+                        <input
+                            type="search"
+                            value={skillQuery}
+                            onChange={(e) => setSkillQuery(e.target.value)}
+                            placeholder="Filter by name, tier, or notes"
+                        />
+                    </label>
+                    <label className="text-small">
+                        Sort by
+                        <select value={skillSort} onChange={(e) => setSkillSort(e.target.value)}>
+                            {COMBAT_SKILL_SORT_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                    {option.label}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                    {hasFilters && (
+                        <button
+                            type="button"
+                            className="btn ghost btn-small"
+                            onClick={() => {
+                                setSkillQuery("");
+                                setSkillSort("default");
+                            }}
+                        >
+                            Clear
+                        </button>
+                    )}
+                </div>
+                <div className="combat-skill-grid">
+                    {displaySkills.map((skill) => {
+                        const isEditing = editingSkill && editingSkill.id === skill.id;
+                        return (
+                            <div key={skill.id} className={`combat-skill-card${isEditing ? " is-editing" : ""}`}>
+                                {isEditing ? (
+                                    renderSkillEditor("edit")
+                                ) : (
+                                    <>
+                                        <div className="combat-skill-card__header">
+                                            <h4>{skill.label}</h4>
+                                            <div className="combat-skill-card__badges">
+                                                <span className="pill">{COMBAT_TIER_LABELS[skill.tier] || "Tier"}</span>
+                                                <span className="pill light">{skill.ability} mod</span>
+                                                <span className="pill light">{COMBAT_CATEGORY_LABELS[skill.category] || "Other"}</span>
+                                            </div>
+                                        </div>
+                                        {skill.cost && (
+                                            <div className="combat-skill-card__meta text-small">Cost: {skill.cost}</div>
+                                        )}
+                                        {skill.notes && (
+                                            <p className="combat-skill-card__notes text-small">{skill.notes}</p>
+                                        )}
+                                        <CombatSkillCalculator skill={skill} playerOptions={playerOptions} />
+                                        {isDM && (
+                                            <div className="combat-skill-card__actions">
+                                                <button
+                                                    type="button"
+                                                    className="btn ghost btn-small"
+                                                    onClick={() => startEdit(skill)}
+                                                    disabled={busy || rowBusy === skill.id}
+                                                >
+                                                    Edit
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="btn ghost btn-small"
+                                                    onClick={() => handleDelete(skill)}
+                                                    disabled={busy || rowBusy === skill.id}
+                                                >
+                                                    Delete
+                                                </button>
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+                        );
+                    })}
+                    {isDM && (
+                        <div
+                            className={`combat-skill-card combat-skill-card--add${
+                                editingSkillId === NEW_COMBAT_SKILL_ID ? " is-editing" : ""
+                            }`}
+                        >
+                            {editingSkillId === NEW_COMBAT_SKILL_ID ? (
+                                renderSkillEditor("create")
+                            ) : (
+                                <button
+                                    type="button"
+                                    className="combat-skill-card__add-btn"
+                                    onClick={startCreate}
+                                    disabled={busy}
+                                >
+                                    <span className="combat-skill-card__plus" aria-hidden="true">
+                                        +
+                                    </span>
+                                    <span>New combat skill</span>
+                                </button>
+                            )}
+                        </div>
+                    )}
+                </div>
+                {displaySkills.length === 0 && !isDM && (
+                    <p className="text-muted text-small" style={{ marginTop: 12 }}>
+                        No combat skills are available yet.
+                    </p>
+                )}
+            </div>
+        </div>
+    );
+}
+
+function CombatSkillCalculator({ skill, playerOptions }) {
+    const tierInfo = COMBAT_TIER_INFO[skill.tier] || COMBAT_TIER_INFO.WEAK;
+    const options = useMemo(
+        () => [{ value: "", label: "Manual entry", mods: {} }, ...playerOptions],
+        [playerOptions]
+    );
+    const [playerId, setPlayerId] = useState(options[0]?.value || "");
+    const [modInput, setModInput] = useState("");
+    const [rollInput, setRollInput] = useState("");
+    const [bonusInput, setBonusInput] = useState("");
+    const [buffInput, setBuffInput] = useState("1");
+    const [critical, setCritical] = useState(false);
+
+    useEffect(() => {
+        if (!options.some((option) => option.value === playerId)) {
+            setPlayerId(options[0]?.value || "");
+        }
+    }, [options, playerId]);
+
+    const selected = options.find((option) => option.value === playerId) || options[0];
+    const autoMod = selected && selected.value ? selected.mods?.[skill.ability] ?? 0 : 0;
+
+    const manualModRaw = modInput.trim();
+    const manualModValue = Number(modInput);
+    const manualModValid = manualModRaw === "" || Number.isFinite(manualModValue);
+    const abilityMod = manualModRaw === "" ? autoMod : manualModValue;
+
+    const rollRaw = rollInput.trim();
+    const bonusRaw = bonusInput.trim();
+    const buffRaw = buffInput.trim();
+    const rollValue = rollRaw === "" ? null : Number(rollInput);
+    const bonusValue = bonusRaw === "" ? 0 : Number(bonusInput);
+    const buffValue = buffRaw === "" ? 1 : Number(buffInput);
+    const rollValid = rollRaw === "" || Number.isFinite(rollValue);
+    const bonusValid = bonusRaw === "" || Number.isFinite(bonusValue);
+    const buffValid = buffRaw === "" || Number.isFinite(buffValue);
+
+    let damage = null;
+    if (manualModValid && rollValid && bonusValid && buffValid && rollValue !== null) {
+        damage = computeCombatSkillDamage({
+            tier: skill.tier,
+            abilityMod,
+            roll: rollValue,
+            bonus: bonusValue,
+            buff: buffValue,
+            critical,
+        });
+    }
+
+    const resultTotal = damage ? damage.total : "—";
+    const modDisplay = manualModRaw === "" ? autoMod : abilityMod;
+
+    const handleReset = () => {
+        setModInput("");
+        setRollInput("");
+        setBonusInput("");
+        setBuffInput("1");
+        setCritical(false);
+    };
+
+    return (
+        <div className="combat-calculator">
+            {playerOptions.length > 0 && (
+                <label className="text-small">
+                    Acting player
+                    <select value={playerId} onChange={(e) => setPlayerId(e.target.value)}>
+                        {options.map((option) => (
+                            <option key={option.value || "__manual"} value={option.value}>
+                                {option.label}
+                            </option>
+                        ))}
+                    </select>
+                </label>
+            )}
+            <div className="row wrap" style={{ gap: 12 }}>
+                <label className="col text-small">
+                    Ability modifier ({skill.ability})
+                    <input
+                        type="number"
+                        value={modInput}
+                        placeholder={String(autoMod)}
+                        onChange={(e) => setModInput(e.target.value)}
+                        className={manualModValid ? undefined : "input-error"}
+                    />
+                </label>
+                <label className="col text-small">
+                    Roll total ({tierInfo.dice})
+                    <input
+                        type="number"
+                        value={rollInput}
+                        placeholder={`Roll ${tierInfo.dice}`}
+                        onChange={(e) => setRollInput(e.target.value)}
+                        className={rollValid ? undefined : "input-error"}
+                    />
+                </label>
+            </div>
+            <div className="row wrap" style={{ gap: 12 }}>
+                <label className="col text-small">
+                    Bonus damage
+                    <input
+                        type="number"
+                        value={bonusInput}
+                        placeholder="0"
+                        onChange={(e) => setBonusInput(e.target.value)}
+                        className={bonusValid ? undefined : "input-error"}
+                    />
+                </label>
+                <label className="col text-small">
+                    Buff multiplier
+                    <input
+                        type="number"
+                        step="0.01"
+                        value={buffInput}
+                        placeholder="1"
+                        onChange={(e) => setBuffInput(e.target.value)}
+                        className={buffValid ? undefined : "input-error"}
+                    />
+                </label>
+            </div>
+            <label className="checkbox">
+                <input type="checkbox" checked={critical} onChange={(e) => setCritical(e.target.checked)} />
+                Critical hit (+75% damage)
+            </label>
+            <div className="combat-calculator__result">
+                <div className="combat-calculator__total">{resultTotal}</div>
+                <div className="text-small text-muted">
+                    Ask the acting player to roll {tierInfo.dice}. Enter the total above, then round up the result.
+                </div>
+                {damage && (
+                    <div className="text-small text-muted">
+                        Roll {damage.baseRoll} + ability ({skill.ability} × {tierInfo.modMultiplier} = {formatModifier(damage.abilityContribution)})
+                        {damage.bonus ? ` + bonus ${formatModifier(damage.bonus)}` : ""}
+                        {critical ? " → crit ×1.75" : ""}
+                        {damage.buffMultiplier !== 1 ? ` → buffs ×${damage.buffMultiplier}` : ""}
+                        → round up = {damage.total}
+                    </div>
+                )}
+            </div>
+            <div className="combat-calculator__footer">
+                <span className="text-small text-muted">Using modifier {formatModifier(modDisplay)}.</span>
+                <button type="button" className="btn ghost btn-small" onClick={handleReset}>
+                    Clear inputs
+                </button>
+            </div>
+        </div>
+    );
+}
+
 function WorldSkillsTab({ game, me, onUpdate }) {
     const isDM = game.dmId === me.id;
     const abilityDefault = ABILITY_DEFS[0]?.key || "INT";
@@ -6152,19 +6988,16 @@ function WorldSkillsTab({ game, me, onUpdate }) {
             list = list.filter((skill) => {
                 const label = skill.label.toLowerCase();
                 const ability = skill.ability.toLowerCase();
-                return label.includes(query) || ability.includes(query);
+                const abilityLabel = abilityDetails[skill.ability]?.label?.toLowerCase() || "";
+                return label.includes(query) || ability.includes(query) || abilityLabel.includes(query);
             });
         }
-        if (skillSort === "label") {
-            list.sort((a, b) => a.label.localeCompare(b.label));
-        } else if (skillSort === "ability") {
-            list.sort((a, b) => {
-                if (a.ability === b.ability) return a.label.localeCompare(b.label);
-                return a.ability.localeCompare(b.ability);
-            });
+        const comparator = WORLD_SKILL_SORTERS[skillSort] || null;
+        if (comparator) {
+            list.sort(comparator);
         }
         return list;
-    }, [skillQuery, skillSort, worldSkills]);
+    }, [abilityDetails, skillQuery, skillSort, worldSkills]);
 
     const displaySkills = useMemo(() => {
         if (!editingSkill) return filteredSkills;
@@ -6719,9 +7552,11 @@ function WorldSkillsTab({ game, me, onUpdate }) {
                                         onChange={(e) => setSkillSort(e.target.value)}
                                         aria-label="Sort world skills"
                                     >
-                                        <option value="default">Creation order</option>
-                                        <option value="label">Name (A → Z)</option>
-                                        <option value="ability">Ability</option>
+                                        {WORLD_SKILL_SORT_OPTIONS.map((option) => (
+                                            <option key={option.value} value={option.value}>
+                                                {option.label}
+                                            </option>
+                                        ))}
                                     </select>
                                 </label>
                             </div>

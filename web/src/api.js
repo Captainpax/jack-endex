@@ -403,6 +403,15 @@ export const Games = {
     joinByCode: (code) => api(`/api/games/join/${encodeURIComponent(code)}`, { method: 'POST' }),
     setPerms: (id, perms) => api(`/api/games/${encodeURIComponent(id)}/permissions`, { method: 'PUT', body: perms }),
     saveCharacter: (id, character) => api(`/api/games/${encodeURIComponent(id)}/character`, { method: 'PUT', body: { character } }),
+    addCombatSkill: (id, skill) =>
+        api(`/api/games/${encodeURIComponent(id)}/combat-skills`, { method: 'POST', body: { skill } }),
+    updateCombatSkill: (id, skillId, skill) =>
+        api(`/api/games/${encodeURIComponent(id)}/combat-skills/${encodeURIComponent(skillId)}`, {
+            method: 'PUT',
+            body: { skill },
+        }),
+    deleteCombatSkill: (id, skillId) =>
+        api(`/api/games/${encodeURIComponent(id)}/combat-skills/${encodeURIComponent(skillId)}`, { method: 'DELETE' }),
     addWorldSkill: (id, skill) =>
         api(`/api/games/${encodeURIComponent(id)}/world-skills`, { method: 'POST', body: { skill } }),
     updateWorldSkill: (id, skillId, skill) =>
