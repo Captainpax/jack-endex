@@ -12,6 +12,7 @@ const DEMON_IMAGE_FALLBACK_BASES = [
     "https://static.miraheze.org/megatenwikiwiki",
     "https://static.wikia.nocookie.net/megamitensei",
 ];
+const DEMON_IMAGE_FILE_RE = /\.(?:png|jpe?g|gif|webp|svg)$/i;
 
 function computeDemonImageSources(imageUrl) {
     const trimmed = typeof imageUrl === "string" ? imageUrl.trim() : "";
@@ -20,29 +21,115 @@ function computeDemonImageSources(imageUrl) {
     const sources = [];
     const seen = new Set();
     const addSource = (value) => {
-        if (!value || seen.has(value)) return;
-        seen.add(value);
-        sources.push(value);
+        if (!value) return;
+        const normalized = value.trim();
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        sources.push(normalized);
     };
 
     addSource(trimmed);
 
-    let parsed;
-    try {
-        parsed = new URL(trimmed);
-    } catch {
+    const isDataUrl = /^data:/i.test(trimmed);
+    const isBlobUrl = /^blob:/i.test(trimmed);
+    const isFileScheme = /^file:/i.test(trimmed);
+    const isSpecialScheme = /^special:filepath\//i.test(trimmed);
+
+    let fileName = "";
+    if (isFileScheme) {
+        fileName = trimmed.slice(trimmed.indexOf(":") + 1).split(/[?#]/)[0].trim();
+    } else if (isSpecialScheme) {
+        fileName = trimmed.slice(trimmed.indexOf("/") + 1).split(/[?#]/)[0].trim();
+    } else if (/^images\//i.test(trimmed)) {
+        fileName = trimmed.split("/").pop()?.split(/[?#]/)[0].trim() || "";
+    } else if (!trimmed.includes("://")) {
+        fileName = trimmed.split(/[/?#]/).pop()?.trim() || "";
+    }
+
+    let parsed = null;
+    let parsedHost = "";
+    const shouldAddSpecialFallback = () => {
+        if (!fileName) return false;
+        if (isFileScheme || isSpecialScheme || /^images\//i.test(trimmed) || !trimmed.includes("://")) {
+            if (!DEMON_IMAGE_FILE_RE.test(fileName) && !(isFileScheme || isSpecialScheme)) {
+                return false;
+            }
+            return true;
+        }
+        if (!DEMON_IMAGE_FILE_RE.test(fileName)) return false;
+        if (!parsedHost) return false;
+        return /megaten|persona|nocookie|atlus/i.test(parsedHost);
+    };
+    const addSpecialFallback = () => {
+        if (!shouldAddSpecialFallback()) return;
+        addSource(`https://megatenwiki.com/wiki/Special:FilePath/${fileName}`);
+    };
+
+    if (isFileScheme && fileName) {
+        addSpecialFallback();
+        try {
+            parsed = new URL(`https://megatenwiki.com/wiki/Special:FilePath/${fileName}`);
+        } catch {
+            parsed = null;
+        }
+    } else {
+        try {
+            parsed = new URL(trimmed);
+            addSource(parsed.toString());
+        } catch {
+            if (!isDataUrl && !isBlobUrl) {
+                if (isSpecialScheme && fileName) {
+                    const specialUrl = `https://megatenwiki.com/wiki/${trimmed}`;
+                    addSource(specialUrl);
+                    try {
+                        parsed = new URL(specialUrl);
+                    } catch {
+                        parsed = null;
+                    }
+                }
+                if (!parsed) {
+                    try {
+                        parsed = new URL(trimmed, "https://megatenwiki.com/");
+                        addSource(parsed.toString());
+                    } catch {
+                        parsed = null;
+                    }
+                }
+            }
+        }
+    }
+
+    if (!parsed) {
+        addSpecialFallback();
         return sources;
     }
 
-    if (parsed.protocol === "http:") {
-        const httpsUrl = `https://${parsed.host}${parsed.pathname}${parsed.search}${parsed.hash}`;
-        addSource(httpsUrl);
+    const { protocol, host, pathname, search, hash } = parsed;
+    parsedHost = (host || "").toLowerCase();
+
+    if (protocol === "http:") {
+        addSource(`https://${host}${pathname}${search}${hash}`);
     }
 
-    const pathname = parsed.pathname || "";
-    const imagePathIndex = pathname.indexOf("/images/");
-    const imagePath = imagePathIndex === -1 ? "" : pathname.slice(imagePathIndex);
-    const fileName = pathname.split("/").filter(Boolean).pop() || "";
+    if (!fileName) {
+        const segment = pathname.split("/").filter(Boolean).pop();
+        if (segment) {
+            fileName = segment.split(/[?#]/)[0];
+        }
+    }
+
+    let imagePath = "";
+    const pathMatch = pathname.match(/(\/images\/[^?#]+)/i);
+    if (pathMatch) {
+        imagePath = pathMatch[1];
+    } else if (/^images\//i.test(trimmed)) {
+        imagePath = `/${trimmed.replace(/^\/+/, "")}`;
+    } else {
+        const trimmedMatch = trimmed.match(/(\/images\/[^?#]+)/i);
+        if (trimmedMatch) {
+            imagePath = trimmedMatch[1];
+        }
+    }
 
     if (imagePath) {
         for (const base of DEMON_IMAGE_FALLBACK_BASES) {
@@ -51,7 +138,7 @@ function computeDemonImageSources(imageUrl) {
     }
 
     if (fileName) {
-        addSource(`https://megatenwiki.com/wiki/Special:FilePath/${fileName}`);
+        addSpecialFallback();
     }
 
     return sources;
