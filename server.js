@@ -1915,6 +1915,21 @@ function sanitizeText(value) {
     return String(value).slice(0, 500);
 }
 
+function readImageUrl(value) {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.length > 2048) return '';
+    try {
+        const url = new URL(trimmed);
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+            return '';
+        }
+        return url.toString();
+    } catch {
+        return '';
+    }
+}
+
 function normalizeCount(value, fallback = 0) {
     if (value === undefined || value === null || value === '') return fallback;
     const num = Number(value);
@@ -3014,6 +3029,7 @@ app.post('/api/games/:id/demons', requireAuth, async (req, res) => {
         },
         skills: normalizeArray(body.skills),
         notes: sanitizeText(body.notes || ''),
+        image: readImageUrl(body.image),
     };
 
     if (!demon.name) return res.status(400).json({ error: 'missing name' });
@@ -3062,6 +3078,7 @@ app.put('/api/games/:id/demons/:demonId', requireAuth, async (req, res) => {
         },
         skills: body.skills !== undefined ? normalizeArray(body.skills) : (current.skills || []),
         notes: sanitizeText(body.notes ?? current.notes ?? ''),
+        image: Object.prototype.hasOwnProperty.call(body, 'image') ? readImageUrl(body.image) : (current.image || ''),
     };
 
     game.demons[idx] = updated;
