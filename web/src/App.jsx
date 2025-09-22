@@ -3931,6 +3931,11 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     const [ch, setCh] = useState(() => normalizeCharacter(slotCharacter, worldSkills));
     const [saving, setSaving] = useState(false);
     const [showWizard, setShowWizard] = useState(false);
+    const [playerSortMode, setPlayerSortMode] = useState("name");
+    const playerCollator = useMemo(
+        () => new Intl.Collator(undefined, { numeric: true, sensitivity: "base" }),
+        [],
+    );
 
     useEffect(() => {
         setCh(normalizeCharacter(slotCharacter, worldSkills));
@@ -3962,6 +3967,50 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
             ability: ABILITY_KEY_SET.has(prev.ability) ? prev.ability : abilityDefault,
         }));
     }, [abilityDefault]);
+
+    const getPlayerLabel = useCallback((player) => {
+        if (!player) return "Unnamed player";
+        const charName = typeof player.character?.name === "string" ? player.character.name.trim() : "";
+        if (charName) return charName;
+        const username = typeof player.username === "string" ? player.username.trim() : "";
+        if (username) return username;
+        return "Unnamed player";
+    }, []);
+
+    const getPlayerLevel = useCallback((player) => {
+        const raw = player?.character?.resources?.level;
+        const num = Number(raw);
+        return Number.isFinite(num) ? num : 0;
+    }, []);
+
+    const sortedPlayers = useMemo(() => {
+        if (!Array.isArray(selectablePlayers) || selectablePlayers.length === 0) {
+            return selectablePlayers;
+        }
+        const arr = [...selectablePlayers];
+        arr.sort((a, b) => {
+            if (playerSortMode === "player") {
+                const aName = typeof a?.username === "string" ? a.username.trim() : "";
+                const bName = typeof b?.username === "string" ? b.username.trim() : "";
+                const cmp = playerCollator.compare(aName, bName);
+                if (cmp !== 0) return cmp;
+            } else if (playerSortMode === "levelHigh" || playerSortMode === "levelLow") {
+                const aLevel = getPlayerLevel(a);
+                const bLevel = getPlayerLevel(b);
+                if (aLevel !== bLevel) {
+                    return playerSortMode === "levelHigh" ? bLevel - aLevel : aLevel - bLevel;
+                }
+            }
+            const cmpLabel = playerCollator.compare(getPlayerLabel(a), getPlayerLabel(b));
+            if (cmpLabel !== 0) return cmpLabel;
+            const aName = typeof a?.username === "string" ? a.username.trim() : "";
+            const bName = typeof b?.username === "string" ? b.username.trim() : "";
+            const cmpUser = playerCollator.compare(aName, bName);
+            if (cmpUser !== 0) return cmpUser;
+            return playerCollator.compare(String(a?.userId ?? ""), String(b?.userId ?? ""));
+        });
+        return arr;
+    }, [getPlayerLabel, getPlayerLevel, playerCollator, playerSortMode, selectablePlayers]);
 
     const hasSelection = !isDM || (!!selectedPlayerId && slot && slot.userId);
     const noPlayers = isDM && selectablePlayers.length === 0;
@@ -4277,14 +4326,27 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                         <select
                             value={selectedPlayerId ?? ""}
                             onChange={(e) => onChangePlayer?.(e.target.value || null)}
-                            disabled={selectablePlayers.length === 0}
+                            disabled={sortedPlayers.length === 0}
                         >
                             <option value="">Select a player…</option>
-                            {selectablePlayers.map((p) => (
+                            {sortedPlayers.map((p) => (
                                 <option key={p.userId} value={p.userId}>
-                                    {p.character?.name || p.username || "Unnamed player"}
+                                    {getPlayerLabel(p)}
                                 </option>
                             ))}
+                        </select>
+                    </label>
+                    <label className="field">
+                        <span className="field__label">Sort players by</span>
+                        <select
+                            value={playerSortMode}
+                            onChange={(e) => setPlayerSortMode(e.target.value)}
+                            disabled={sortedPlayers.length === 0}
+                        >
+                            <option value="name">Character name (A → Z)</option>
+                            <option value="player">Player name (A → Z)</option>
+                            <option value="levelHigh">Level (high → low)</option>
+                            <option value="levelLow">Level (low → high)</option>
                         </select>
                     </label>
                 </div>
@@ -10740,6 +10802,11 @@ function DemonTab({ game, me, onUpdate }) {
     const [busySave, setBusySave] = useState(false);
     const [busySearch, setBusySearch] = useState(false);
     const [busyDelete, setBusyDelete] = useState(null);
+    const [demonSortMode, setDemonSortMode] = useState("name");
+    const demonCollator = useMemo(
+        () => new Intl.Collator(undefined, { numeric: true, sensitivity: "base" }),
+        [],
+    );
 
     const isDM = game.dmId === me.id;
     const canEdit = isDM || game.permissions?.canEditDemons;
@@ -10810,6 +10877,37 @@ function DemonTab({ game, me, onUpdate }) {
             setBusyDelete(null);
         }
     };
+
+    const sortedDemons = useMemo(() => {
+        if (!Array.isArray(game.demons) || game.demons.length === 0) {
+            return game.demons || EMPTY_ARRAY;
+        }
+        const arr = [...game.demons];
+        const getName = (d) => (typeof d?.name === "string" ? d.name.trim() : "");
+        const getArcana = (d) => (typeof d?.arcana === "string" ? d.arcana.trim() : "");
+        const getLevel = (d) => {
+            const raw = Number(d?.level);
+            return Number.isFinite(raw) ? raw : 0;
+        };
+        arr.sort((a, b) => {
+            if (demonSortMode === "levelHigh" || demonSortMode === "levelLow") {
+                const aLevel = getLevel(a);
+                const bLevel = getLevel(b);
+                if (aLevel !== bLevel) {
+                    return demonSortMode === "levelHigh" ? bLevel - aLevel : aLevel - bLevel;
+                }
+            } else if (demonSortMode === "arcana") {
+                const cmpArc = demonCollator.compare(getArcana(a), getArcana(b));
+                if (cmpArc !== 0) return cmpArc;
+            }
+            const cmpName = demonCollator.compare(getName(a), getName(b));
+            if (cmpName !== 0) return cmpName;
+            const cmpArc = demonCollator.compare(getArcana(a), getArcana(b));
+            if (cmpArc !== 0) return cmpArc;
+            return getLevel(a) - getLevel(b);
+        });
+        return arr;
+    }, [demonCollator, demonSortMode, game.demons]);
 
     // Debounced search
     const debounceRef = useRef(0);
@@ -11119,8 +11217,20 @@ function DemonTab({ game, me, onUpdate }) {
                 </div>
             </div>
 
+            <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <label className="field" style={{ minWidth: 200 }}>
+                    <span className="field__label">Sort demons by</span>
+                    <select value={demonSortMode} onChange={(e) => setDemonSortMode(e.target.value)}>
+                        <option value="name">Name (A → Z)</option>
+                        <option value="arcana">Arcana (A → Z)</option>
+                        <option value="levelHigh">Level (high → low)</option>
+                        <option value="levelLow">Level (low → high)</option>
+                    </select>
+                </label>
+            </div>
+
             <div className="list" style={{ marginTop: 12, gap: 12 }}>
-                {game.demons.map((d) => (
+                {sortedDemons.map((d) => (
                     <div key={d.id} className="card" style={{ padding: 12 }}>
                         <div
                             className="row"
@@ -11193,7 +11303,7 @@ function DemonTab({ game, me, onUpdate }) {
                         )}
                     </div>
                 ))}
-                {game.demons.length === 0 && <div style={{ opacity: 0.7 }}>No demons in the pool yet.</div>}
+                {sortedDemons.length === 0 && <div style={{ opacity: 0.7 }}>No demons in the pool yet.</div>}
             </div>
         </div>
     );
