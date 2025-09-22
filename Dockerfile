@@ -1,39 +1,45 @@
-# Use a lightweight Node.js image for build and runtime
-FROM node:20-alpine AS build
-
-# Create app directory
+# Multi-stage build for Jack Endex
+FROM node:20-alpine AS base
 WORKDIR /app
 
-# Install dependencies
+# Install dependencies (including dev deps for build)
+FROM base AS deps
 COPY package*.json ./
 RUN npm ci
 
-# Copy source files and build the client
+# Build the client bundle
+FROM deps AS build
 COPY . .
 RUN npm run build
 
-# Production image
+# Prune dev dependencies for production
+FROM deps AS prune
+RUN npm prune --omit=dev
+
+# Final runtime image
 FROM node:20-alpine AS production
+ENV NODE_ENV=production
 WORKDIR /app
 
-# Copy only the package.json files and install production deps
+# Copy production node_modules and application code
+COPY --from=prune /app/node_modules ./node_modules
 COPY package*.json ./
-RUN npm ci --omit=dev
-
-# Copy necessary application files
 COPY server.js ./
+COPY discordWatcher.js ./
+COPY config ./config
 COPY routes ./routes
+COPY services ./services
+COPY models ./models
+COPY lib ./lib
 COPY data ./data
 COPY public ./public
+COPY txtdocs ./txtdocs
 COPY --from=build /app/dist ./dist
 
-# Expose the port the app runs on
-EXPOSE 3000
-
 # Drop privileges to a non-root user
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
-RUN chown -R appuser:appgroup /app
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup \
+    && chown -R appuser:appgroup /app
 USER appuser
 
-# Start the server
-CMD ["npm", "start"]
+EXPOSE 3000
+CMD ["node", "server.js"]
