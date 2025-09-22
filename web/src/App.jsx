@@ -12522,12 +12522,12 @@ function DemonTab({ game, me, onUpdate }) {
     const [q, setQ] = useState("");
     const [results, setResults] = useState([]);
     const [selected, setSelected] = useState(null);
+    const [editing, setEditing] = useState(null);
     const previewStats = useMemo(() => resolveAbilityState(stats), [stats]);
     const previewMods = useMemo(() => {
         const source = (selected && selected.mods) || (editing && editing.mods);
         return source && typeof source === "object" ? source : EMPTY_OBJECT;
     }, [editing, selected]);
-    const [editing, setEditing] = useState(null);
     const [busySave, setBusySave] = useState(false);
     const [busySearch, setBusySearch] = useState(false);
     const [busyDelete, setBusyDelete] = useState(null);
