@@ -47,7 +47,33 @@
           }
         ]
       },
-      "demons": [],
+      "demons": [
+        {
+          "id": "update-codex",
+          "name": "Update Codex",
+          "arcana": "",
+          "alignment": "",
+          "level": 1,
+          "stats": {
+            "STR": 0,
+            "DEX": 0,
+            "CON": 0,
+            "INT": 0,
+            "WIS": 0,
+            "CHA": 0
+          },
+          "resistances": {
+            "weak": [],
+            "resist": [],
+            "null": [],
+            "absorb": [],
+            "reflect": []
+          },
+          "skills": [],
+          "notes": "Placeholder entry reserved for AMZYoshio to edit via the codex UI.",
+          "image": ""
+        }
+      ],
       "demonPool": {
         "max": 0,
         "used": 0

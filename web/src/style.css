@@ -2013,6 +2013,40 @@ label {
     .combat-calculator__footer { justify-content: center; }
 }
 
+/* Demon codex */
+.demon-codex__filters { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; align-items: flex-end; }
+.demon-codex__filter { flex: 1 1 180px; min-width: 180px; }
+.demon-codex__clear { align-self: center; }
+.demon-codex__grid { margin-top: 16px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.demon-codex__empty { margin-top: 16px; padding: 24px; border: 1px dashed var(--border); border-radius: var(--radius); text-align: center; }
+
+.demon-card { display: grid; gap: 12px; padding: 16px; }
+.demon-card__header { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: flex-start; }
+.demon-card__image { width: 96px; height: 96px; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--border); background: #0b0c10; }
+.demon-card__title { display: grid; gap: 4px; }
+.demon-card__name { font-size: 1.05rem; }
+.demon-card__actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.demon-card__stats { display: flex; flex-wrap: wrap; gap: 6px; }
+.demon-card__resists { display: grid; gap: 4px; }
+.demon-card__skills { display: grid; gap: 6px; align-items: flex-start; }
+.demon-card__skills-btn { justify-self: flex-start; }
+.demon-card__notes { opacity: 0.85; }
+
+@media (max-width: 640px) {
+    .demon-card__header { grid-template-columns: 1fr; }
+    .demon-card__actions { justify-content: flex-start; }
+}
+
+.demon-skill-overlay { position: fixed; inset: 0; background: rgba(12, 14, 20, 0.55); display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 40; }
+.demon-skill-modal { background: var(--surface); border-radius: var(--radius); border: 1px solid var(--border); box-shadow: var(--shadow-md); width: min(520px, 95vw); max-height: 85vh; display: grid; gap: 16px; padding: 20px 22px; overflow: hidden; }
+.demon-skill-modal__header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.demon-skill-modal__list { display: grid; gap: 12px; overflow-y: auto; padding-right: 4px; }
+.demon-skill-modal__item { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; background: var(--surface-2); display: grid; gap: 6px; }
+.demon-skill-modal__item-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.demon-skill-modal__badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.demon-skill-modal__empty { text-align: center; padding: 16px; border-radius: var(--radius-sm); background: color-mix(in oklab, var(--brand) 6%, transparent); }
+.demon-skill-modal__unmatched { border-top: 1px solid var(--border); padding-top: 12px; }
+
 /* Wizard overlay */
 .wizard-backdrop { position: fixed; inset: 0; background: rgba(15, 17, 21, 0.78); display: grid; place-items: center; padding: 24px; z-index: 20; }
 .wizard-panel { width: min(960px, 100%); max-height: 100%; overflow: hidden; border-radius: var(--radius-lg); background: var(--surface); display: grid; grid-template-rows: auto auto 1fr auto; box-shadow: 0 30px 80px rgba(0,0,0,0.35); }
