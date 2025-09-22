@@ -16,6 +16,8 @@ import { createDiscordWatcher } from './discordWatcher.js';
 import { loadEnv, envString, envNumber } from './config/env.js';
 import User from './models/User.js';
 import Game from './models/Game.js';
+import Demon from './models/Demon.js';
+import { loadDemonEntries } from './lib/demonImport.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const storyWatchers = new Map();
@@ -58,6 +60,8 @@ try {
     console.error('[db] Failed to connect to MongoDB', err);
     process.exit(1);
 }
+
+await ensureInitialDemonDocs();
 
 const SESSION_SECRET = envString('SESSION_SECRET', 'dev-secret');
 const DEFAULT_DISCORD_BOT_TOKEN = readBotToken(
@@ -2450,6 +2454,34 @@ async function loadSeedDatabase() {
             console.warn('Failed to read default database seed', err);
         }
         return null;
+    }
+}
+
+async function ensureInitialDemonDocs() {
+    try {
+        const existing = await Demon.estimatedDocumentCount();
+        if (existing > 0) {
+            console.log(`[db] Demon codex already contains ${existing} entries.`);
+            return existing;
+        }
+        const entries = await loadDemonEntries();
+        if (entries.length === 0) {
+            console.warn('[db] No demons found in data/demons.json; skipping codex seed.');
+            return 0;
+        }
+        const bulkOps = entries.map((entry) => ({
+            replaceOne: {
+                filter: { slug: entry.slug },
+                replacement: entry,
+                upsert: true,
+            },
+        }));
+        await Demon.bulkWrite(bulkOps, { ordered: false });
+        console.log(`[db] Seeded ${entries.length} demons into the codex.`);
+        return entries.length;
+    } catch (err) {
+        console.warn('[db] Failed to seed demon codex', err);
+        return 0;
     }
 }
 
