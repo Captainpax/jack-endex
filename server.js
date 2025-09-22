@@ -38,6 +38,7 @@ const DEFAULT_PLAYER_TOKEN_COLOR = '#38bdf8';
 const DEFAULT_DEMON_TOKEN_COLOR = '#f97316';
 const DEFAULT_CUSTOM_TOKEN_COLOR = '#a855f7';
 const DEFAULT_ENEMY_TOKEN_COLOR = '#ef4444';
+const DEFAULT_DB_PATH = path.join(__dirname, 'data', 'db.json');
 
 await loadEnv({ root: __dirname });
 
@@ -2439,15 +2440,39 @@ function stripMongoMetadata(doc) {
     return rest;
 }
 
+async function loadSeedDatabase() {
+    try {
+        const raw = await fs.readFile(DEFAULT_DB_PATH, 'utf8');
+        const parsed = JSON.parse(raw);
+        return normalizeDB(parsed);
+    } catch (err) {
+        if (err && err.code !== 'ENOENT') {
+            console.warn('Failed to read default database seed', err);
+        }
+        return null;
+    }
+}
+
 async function readDB() {
     const [users, games] = await Promise.all([
         User.find().lean(),
         Game.find().lean(),
     ]);
-    return normalizeDB({
+
+    const normalized = {
         users: users.map((doc) => stripMongoMetadata(doc)),
         games: games.map((doc) => stripMongoMetadata(doc)),
-    });
+    };
+
+    if (normalized.users.length === 0 && normalized.games.length === 0) {
+        const seed = await loadSeedDatabase();
+        if (seed && (seed.users.length > 0 || seed.games.length > 0)) {
+            await writeDB(seed);
+            return seed;
+        }
+    }
+
+    return normalizeDB(normalized);
 }
 
 async function writeDB(db) {
