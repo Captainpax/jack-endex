@@ -877,13 +877,20 @@ function ensureGameShape(game) {
     game.demonPool.max = Number(game.demonPool.max) || 0;
     game.demonPool.used = Number(game.demonPool.used) || 0;
     if (!game.permissions || typeof game.permissions !== 'object') {
-        game.permissions = { canEditStats: false, canEditItems: false, canEditGear: false, canEditDemons: false };
+        game.permissions = {
+            canEditStats: false,
+            canEditItems: false,
+            canEditGear: false,
+            canEditDemons: false,
+            canEditCombatSkills: false,
+        };
     } else {
         game.permissions = {
             canEditStats: !!game.permissions.canEditStats,
             canEditItems: !!game.permissions.canEditItems,
             canEditGear: !!game.permissions.canEditGear,
             canEditDemons: !!game.permissions.canEditDemons,
+            canEditCombatSkills: !!game.permissions.canEditCombatSkills,
         };
     }
     if (!Array.isArray(game.invites)) game.invites = [];
@@ -3114,7 +3121,13 @@ app.post('/api/games', requireAuth, async (req, res) => {
         gear: { custom: [] },
         demons: [],
         demonPool: { max: 0, used: 0 },
-        permissions: { canEditStats: false, canEditItems: false, canEditGear: false, canEditDemons: false },
+        permissions: {
+            canEditStats: false,
+            canEditItems: false,
+            canEditGear: false,
+            canEditDemons: false,
+            canEditCombatSkills: false,
+        },
         invites: [],
         story: {
             channelId: '',
@@ -3249,6 +3262,7 @@ app.put('/api/games/:id/permissions', requireAuth, async (req, res) => {
         canEditItems: !!perms.canEditItems,
         canEditGear: !!perms.canEditGear,
         canEditDemons: !!perms.canEditDemons,
+        canEditCombatSkills: !!perms.canEditCombatSkills,
     };
     await persistGame(db, game);
     res.json(game.permissions);
@@ -3845,7 +3859,8 @@ app.post('/api/games/:id/combat-skills', requireAuth, async (req, res) => {
     if (!game || !isMember(game, req.session.userId)) {
         return res.status(404).json({ error: 'not_found' });
     }
-    if (!isDM(game, req.session.userId)) {
+    const manager = isDM(game, req.session.userId);
+    if (!manager && !game.permissions.canEditCombatSkills) {
         return res.status(403).json({ error: 'forbidden' });
     }
 
@@ -3869,7 +3884,8 @@ app.put('/api/games/:id/combat-skills/:skillId', requireAuth, async (req, res) =
     if (!game || !isMember(game, req.session.userId)) {
         return res.status(404).json({ error: 'not_found' });
     }
-    if (!isDM(game, req.session.userId)) {
+    const manager = isDM(game, req.session.userId);
+    if (!manager && !game.permissions.canEditCombatSkills) {
         return res.status(403).json({ error: 'forbidden' });
     }
 
@@ -3964,7 +3980,8 @@ app.delete('/api/games/:id/combat-skills/:skillId', requireAuth, async (req, res
     if (!game || !isMember(game, req.session.userId)) {
         return res.status(404).json({ error: 'not_found' });
     }
-    if (!isDM(game, req.session.userId)) {
+    const manager = isDM(game, req.session.userId);
+    if (!manager && !game.permissions.canEditCombatSkills) {
         return res.status(403).json({ error: 'forbidden' });
     }
 

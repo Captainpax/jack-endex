@@ -8769,6 +8769,10 @@ function CombatSkillsTab({ game, me, onUpdate }) {
     const abilityDefault = ABILITY_DEFS[0]?.key || "INT";
     const combatSkills = useMemo(() => normalizeCombatSkillDefs(game.combatSkills), [game.combatSkills]);
     const worldSkills = useMemo(() => normalizeWorldSkillDefs(game.worldSkills), [game.worldSkills]);
+    const demons = useMemo(
+        () => (Array.isArray(game.demons) ? game.demons.filter(Boolean) : EMPTY_ARRAY),
+        [game.demons]
+    );
     const [skillQuery, setSkillQuery] = useState("");
     const [skillSort, setSkillSort] = useState("default");
     const [editingSkillId, setEditingSkillId] = useState(null);
@@ -8780,8 +8784,10 @@ function CombatSkillsTab({ game, me, onUpdate }) {
         cost: "",
         notes: "",
     });
+    const [activePane, setActivePane] = useState("library");
     const [busy, setBusy] = useState(false);
     const [rowBusy, setRowBusy] = useState(null);
+    const canManage = isDM || !!game.permissions?.canEditCombatSkills;
 
     useEffect(() => {
         setSkillQuery("");
@@ -8795,12 +8801,25 @@ function CombatSkillsTab({ game, me, onUpdate }) {
             cost: "",
             notes: "",
         });
+        setActivePane("library");
     }, [game.id, abilityDefault]);
 
     const editingSkill = useMemo(() => {
         if (!editingSkillId || editingSkillId === NEW_COMBAT_SKILL_ID) return null;
         return combatSkills.find((skill) => skill.id === editingSkillId) || null;
     }, [editingSkillId, combatSkills]);
+
+    useEffect(() => {
+        if (activePane !== "library" && editingSkillId) {
+            setEditingSkillId(null);
+        }
+    }, [activePane, editingSkillId]);
+
+    useEffect(() => {
+        if (!canManage && editingSkillId) {
+            setEditingSkillId(null);
+        }
+    }, [canManage, editingSkillId]);
 
     useEffect(() => {
         if (editingSkill) {
@@ -8883,6 +8902,8 @@ function CombatSkillsTab({ game, me, onUpdate }) {
     }, [game.players, isDM, me.id, worldSkills]);
 
     const startCreate = useCallback(() => {
+        if (!canManage) return;
+        setActivePane("library");
         setEditingSkillId(NEW_COMBAT_SKILL_ID);
         setForm({
             label: "",
@@ -8892,22 +8913,27 @@ function CombatSkillsTab({ game, me, onUpdate }) {
             cost: "",
             notes: "",
         });
-    }, [abilityDefault]);
+    }, [abilityDefault, canManage]);
 
-    const startEdit = useCallback((skill) => {
-        if (!skill) {
-            setEditingSkillId(null);
-            return;
-        }
-        setEditingSkillId(skill.id);
-    }, []);
+    const startEdit = useCallback(
+        (skill) => {
+            if (!canManage) return;
+            if (!skill) {
+                setEditingSkillId(null);
+                return;
+            }
+            setActivePane("library");
+            setEditingSkillId(skill.id);
+        },
+        [canManage]
+    );
 
     const cancelEdit = useCallback(() => {
         setEditingSkillId(null);
     }, []);
 
     const handleSubmit = useCallback(async () => {
-        if (!isDM) return;
+        if (!canManage) return;
         const label = form.label.trim();
         if (!label) {
             alert("Skill needs a name");
@@ -8937,11 +8963,11 @@ function CombatSkillsTab({ game, me, onUpdate }) {
             setBusy(false);
             setRowBusy(null);
         }
-    }, [abilityDefault, editingSkill, editingSkillId, form, game.id, isDM, onUpdate]);
+    }, [abilityDefault, canManage, editingSkill, editingSkillId, form, game.id, onUpdate]);
 
     const handleDelete = useCallback(
         async (skill) => {
-            if (!isDM || !skill) return;
+            if (!canManage || !skill) return;
             const confirmed = confirm(`Delete ${skill.label}? This cannot be undone.`);
             if (!confirmed) return;
             try {
@@ -8954,11 +8980,11 @@ function CombatSkillsTab({ game, me, onUpdate }) {
                 setRowBusy(null);
             }
         },
-        [game.id, isDM, onUpdate]
+        [canManage, game.id, onUpdate]
     );
 
     const renderSkillEditor = (mode) => {
-        const disableSubmit = busy || (mode === "edit" && rowBusy === editingSkill?.id);
+        const disableSubmit = busy || !canManage || (mode === "edit" && rowBusy === editingSkill?.id);
         const submitLabel = mode === "create" ? "Add skill" : "Save changes";
         return (
             <form
@@ -9065,116 +9091,146 @@ function CombatSkillsTab({ game, me, onUpdate }) {
                         </p>
                     </div>
                 </div>
-                <div className="combat-skill-manager__filters row wrap">
-                    <label className="text-small" style={{ flexGrow: 1 }}>
-                        Search
-                        <input
-                            type="search"
-                            value={skillQuery}
-                            onChange={(e) => setSkillQuery(e.target.value)}
-                            placeholder="Filter by name, tier, or notes"
-                        />
-                    </label>
-                    <label className="text-small">
-                        Sort by
-                        <select value={skillSort} onChange={(e) => setSkillSort(e.target.value)}>
-                            {COMBAT_SKILL_SORT_OPTIONS.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                    {option.label}
-                                </option>
-                            ))}
-                        </select>
-                    </label>
-                    {hasFilters && (
-                        <button
-                            type="button"
-                            className="btn ghost btn-small"
-                            onClick={() => {
-                                setSkillQuery("");
-                                setSkillSort("default");
-                            }}
-                        >
-                            Clear
-                        </button>
-                    )}
+                <div className="combat-skill-manager__nav" role="tablist" aria-label="Combat skill views">
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activePane === "library"}
+                        className={`combat-skill-manager__tab${
+                            activePane === "library" ? " is-active" : ""
+                        }`}
+                        onClick={() => setActivePane("library")}
+                    >
+                        Skill library
+                    </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activePane === "codex"}
+                        className={`combat-skill-manager__tab${
+                            activePane === "codex" ? " is-active" : ""
+                        }`}
+                        onClick={() => setActivePane("codex")}
+                    >
+                        Demon codex
+                    </button>
                 </div>
-                <div className="combat-skill-grid">
-                    {displaySkills.map((skill) => {
-                        const isEditing = editingSkill && editingSkill.id === skill.id;
-                        return (
-                            <div key={skill.id} className={`combat-skill-card${isEditing ? " is-editing" : ""}`}>
-                                {isEditing ? (
-                                    renderSkillEditor("edit")
-                                ) : (
-                                    <>
-                                        <div className="combat-skill-card__header">
-                                            <h4>{skill.label}</h4>
-                                            <div className="combat-skill-card__badges">
-                                                <span className="pill">{COMBAT_TIER_LABELS[skill.tier] || "Tier"}</span>
-                                                <span className="pill light">{skill.ability} mod</span>
-                                                <span className="pill light">{COMBAT_CATEGORY_LABELS[skill.category] || "Other"}</span>
-                                            </div>
-                                        </div>
-                                        {skill.cost && (
-                                            <div className="combat-skill-card__meta text-small">Cost: {skill.cost}</div>
-                                        )}
-                                        {skill.notes && (
-                                            <p className="combat-skill-card__notes text-small">{skill.notes}</p>
-                                        )}
-                                        <CombatSkillCalculator skill={skill} playerOptions={playerOptions} />
-                                        {isDM && (
-                                            <div className="combat-skill-card__actions">
-                                                <button
-                                                    type="button"
-                                                    className="btn ghost btn-small"
-                                                    onClick={() => startEdit(skill)}
-                                                    disabled={busy || rowBusy === skill.id}
-                                                >
-                                                    Edit
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    className="btn ghost btn-small"
-                                                    onClick={() => handleDelete(skill)}
-                                                    disabled={busy || rowBusy === skill.id}
-                                                >
-                                                    Delete
-                                                </button>
-                                            </div>
-                                        )}
-                                    </>
-                                )}
-                            </div>
-                        );
-                    })}
-                    {isDM && (
-                        <div
-                            className={`combat-skill-card combat-skill-card--add${
-                                editingSkillId === NEW_COMBAT_SKILL_ID ? " is-editing" : ""
-                            }`}
-                        >
-                            {editingSkillId === NEW_COMBAT_SKILL_ID ? (
-                                renderSkillEditor("create")
-                            ) : (
+                {activePane === "library" ? (
+                    <>
+                        <div className="combat-skill-manager__filters row wrap">
+                            <label className="text-small" style={{ flexGrow: 1 }}>
+                                Search
+                                <input
+                                    type="search"
+                                    value={skillQuery}
+                                    onChange={(e) => setSkillQuery(e.target.value)}
+                                    placeholder="Filter by name, tier, or notes"
+                                />
+                            </label>
+                            <label className="text-small">
+                                Sort by
+                                <select value={skillSort} onChange={(e) => setSkillSort(e.target.value)}>
+                                    {COMBAT_SKILL_SORT_OPTIONS.map((option) => (
+                                        <option key={option.value} value={option.value}>
+                                            {option.label}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                            {hasFilters && (
                                 <button
                                     type="button"
-                                    className="combat-skill-card__add-btn"
-                                    onClick={startCreate}
-                                    disabled={busy}
+                                    className="btn ghost btn-small"
+                                    onClick={() => {
+                                        setSkillQuery("");
+                                        setSkillSort("default");
+                                    }}
                                 >
-                                    <span className="combat-skill-card__plus" aria-hidden="true">
-                                        +
-                                    </span>
-                                    <span>New combat skill</span>
+                                    Clear
                                 </button>
                             )}
                         </div>
-                    )}
-                </div>
-                {displaySkills.length === 0 && !isDM && (
-                    <p className="text-muted text-small" style={{ marginTop: 12 }}>
-                        No combat skills are available yet.
-                    </p>
+                        <div className="combat-skill-grid">
+                            {displaySkills.map((skill) => {
+                                const isEditing = editingSkill && editingSkill.id === skill.id;
+                                return (
+                                    <div key={skill.id} className={`combat-skill-card${isEditing ? " is-editing" : ""}`}>
+                                        {isEditing ? (
+                                            renderSkillEditor("edit")
+                                        ) : (
+                                            <>
+                                                <div className="combat-skill-card__header">
+                                                    <h4>{skill.label}</h4>
+                                                    <div className="combat-skill-card__badges">
+                                                        <span className="pill">{COMBAT_TIER_LABELS[skill.tier] || "Tier"}</span>
+                                                        <span className="pill light">{skill.ability} mod</span>
+                                                        <span className="pill light">{COMBAT_CATEGORY_LABELS[skill.category] || "Other"}</span>
+                                                    </div>
+                                                </div>
+                                                {skill.cost && (
+                                                    <div className="combat-skill-card__meta text-small">Cost: {skill.cost}</div>
+                                                )}
+                                                {skill.notes && (
+                                                    <p className="combat-skill-card__notes text-small">{skill.notes}</p>
+                                                )}
+                                                <CombatSkillCalculator skill={skill} playerOptions={playerOptions} />
+                                                {canManage && (
+                                                    <div className="combat-skill-card__actions">
+                                                        <button
+                                                            type="button"
+                                                            className="btn ghost btn-small"
+                                                            onClick={() => startEdit(skill)}
+                                                            disabled={busy || rowBusy === skill.id}
+                                                        >
+                                                            Edit
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            className="btn ghost btn-small"
+                                                            onClick={() => handleDelete(skill)}
+                                                            disabled={busy || rowBusy === skill.id}
+                                                        >
+                                                            Delete
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                            {canManage && (
+                                <div
+                                    className={`combat-skill-card combat-skill-card--add${
+                                        editingSkillId === NEW_COMBAT_SKILL_ID ? " is-editing" : ""
+                                    }`}
+                                >
+                                    {editingSkillId === NEW_COMBAT_SKILL_ID ? (
+                                        renderSkillEditor("create")
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            className="combat-skill-card__add-btn"
+                                            onClick={startCreate}
+                                            disabled={busy || !canManage}
+                                        >
+                                            <span className="combat-skill-card__plus" aria-hidden="true">
+                                                +
+                                            </span>
+                                            <span>New combat skill</span>
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                        {displaySkills.length === 0 && !canManage && (
+                            <p className="text-muted text-small" style={{ marginTop: 12 }}>
+                                No combat skills are available yet.
+                            </p>
+                        )}
+                    </>
+                ) : (
+                    <CombatSkillCodexPanel demons={demons} skills={combatSkills} />
                 )}
             </div>
         </div>
@@ -9325,6 +9381,180 @@ function CombatSkillCalculator({ skill, playerOptions }) {
                     Clear inputs
                 </button>
             </div>
+        </div>
+    );
+}
+
+function CombatSkillCodexPanel({ demons, skills }) {
+    const demonOptions = useMemo(() => {
+        if (!Array.isArray(demons) || demons.length === 0) return EMPTY_ARRAY;
+        return demons.map((demon, index) => {
+            const value = demon?.id || `demon-${index}`;
+            const name = typeof demon?.name === "string" && demon.name.trim() ? demon.name.trim() : `Demon ${index + 1}`;
+            const arcana = typeof demon?.arcana === "string" && demon.arcana.trim() ? demon.arcana.trim() : "";
+            const alignment = typeof demon?.alignment === "string" && demon.alignment.trim() ? demon.alignment.trim() : "";
+            const levelRaw = Number(demon?.level);
+            const level = Number.isFinite(levelRaw) ? levelRaw : null;
+            const label = arcana ? `${name} · ${arcana}` : name;
+            return { value, demon, label, name, arcana, alignment, level };
+        });
+    }, [demons]);
+
+    const [selectedId, setSelectedId] = useState(() => demonOptions[0]?.value || "");
+
+    useEffect(() => {
+        if (demonOptions.length === 0) {
+            setSelectedId("");
+            return;
+        }
+        if (!demonOptions.some((option) => option.value === selectedId)) {
+            setSelectedId(demonOptions[0].value);
+        }
+    }, [demonOptions, selectedId]);
+
+    const activeMeta = useMemo(
+        () => demonOptions.find((option) => option.value === selectedId) || null,
+        [demonOptions, selectedId]
+    );
+    const activeDemon = activeMeta?.demon || null;
+
+    const [query, setQuery] = useState("");
+
+    useEffect(() => {
+        setQuery("");
+    }, [selectedId]);
+
+    const demonSkillList = useMemo(() => getDemonSkillList(activeDemon), [activeDemon]);
+    const demonSkillSet = useMemo(() => {
+        return new Set(demonSkillList.map((name) => name.toLowerCase()));
+    }, [demonSkillList]);
+    const matchedSkills = useMemo(() => {
+        if (!Array.isArray(skills) || skills.length === 0 || demonSkillSet.size === 0) return EMPTY_ARRAY;
+        return skills.filter((skill) => demonSkillSet.has(skill.label.toLowerCase()));
+    }, [demonSkillSet, skills]);
+    const unmatchedSkills = useMemo(() => {
+        if (demonSkillList.length === 0) return EMPTY_ARRAY;
+        const matchedLabels = new Set(matchedSkills.map((skill) => skill.label.toLowerCase()));
+        return demonSkillList.filter((label) => !matchedLabels.has(label.toLowerCase()));
+    }, [demonSkillList, matchedSkills]);
+    const filteredSkills = useMemo(() => {
+        if (matchedSkills.length === 0) return matchedSkills;
+        const term = query.trim().toLowerCase();
+        if (!term) return matchedSkills;
+        return matchedSkills.filter((skill) => {
+            const tierLabel = (COMBAT_TIER_LABELS[skill.tier] || "").toLowerCase();
+            const categoryLabel = (COMBAT_CATEGORY_LABELS[skill.category] || "").toLowerCase();
+            const notes = (skill.notes || "").toLowerCase();
+            const cost = (skill.cost || "").toLowerCase();
+            return (
+                skill.label.toLowerCase().includes(term) ||
+                skill.ability.toLowerCase().includes(term) ||
+                tierLabel.includes(term) ||
+                categoryLabel.includes(term) ||
+                notes.includes(term) ||
+                cost.includes(term)
+            );
+        });
+    }, [matchedSkills, query]);
+
+    if (demonOptions.length === 0) {
+        return (
+            <div className="combat-codex__empty text-muted text-small">
+                Add demons to your roster to explore their combat skills.
+            </div>
+        );
+    }
+
+    const displayName = activeMeta?.name || activeMeta?.label || "Selected demon";
+    const levelLabel = typeof activeMeta?.level === "number" ? `Lv ${activeMeta.level}` : null;
+
+    return (
+        <div className="combat-codex">
+            <div className="combat-codex__controls">
+                <label className="text-small combat-codex__control">
+                    Demon
+                    <select value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
+                        {demonOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                                {option.label}
+                            </option>
+                        ))}
+                    </select>
+                </label>
+                {matchedSkills.length > 0 && (
+                    <label className="text-small combat-codex__control">
+                        Filter skills
+                        <input
+                            type="search"
+                            value={query}
+                            onChange={(event) => setQuery(event.target.value)}
+                            placeholder="Search by name, ability, or notes"
+                        />
+                    </label>
+                )}
+            </div>
+            {activeDemon ? (
+                <div className="combat-codex__content">
+                    <div className="combat-codex__summary">
+                        <h4>{displayName}</h4>
+                        <div className="combat-codex__meta">
+                            {levelLabel && <span className="pill">{levelLabel}</span>}
+                            {activeMeta?.arcana && <span className="pill light">{activeMeta.arcana}</span>}
+                            {activeMeta?.alignment && <span className="pill light">{activeMeta.alignment}</span>}
+                        </div>
+                        {matchedSkills.length > 0 ? (
+                            <p className="text-small text-muted">
+                                Showing {filteredSkills.length} of {matchedSkills.length} linked skills from the codex.
+                            </p>
+                        ) : demonSkillList.length > 0 ? (
+                            <p className="text-small text-muted">
+                                No combat skills in the codex match these names yet.
+                            </p>
+                        ) : (
+                            <p className="text-small text-muted">This demon does not list any combat skills yet.</p>
+                        )}
+                    </div>
+                    {matchedSkills.length > 0 ? (
+                        <div className="combat-codex__skills">
+                            {filteredSkills.length > 0 ? (
+                                filteredSkills.map((skill) => (
+                                    <article key={skill.id} className="demon-skill-modal__item">
+                                        <div className="demon-skill-modal__item-header">
+                                            <h4>{skill.label}</h4>
+                                            <div className="demon-skill-modal__badges">
+                                                <span className="pill">{COMBAT_TIER_LABELS[skill.tier] || "Tier"}</span>
+                                                <span className="pill light">{skill.ability} mod</span>
+                                                <span className="pill light">{COMBAT_CATEGORY_LABELS[skill.category] || "Other"}</span>
+                                            </div>
+                                        </div>
+                                        {skill.cost && <div className="text-small">Cost: {skill.cost}</div>}
+                                        {skill.notes && <p className="text-small">{skill.notes}</p>}
+                                    </article>
+                                ))
+                            ) : (
+                                <div className="combat-codex__empty text-small text-muted">
+                                    No combat skills match that filter.
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <div className="combat-codex__empty text-small text-muted">
+                            {demonSkillList.length === 0
+                                ? "This demon does not list any combat skills yet."
+                                : "No combat skills in the codex match these names."}
+                        </div>
+                    )}
+                    {unmatchedSkills.length > 0 && (
+                        <div className="combat-codex__unmatched text-small">
+                            <strong>Unlinked skills:</strong> {unmatchedSkills.join(", ")}
+                        </div>
+                    )}
+                </div>
+            ) : (
+                <div className="combat-codex__empty text-muted text-small">
+                    Select a demon to view codex matches.
+                </div>
+            )}
         </div>
     );
 }
@@ -13175,6 +13405,11 @@ const PERMISSION_OPTIONS = [
         key: "canEditGear",
         label: "Equipment loadouts",
         description: "Let players swap or edit their own weapons, armor, and gear slots.",
+    },
+    {
+        key: "canEditCombatSkills",
+        label: "Combat skills",
+        description: "Allow players to add, edit, or delete shared combat techniques.",
     },
     {
         key: "canEditDemons",
