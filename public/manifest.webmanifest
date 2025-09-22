@@ -1,0 +1,25 @@
+{
+  "name": "Jack Endex Campaign Dashboard",
+  "short_name": "Jack Endex",
+  "description": "Campaign control center for Jack Endex with codex, combat tracker, and Discord sync.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#12051f",
+  "theme_color": "#7011d8",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    },
+    {
+      "src": "/personahaticon.gif",
+      "type": "image/gif"
+    }
+  ]
+}
