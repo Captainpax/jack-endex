@@ -27,6 +27,13 @@ const PERSONA_REQUEST_TIMEOUT_MS = 120_000;
 const TRADE_TIMEOUT_MS = 180_000;
 const YOUTUBE_ID_REGEX = /^[A-Za-z0-9_-]{11}$/;
 const MAX_ALERT_LENGTH = 500;
+const HEX_COLOR_REGEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+const MAX_MAP_STROKES = 800;
+const MAX_MAP_POINTS_PER_STROKE = 600;
+const DEFAULT_STROKE_COLOR = '#f97316';
+const DEFAULT_PLAYER_TOKEN_COLOR = '#38bdf8';
+const DEFAULT_DEMON_TOKEN_COLOR = '#f97316';
+const DEFAULT_CUSTOM_TOKEN_COLOR = '#a855f7';
 
 function parseYouTubeTimecode(raw) {
     if (typeof raw !== 'string') return 0;
@@ -141,6 +148,247 @@ function presentMediaState(media) {
 function sanitizeAlertMessage(value) {
     if (typeof value !== 'string') return '';
     return value.trim().slice(0, MAX_ALERT_LENGTH);
+}
+
+function clamp01(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return 0;
+    if (num <= 0) return 0;
+    if (num >= 1) return 1;
+    return num;
+}
+
+function sanitizeColor(value, fallback) {
+    if (typeof value !== 'string') return fallback;
+    const trimmed = value.trim();
+    if (!trimmed) return fallback;
+    return HEX_COLOR_REGEX.test(trimmed) ? trimmed.toLowerCase() : fallback;
+}
+
+function normalizeMapPoint(point) {
+    if (!point) return null;
+    let x;
+    let y;
+    if (Array.isArray(point)) {
+        [x, y] = point;
+    } else if (typeof point === 'object') {
+        x = point.x;
+        y = point.y;
+    }
+    if (!Number.isFinite(Number(x)) || !Number.isFinite(Number(y))) return null;
+    return { x: clamp01(x), y: clamp01(y) };
+}
+
+function normalizeMapStroke(entry, extras = {}) {
+    if (!entry || typeof entry !== 'object') return null;
+    const id = typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : uuid();
+    const widthRaw = Number(entry.size);
+    const size = Number.isFinite(widthRaw) ? Math.min(32, Math.max(1, widthRaw)) : 3;
+    const color = sanitizeColor(entry.color, DEFAULT_STROKE_COLOR);
+    const points = [];
+    const sourcePoints = Array.isArray(entry.points) ? entry.points : [];
+    for (const point of sourcePoints) {
+        const normalized = normalizeMapPoint(point);
+        if (!normalized) continue;
+        points.push(normalized);
+        if (points.length >= MAX_MAP_POINTS_PER_STROKE) break;
+    }
+    if (points.length < 2) return null;
+    const createdAt = typeof entry.createdAt === 'string' ? entry.createdAt : new Date().toISOString();
+    const createdBy = typeof entry.createdBy === 'string' ? entry.createdBy : extras.createdBy || null;
+    return { id, size, color, points, createdAt, createdBy };
+}
+
+function buildPlayerTooltip(player) {
+    if (!player || typeof player !== 'object') return '';
+    const lines = [];
+    const character = player.character || {};
+    if (character?.profile?.class) lines.push(character.profile.class);
+    const levelRaw = Number(character?.resources?.level);
+    if (Number.isFinite(levelRaw) && levelRaw > 0) lines.push(`Level ${levelRaw}`);
+    const hpRaw = Number(character?.resources?.hp);
+    const maxHpRaw = Number(character?.resources?.maxHP);
+    if (Number.isFinite(hpRaw) && Number.isFinite(maxHpRaw)) {
+        lines.push(`HP ${hpRaw}/${maxHpRaw}`);
+    }
+    return lines.join(' · ');
+}
+
+function buildDemonTooltip(demon) {
+    if (!demon || typeof demon !== 'object') return '';
+    const lines = [];
+    if (demon.arcana) lines.push(demon.arcana);
+    if (demon.alignment) lines.push(demon.alignment);
+    const levelRaw = Number(demon.level);
+    if (Number.isFinite(levelRaw) && levelRaw > 0) lines.push(`Level ${levelRaw}`);
+    return lines.join(' · ');
+}
+
+function normalizeMapToken(entry, game) {
+    if (!entry || typeof entry !== 'object') return null;
+    const kindRaw = typeof entry.kind === 'string' ? entry.kind.trim().toLowerCase() : 'custom';
+    const allowedKinds = new Set(['player', 'demon', 'custom']);
+    const kind = allowedKinds.has(kindRaw) ? kindRaw : 'custom';
+    let refId = typeof entry.refId === 'string' ? entry.refId : null;
+    const id = typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : uuid();
+    let label = sanitizeText(entry.label).trim();
+    let tooltip = sanitizeText(entry.tooltip).trim();
+    const createdAt = typeof entry.createdAt === 'string' ? entry.createdAt : new Date().toISOString();
+    const updatedAt = typeof entry.updatedAt === 'string' ? entry.updatedAt : createdAt;
+    let showTooltip = entry.showTooltip === undefined ? true : !!entry.showTooltip;
+    let color = sanitizeColor(entry.color, DEFAULT_CUSTOM_TOKEN_COLOR);
+    let ownerId = typeof entry.ownerId === 'string' ? entry.ownerId : null;
+
+    if (kind === 'player') {
+        const player = findPlayer(game, refId);
+        if (!player) return null;
+        refId = player.userId;
+        ownerId = player.userId;
+        if (!label) {
+            label = describePlayerLabel(player, { username: player.username });
+        }
+        if (!tooltip) tooltip = buildPlayerTooltip(player);
+        color = sanitizeColor(entry.color, DEFAULT_PLAYER_TOKEN_COLOR);
+    } else if (kind === 'demon') {
+        const demon = Array.isArray(game.demons) ? game.demons.find((d) => d && d.id === refId) : null;
+        if (!demon) return null;
+        refId = demon.id;
+        if (!label) label = demon.name || 'Demon';
+        if (!tooltip) tooltip = buildDemonTooltip(demon);
+        color = sanitizeColor(entry.color, DEFAULT_DEMON_TOKEN_COLOR);
+    } else {
+        if (!label) label = 'Marker';
+        if (entry.showTooltip === undefined) showTooltip = !!tooltip;
+    }
+
+    const x = clamp01(entry.x);
+    const y = clamp01(entry.y);
+
+    return { id, kind, refId, label, tooltip, showTooltip, color, x, y, createdAt, updatedAt, ownerId };
+}
+
+function presentMapStroke(stroke) {
+    if (!stroke || typeof stroke !== 'object') return null;
+    const points = Array.isArray(stroke.points)
+        ? stroke.points
+              .map((point) => normalizeMapPoint(point))
+              .filter(Boolean)
+        : [];
+    if (points.length < 2) return null;
+    return {
+        id: stroke.id,
+        size: Number(stroke.size) || 3,
+        color: sanitizeColor(stroke.color, DEFAULT_STROKE_COLOR),
+        points,
+        createdAt: typeof stroke.createdAt === 'string' ? stroke.createdAt : null,
+        createdBy: typeof stroke.createdBy === 'string' ? stroke.createdBy : null,
+    };
+}
+
+function presentMapToken(token) {
+    if (!token || typeof token !== 'object') return null;
+    return {
+        id: token.id,
+        kind: token.kind,
+        refId: token.refId || null,
+        label: token.label || '',
+        tooltip: token.tooltip || '',
+        showTooltip: !!token.showTooltip,
+        color: sanitizeColor(token.color, DEFAULT_CUSTOM_TOKEN_COLOR),
+        x: clamp01(token.x),
+        y: clamp01(token.y),
+        ownerId: typeof token.ownerId === 'string' ? token.ownerId : null,
+        updatedAt: typeof token.updatedAt === 'string' ? token.updatedAt : null,
+        createdAt: typeof token.createdAt === 'string' ? token.createdAt : null,
+    };
+}
+
+function ensureMapState(game) {
+    if (!game || typeof game !== 'object') {
+        return {
+            strokes: [],
+            tokens: [],
+            settings: { allowPlayerDrawing: false, allowPlayerTokenMoves: false },
+            paused: false,
+            updatedAt: new Date().toISOString(),
+        };
+    }
+    const raw = game.map && typeof game.map === 'object' ? game.map : {};
+    const settingsRaw = raw.settings && typeof raw.settings === 'object' ? raw.settings : {};
+    let strokes = Array.isArray(raw.strokes)
+        ? raw.strokes.map((stroke) => normalizeMapStroke(stroke)).filter(Boolean)
+        : [];
+    if (strokes.length > MAX_MAP_STROKES) {
+        strokes = strokes.slice(-MAX_MAP_STROKES);
+    }
+    const tokens = Array.isArray(raw.tokens)
+        ? raw.tokens.map((token) => normalizeMapToken(token, game)).filter(Boolean)
+        : [];
+    const updatedAt = typeof raw.updatedAt === 'string' ? raw.updatedAt : new Date().toISOString();
+    const mapState = {
+        strokes,
+        tokens,
+        settings: {
+            allowPlayerDrawing: !!settingsRaw.allowPlayerDrawing,
+            allowPlayerTokenMoves: !!settingsRaw.allowPlayerTokenMoves,
+        },
+        paused: !!raw.paused,
+        updatedAt,
+    };
+    game.map = mapState;
+    return mapState;
+}
+
+function presentMapState(map) {
+    if (!map || typeof map !== 'object') {
+        return {
+            strokes: [],
+            tokens: [],
+            settings: { allowPlayerDrawing: false, allowPlayerTokenMoves: false },
+            paused: false,
+            updatedAt: null,
+        };
+    }
+    const strokes = Array.isArray(map.strokes)
+        ? map.strokes.map((stroke) => presentMapStroke(stroke)).filter(Boolean)
+        : [];
+    const tokens = Array.isArray(map.tokens)
+        ? map.tokens.map((token) => presentMapToken(token)).filter(Boolean)
+        : [];
+    return {
+        strokes,
+        tokens,
+        settings: {
+            allowPlayerDrawing: !!map.settings?.allowPlayerDrawing,
+            allowPlayerTokenMoves: !!map.settings?.allowPlayerTokenMoves,
+        },
+        paused: !!map.paused,
+        updatedAt: typeof map.updatedAt === 'string' ? map.updatedAt : null,
+    };
+}
+
+function canDrawOnMap(game, userId) {
+    if (!userId) return false;
+    if (isDM(game, userId)) return true;
+    if (!isMember(game, userId)) return false;
+    const map = ensureMapState(game);
+    if (map.paused) return false;
+    return !!map.settings?.allowPlayerDrawing;
+}
+
+function canMoveMapToken(game, userId, token) {
+    if (!userId || !token) return false;
+    if (isDM(game, userId)) return true;
+    if (!isMember(game, userId)) return false;
+    const map = ensureMapState(game);
+    if (map.paused) return false;
+    if (!map.settings?.allowPlayerTokenMoves) return false;
+    return !!token.ownerId && token.ownerId === userId;
+}
+
+function findMapToken(map, tokenId) {
+    if (!map || !Array.isArray(map.tokens)) return null;
+    return map.tokens.find((token) => token && token.id === tokenId) || null;
 }
 
 /**
@@ -259,6 +507,7 @@ function ensureGameShape(game) {
     game.worldSkills = ensureWorldSkills(game);
     game.combatSkills = ensureCombatSkills(game);
     game.media = ensureMediaState(game);
+    game.map = ensureMapState(game);
     return game;
 }
 
@@ -283,6 +532,7 @@ function presentGame(game, { includeSecrets = false } = {}) {
         worldSkills,
         combatSkills,
         media: presentMediaState(normalized.media),
+        map: presentMapState(normalized.map),
     };
 }
 
@@ -2303,8 +2553,16 @@ app.post('/api/games', requireAuth, async (req, res) => {
             scribeIds: [],
             pollIntervalMs: 15_000,
         },
+        map: {
+            strokes: [],
+            tokens: [],
+            settings: { allowPlayerDrawing: false, allowPlayerTokenMoves: false },
+            paused: false,
+            updatedAt: new Date().toISOString(),
+        },
     };
     ensureWorldSkills(game);
+    ensureMapState(game);
     db.games.push(game);
     await writeDB(db);
     res.json(presentGame(game, { includeSecrets: true }));
@@ -2446,6 +2704,294 @@ app.put('/api/games/:id/character', requireAuth, async (req, res) => {
     }
 
     await persistGame(db, game);
+    res.json({ ok: true });
+});
+
+app.put('/api/games/:id/map/settings', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const map = ensureMapState(game);
+    const payload = req.body || {};
+    let changed = false;
+
+    if (Object.prototype.hasOwnProperty.call(payload, 'allowPlayerDrawing')) {
+        const value = !!payload.allowPlayerDrawing;
+        if (map.settings.allowPlayerDrawing !== value) {
+            map.settings.allowPlayerDrawing = value;
+            changed = true;
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'allowPlayerTokenMoves')) {
+        const value = !!payload.allowPlayerTokenMoves;
+        if (map.settings.allowPlayerTokenMoves !== value) {
+            map.settings.allowPlayerTokenMoves = value;
+            changed = true;
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'paused')) {
+        const paused = !!payload.paused;
+        if (map.paused !== paused) {
+            map.paused = paused;
+            changed = true;
+        }
+    }
+
+    if (!changed) {
+        return res.json(presentMapState(map));
+    }
+
+    map.updatedAt = new Date().toISOString();
+    await persistGame(db, game, {
+        reason: 'map:settings',
+        actorId: req.session.userId,
+        broadcast: true,
+    });
+    res.json(presentMapState(map));
+});
+
+app.post('/api/games/:id/map/strokes', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
+    const map = ensureMapState(game);
+    if (!canDrawOnMap(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const payload = req.body?.stroke || req.body || {};
+    const stroke = normalizeMapStroke(payload, { createdBy: req.session.userId });
+    if (!stroke) {
+        return res.status(400).json({ error: 'invalid_stroke' });
+    }
+
+    const timestamp = new Date().toISOString();
+    stroke.createdAt = timestamp;
+    stroke.createdBy = stroke.createdBy || req.session.userId;
+    map.strokes.push(stroke);
+    if (map.strokes.length > MAX_MAP_STROKES) {
+        map.strokes = map.strokes.slice(-MAX_MAP_STROKES);
+    }
+    map.updatedAt = timestamp;
+
+    await persistGame(db, game, {
+        reason: 'map:stroke',
+        actorId: req.session.userId,
+        broadcast: !map.paused,
+    });
+
+    res.status(201).json(presentMapStroke(stroke));
+});
+
+app.delete('/api/games/:id/map/strokes/:strokeId', requireAuth, async (req, res) => {
+    const { id, strokeId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const map = ensureMapState(game);
+    const before = map.strokes.length;
+    map.strokes = map.strokes.filter((stroke) => stroke && stroke.id !== strokeId);
+    if (map.strokes.length === before) {
+        return res.status(404).json({ error: 'stroke_not_found' });
+    }
+
+    map.updatedAt = new Date().toISOString();
+    await persistGame(db, game, {
+        reason: 'map:stroke:remove',
+        actorId: req.session.userId,
+        broadcast: !map.paused,
+    });
+    res.json({ ok: true });
+});
+
+app.post('/api/games/:id/map/strokes/clear', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const map = ensureMapState(game);
+    map.strokes = [];
+    map.updatedAt = new Date().toISOString();
+
+    await persistGame(db, game, {
+        reason: 'map:stroke:clear',
+        actorId: req.session.userId,
+        broadcast: !map.paused,
+    });
+    res.json({ ok: true });
+});
+
+app.post('/api/games/:id/map/tokens', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const map = ensureMapState(game);
+    const payload = req.body?.token || req.body || {};
+    const base = {
+        id: uuid(),
+        kind: typeof payload.kind === 'string' ? payload.kind : 'custom',
+        refId: typeof payload.refId === 'string' ? payload.refId : null,
+        label: payload.label,
+        tooltip: payload.tooltip,
+        color: payload.color,
+        showTooltip: payload.showTooltip,
+        x: Object.prototype.hasOwnProperty.call(payload, 'x') ? payload.x : 0.5,
+        y: Object.prototype.hasOwnProperty.call(payload, 'y') ? payload.y : 0.5,
+    };
+    const token = normalizeMapToken(base, game);
+    if (!token) {
+        return res.status(400).json({ error: 'invalid_token' });
+    }
+    const timestamp = new Date().toISOString();
+    token.createdAt = timestamp;
+    token.updatedAt = timestamp;
+
+    map.tokens.push(token);
+    map.updatedAt = timestamp;
+
+    await persistGame(db, game, {
+        reason: 'map:token:add',
+        actorId: req.session.userId,
+        broadcast: !map.paused,
+    });
+
+    res.status(201).json(presentMapToken(token));
+});
+
+app.put('/api/games/:id/map/tokens/:tokenId', requireAuth, async (req, res) => {
+    const { id, tokenId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
+    const map = ensureMapState(game);
+    const token = findMapToken(map, tokenId);
+    if (!token) {
+        return res.status(404).json({ error: 'token_not_found' });
+    }
+
+    const payload = req.body || {};
+    const isDMUser = isDM(game, req.session.userId);
+    let changed = false;
+
+    if (Object.prototype.hasOwnProperty.call(payload, 'x') || Object.prototype.hasOwnProperty.call(payload, 'y')) {
+        if (!canMoveMapToken(game, req.session.userId, token)) {
+            return res.status(403).json({ error: 'forbidden' });
+        }
+        if (Object.prototype.hasOwnProperty.call(payload, 'x')) {
+            token.x = clamp01(payload.x);
+        }
+        if (Object.prototype.hasOwnProperty.call(payload, 'y')) {
+            token.y = clamp01(payload.y);
+        }
+        changed = true;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(payload, 'showTooltip')) {
+        if (!isDMUser) {
+            return res.status(403).json({ error: 'forbidden' });
+        }
+        token.showTooltip = !!payload.showTooltip;
+        changed = true;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(payload, 'label')) {
+        if (!isDMUser) {
+            return res.status(403).json({ error: 'forbidden' });
+        }
+        token.label = sanitizeText(payload.label).trim() || token.label;
+        changed = true;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(payload, 'tooltip')) {
+        if (!isDMUser) {
+            return res.status(403).json({ error: 'forbidden' });
+        }
+        token.tooltip = sanitizeText(payload.tooltip).trim();
+        changed = true;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(payload, 'color')) {
+        if (!isDMUser) {
+            return res.status(403).json({ error: 'forbidden' });
+        }
+        token.color = sanitizeColor(payload.color, token.color);
+        changed = true;
+    }
+
+    if (!changed) {
+        return res.json(presentMapToken(token));
+    }
+
+    const timestamp = new Date().toISOString();
+    token.updatedAt = timestamp;
+    map.updatedAt = timestamp;
+
+    await persistGame(db, game, {
+        reason: 'map:token:update',
+        actorId: req.session.userId,
+        broadcast: !map.paused,
+    });
+
+    res.json(presentMapToken(token));
+});
+
+app.delete('/api/games/:id/map/tokens/:tokenId', requireAuth, async (req, res) => {
+    const { id, tokenId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const map = ensureMapState(game);
+    const before = map.tokens.length;
+    map.tokens = map.tokens.filter((token) => token && token.id !== tokenId);
+    if (before === map.tokens.length) {
+        return res.status(404).json({ error: 'token_not_found' });
+    }
+
+    map.updatedAt = new Date().toISOString();
+    await persistGame(db, game, {
+        reason: 'map:token:remove',
+        actorId: req.session.userId,
+        broadcast: !map.paused,
+    });
     res.json({ ok: true });
 });
 

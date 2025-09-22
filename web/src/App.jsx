@@ -113,6 +113,11 @@ const DM_NAV = [
         description: "Monitor the party at a glance",
     },
     {
+        key: "map",
+        label: "Battle Map",
+        description: "Sketch encounters and track tokens",
+    },
+    {
         key: "sheet",
         label: "Character Sheets",
         description: "Review and update any adventurer",
@@ -169,6 +174,11 @@ const PLAYER_NAV = [
         key: "sheet",
         label: "My Character",
         description: "Update your stats and background",
+    },
+    {
+        key: "map",
+        label: "Battle Map",
+        description: "Follow encounters in real time",
     },
     {
         key: "party",
@@ -2218,6 +2228,8 @@ function GameView({
                         />
                     )}
 
+                    {tab === "map" && <MapTab game={game} me={me} />}
+
                     {tab === "items" && (
                         <ItemsTab
                             game={game}
@@ -2336,6 +2348,902 @@ function GameView({
                 <TradeOverlay game={game} me={me} realtime={realtime} />
             </div>
         </RealtimeContext.Provider>
+    );
+}
+
+const MAP_DEFAULT_SETTINGS = Object.freeze({
+    allowPlayerDrawing: false,
+    allowPlayerTokenMoves: false,
+});
+
+const MAP_BRUSH_COLORS = ['#f97316', '#38bdf8', '#a855f7', '#22c55e', '#f472b6'];
+const MAP_MAX_POINTS_PER_STROKE = 600;
+
+function mapClamp01(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return 0;
+    if (num <= 0) return 0;
+    if (num >= 1) return 1;
+    return num;
+}
+
+function normalizeClientMapPoint(point) {
+    if (!point) return null;
+    if (Array.isArray(point)) {
+        return { x: mapClamp01(point[0]), y: mapClamp01(point[1]) };
+    }
+    if (typeof point === 'object') {
+        return { x: mapClamp01(point.x), y: mapClamp01(point.y) };
+    }
+    return null;
+}
+
+function normalizeClientMapStroke(stroke) {
+    if (!stroke || typeof stroke !== 'object') return null;
+    const color = typeof stroke.color === 'string' && stroke.color ? stroke.color : MAP_BRUSH_COLORS[0];
+    const widthRaw = Number(stroke.size);
+    const size = Number.isFinite(widthRaw) ? Math.min(32, Math.max(1, widthRaw)) : 3;
+    const source = Array.isArray(stroke.points) ? stroke.points : [];
+    const points = [];
+    for (const point of source) {
+        const normalized = normalizeClientMapPoint(point);
+        if (!normalized) continue;
+        points.push(normalized);
+        if (points.length >= MAP_MAX_POINTS_PER_STROKE) break;
+    }
+    if (points.length < 2) return null;
+    return {
+        id: stroke.id || `stroke-${Math.random().toString(36).slice(2, 10)}`,
+        color,
+        size,
+        points,
+        createdAt: typeof stroke.createdAt === 'string' ? stroke.createdAt : null,
+    };
+}
+
+function normalizeClientMapToken(token) {
+    if (!token || typeof token !== 'object') return null;
+    const kind = typeof token.kind === 'string' ? token.kind : 'custom';
+    const labelRaw = typeof token.label === 'string' ? token.label : '';
+    const label = labelRaw.trim() || (kind === 'player' ? 'Player' : kind === 'demon' ? 'Demon' : 'Marker');
+    const tooltipRaw = typeof token.tooltip === 'string' ? token.tooltip : '';
+    const tooltipTrimmed = tooltipRaw.trim();
+    const tooltip = tooltipTrimmed || label;
+    const showTooltip = token.showTooltip !== false && !!tooltip;
+    let color = typeof token.color === 'string' && token.color ? token.color : '#a855f7';
+    if (!token.color) {
+        if (kind === 'player') color = '#38bdf8';
+        else if (kind === 'demon') color = '#f97316';
+    }
+    return {
+        id: token.id || `token-${Math.random().toString(36).slice(2, 10)}`,
+        kind,
+        refId: typeof token.refId === 'string' ? token.refId : null,
+        label,
+        tooltip,
+        rawTooltip: tooltipTrimmed,
+        showTooltip,
+        color,
+        x: mapClamp01(token.x),
+        y: mapClamp01(token.y),
+        ownerId: typeof token.ownerId === 'string' ? token.ownerId : null,
+    };
+}
+
+function normalizeClientMapState(map) {
+    if (!map || typeof map !== 'object') {
+        return {
+            strokes: [],
+            tokens: [],
+            settings: { ...MAP_DEFAULT_SETTINGS },
+            paused: false,
+            updatedAt: null,
+        };
+    }
+    const strokes = Array.isArray(map.strokes)
+        ? map.strokes.map((stroke) => normalizeClientMapStroke(stroke)).filter(Boolean)
+        : [];
+    const tokens = Array.isArray(map.tokens)
+        ? map.tokens.map((token) => normalizeClientMapToken(token)).filter(Boolean)
+        : [];
+    return {
+        strokes,
+        tokens,
+        settings: {
+            allowPlayerDrawing: !!map.settings?.allowPlayerDrawing,
+            allowPlayerTokenMoves: !!map.settings?.allowPlayerTokenMoves,
+        },
+        paused: !!map.paused,
+        updatedAt: typeof map.updatedAt === 'string' ? map.updatedAt : null,
+    };
+}
+
+function describePlayerName(player) {
+    if (!player) return 'Player';
+    const name = player.character?.name;
+    if (typeof name === 'string' && name.trim()) return name.trim();
+    if (player.username) return player.username;
+    if (player.userId) return `Player ${player.userId.slice(0, 6)}`;
+    return 'Player';
+}
+
+function describePlayerTooltip(player) {
+    if (!player) return '';
+    const parts = [];
+    if (player.username) parts.push(`@${player.username}`);
+    const character = player.character || {};
+    if (character.profile?.class) parts.push(character.profile.class);
+    if (character.resources?.level) parts.push(`Level ${character.resources.level}`);
+    if (
+        character.resources?.hp !== undefined &&
+        character.resources?.maxHP !== undefined &&
+        character.resources.maxHP !== ''
+    ) {
+        parts.push(`HP ${character.resources.hp}/${character.resources.maxHP}`);
+    }
+    return parts.join(' · ');
+}
+
+function describeDemonTooltip(demon) {
+    if (!demon) return '';
+    const parts = [];
+    if (demon.arcana) parts.push(demon.arcana);
+    if (demon.alignment) parts.push(demon.alignment);
+    if (demon.level) parts.push(`Level ${demon.level}`);
+    return parts.join(' · ');
+}
+
+function MapTab({ game, me }) {
+    const isDM = game.dmId === me.id;
+    const [mapState, setMapState] = useState(() => normalizeClientMapState(game?.map));
+    useEffect(() => {
+        setMapState(normalizeClientMapState(game?.map));
+    }, [game.id, game?.map]);
+
+    const [tool, setTool] = useState('select');
+    const [brushColor, setBrushColor] = useState(MAP_BRUSH_COLORS[0]);
+    const [brushSize, setBrushSize] = useState(4);
+    const [draftStroke, setDraftStroke] = useState(null);
+    const [isDrawing, setIsDrawing] = useState(false);
+    const canvasRef = useRef(null);
+    const boardRef = useRef(null);
+    const [boardSize, setBoardSize] = useState({ width: 0, height: 0 });
+    const [dragging, setDragging] = useState(null);
+    const [dragPreview, setDragPreview] = useState(null);
+    const [playerChoice, setPlayerChoice] = useState('');
+    const [demonChoice, setDemonChoice] = useState('');
+    const [demonQuery, setDemonQuery] = useState('');
+
+    useEffect(() => {
+        if (!isDM && tool === 'draw' && (!mapState.settings.allowPlayerDrawing || mapState.paused)) {
+            setTool('select');
+        }
+    }, [isDM, mapState.paused, mapState.settings.allowPlayerDrawing, tool]);
+
+    useEffect(() => {
+        const board = boardRef.current;
+        if (!board || typeof ResizeObserver === 'undefined') {
+            return undefined;
+        }
+        const observer = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                setBoardSize({
+                    width: entry.contentRect.width,
+                    height: entry.contentRect.height,
+                });
+            }
+        });
+        observer.observe(board);
+        setBoardSize({ width: board.clientWidth, height: board.clientHeight });
+        return () => observer.disconnect();
+    }, []);
+
+    const canDraw = isDM || (!mapState.paused && mapState.settings.allowPlayerDrawing);
+    const canPaint = canDraw && tool === 'draw';
+    const tokenLayerPointerEvents = canPaint ? 'none' : 'auto';
+
+    const playerMap = useMemo(() => {
+        const map = new Map();
+        if (Array.isArray(game.players)) {
+            for (const player of game.players) {
+                if (!player || !player.userId) continue;
+                map.set(player.userId, player);
+            }
+        }
+        return map;
+    }, [game.players]);
+
+    const demonMap = useMemo(() => {
+        const map = new Map();
+        if (Array.isArray(game.demons)) {
+            for (const demon of game.demons) {
+                if (!demon || !demon.id) continue;
+                map.set(demon.id, demon);
+            }
+        }
+        return map;
+    }, [game.demons]);
+
+    const playerTokens = useMemo(
+        () => mapState.tokens.filter((token) => token.kind === 'player'),
+        [mapState.tokens]
+    );
+    const demonTokens = useMemo(
+        () => mapState.tokens.filter((token) => token.kind === 'demon'),
+        [mapState.tokens]
+    );
+
+    const availablePlayers = useMemo(() => {
+        if (!isDM) return [];
+        const taken = new Set(playerTokens.map((token) => token.refId));
+        return (game.players || [])
+            .filter(
+                (player) =>
+                    player &&
+                    player.userId &&
+                    (player.role || '').toLowerCase() !== 'dm' &&
+                    !taken.has(player.userId)
+            )
+            .map((player) => ({
+                id: player.userId,
+                label: describePlayerName(player),
+                subtitle: describePlayerTooltip(player),
+            }));
+    }, [game.players, isDM, playerTokens]);
+
+    const demonOptions = useMemo(() => {
+        if (!isDM) return [];
+        const term = demonQuery.trim().toLowerCase();
+        return (game.demons || [])
+            .filter(
+                (demon) =>
+                    demon &&
+                    demon.id &&
+                    (!term || (demon.name || '').toLowerCase().includes(term))
+            )
+            .slice(0, 25)
+            .map((demon) => ({
+                id: demon.id,
+                label: demon.name || 'Demon',
+                subtitle: describeDemonTooltip(demon),
+            }));
+    }, [demonQuery, game.demons, isDM]);
+
+    const getPointerPosition = useCallback(
+        (event) => {
+            const board = boardRef.current;
+            if (!board) return { x: 0, y: 0 };
+            const rect = board.getBoundingClientRect();
+            const clientX = event.clientX ?? (event.touches?.[0]?.clientX ?? 0);
+            const clientY = event.clientY ?? (event.touches?.[0]?.clientY ?? 0);
+            const x = rect.width ? (clientX - rect.left) / rect.width : 0;
+            const y = rect.height ? (clientY - rect.top) / rect.height : 0;
+            return { x: mapClamp01(x), y: mapClamp01(y) };
+        },
+        []
+    );
+
+    const sendStroke = useCallback(
+        async (strokePayload) => {
+            try {
+                const response = await Games.addMapStroke(game.id, strokePayload);
+                const normalized = normalizeClientMapStroke(response);
+                if (normalized) {
+                    setMapState((prev) => ({
+                        ...prev,
+                        strokes: prev.strokes.concat(normalized),
+                        updatedAt: response?.createdAt || prev.updatedAt,
+                    }));
+                }
+            } catch (err) {
+                alert(err.message);
+            }
+        },
+        [game.id]
+    );
+
+    const completeStroke = useCallback(() => {
+        setDraftStroke((current) => {
+            if (!current || current.points.length < 2) {
+                setIsDrawing(false);
+                return null;
+            }
+            sendStroke({
+                color: current.color,
+                size: current.size,
+                points: current.points,
+            });
+            setIsDrawing(false);
+            return null;
+        });
+    }, [sendStroke]);
+
+    const handleCanvasPointerDown = useCallback(
+        (event) => {
+            if (!canPaint) return;
+            event.preventDefault();
+            const { x, y } = getPointerPosition(event);
+            setDraftStroke({
+                id: `draft-${Date.now()}`,
+                color: brushColor,
+                size: brushSize,
+                points: [{ x, y }],
+            });
+            setIsDrawing(true);
+            const canvas = canvasRef.current;
+            if (canvas?.setPointerCapture) {
+                try {
+                    canvas.setPointerCapture(event.pointerId);
+                } catch {
+                    // ignore capture errors
+                }
+            }
+        },
+        [brushColor, brushSize, canPaint, getPointerPosition]
+    );
+
+    const handleCanvasPointerMove = useCallback(
+        (event) => {
+            if (!isDrawing) return;
+            const { x, y } = getPointerPosition(event);
+            setDraftStroke((prev) => {
+                if (!prev) return prev;
+                if (prev.points.length >= MAP_MAX_POINTS_PER_STROKE) return prev;
+                const last = prev.points[prev.points.length - 1];
+                if (last && Math.abs(last.x - x) < 0.002 && Math.abs(last.y - y) < 0.002) {
+                    return prev;
+                }
+                return { ...prev, points: prev.points.concat({ x, y }) };
+            });
+        },
+        [getPointerPosition, isDrawing]
+    );
+
+    const handleCanvasPointerFinish = useCallback(
+        (event) => {
+            if (canvasRef.current?.releasePointerCapture) {
+                try {
+                    canvasRef.current.releasePointerCapture(event.pointerId);
+                } catch {
+                    // ignore release errors
+                }
+            }
+            if (isDrawing || draftStroke) {
+                completeStroke();
+            }
+        },
+        [completeStroke, draftStroke, isDrawing]
+    );
+
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        const board = boardRef.current;
+        if (!canvas || !board) return;
+        const width = boardSize.width || board.clientWidth;
+        const height = boardSize.height || board.clientHeight;
+        if (!width || !height) return;
+        const dpr = window.devicePixelRatio || 1;
+        if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
+            canvas.width = Math.floor(width * dpr);
+            canvas.height = Math.floor(height * dpr);
+        }
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.save();
+        ctx.scale(dpr, dpr);
+        ctx.clearRect(0, 0, width, height);
+        const strokes = [...mapState.strokes];
+        if (draftStroke) strokes.push(draftStroke);
+        for (const stroke of strokes) {
+            if (!stroke || stroke.points.length < 2) continue;
+            ctx.beginPath();
+            ctx.strokeStyle = stroke.color || MAP_BRUSH_COLORS[0];
+            ctx.lineWidth = stroke.size || 3;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            const first = stroke.points[0];
+            ctx.moveTo(first.x * width, first.y * height);
+            for (let i = 1; i < stroke.points.length; i += 1) {
+                const point = stroke.points[i];
+                ctx.lineTo(point.x * width, point.y * height);
+            }
+            ctx.stroke();
+        }
+        ctx.restore();
+    }, [boardSize.height, boardSize.width, draftStroke, mapState.strokes]);
+
+    const canMoveToken = useCallback(
+        (token) => {
+            if (!token) return false;
+            if (isDM) return true;
+            if (mapState.paused) return false;
+            if (!mapState.settings.allowPlayerTokenMoves) return false;
+            return token.ownerId === me.id;
+        },
+        [isDM, mapState.paused, mapState.settings.allowPlayerTokenMoves, me.id]
+    );
+
+    const handleTokenPointerDown = useCallback(
+        (token, event) => {
+            if (!canMoveToken(token)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const target = event.currentTarget;
+            if (target?.setPointerCapture) {
+                try {
+                    target.setPointerCapture(event.pointerId);
+                } catch {
+                    // ignore capture errors
+                }
+            }
+            const { x, y } = getPointerPosition(event);
+            setDragging({ id: token.id, pointerId: event.pointerId });
+            setDragPreview({ id: token.id, x, y });
+        },
+        [canMoveToken, getPointerPosition]
+    );
+
+    const handleTokenPointerMove = useCallback(
+        (token, event) => {
+            if (!dragging || dragging.id !== token.id) return;
+            const { x, y } = getPointerPosition(event);
+            setDragPreview({ id: token.id, x, y });
+        },
+        [dragging, getPointerPosition]
+    );
+
+    const handleTokenPointerUp = useCallback(
+        (token, event) => {
+            if (!dragging || dragging.id !== token.id) return;
+            const target = event.currentTarget;
+            if (target?.releasePointerCapture) {
+                try {
+                    target.releasePointerCapture(dragging.pointerId);
+                } catch {
+                    // ignore release errors
+                }
+            }
+            const coords =
+                dragPreview && dragPreview.id === token.id
+                    ? { x: dragPreview.x, y: dragPreview.y }
+                    : { x: token.x, y: token.y };
+            setDragging(null);
+            setDragPreview(null);
+            (async () => {
+                try {
+                    const response = await Games.updateMapToken(game.id, token.id, coords);
+                    const normalized = normalizeClientMapToken(response);
+                    setMapState((prev) => ({
+                        ...prev,
+                        tokens: prev.tokens.map((entry) =>
+                            entry.id === token.id
+                                ? normalized || { ...entry, x: coords.x, y: coords.y }
+                                : entry
+                        ),
+                        updatedAt: response?.updatedAt || prev.updatedAt,
+                    }));
+                } catch (err) {
+                    alert(err.message);
+                }
+            })();
+        },
+        [dragPreview, dragging, game.id]
+    );
+
+    const handleToggleTooltip = useCallback(
+        async (token, nextValue) => {
+            try {
+                const response = await Games.updateMapToken(game.id, token.id, {
+                    showTooltip: nextValue,
+                });
+                const normalized = normalizeClientMapToken(response);
+                if (normalized) {
+                    setMapState((prev) => ({
+                        ...prev,
+                        tokens: prev.tokens.map((entry) =>
+                            entry.id === normalized.id ? normalized : entry
+                        ),
+                        updatedAt: response?.updatedAt || prev.updatedAt,
+                    }));
+                }
+            } catch (err) {
+                alert(err.message);
+            }
+        },
+        [game.id]
+    );
+
+    const handleRemoveToken = useCallback(
+        async (token) => {
+            if (!isDM) return;
+            if (!confirm('Remove this token from the map?')) return;
+            try {
+                await Games.deleteMapToken(game.id, token.id);
+                setMapState((prev) => ({
+                    ...prev,
+                    tokens: prev.tokens.filter((entry) => entry.id !== token.id),
+                    updatedAt: new Date().toISOString(),
+                }));
+            } catch (err) {
+                alert(err.message);
+            }
+        },
+        [game.id, isDM]
+    );
+
+    const handleAddPlayerToken = useCallback(async () => {
+        if (!playerChoice) return;
+        try {
+            const response = await Games.addMapToken(game.id, {
+                kind: 'player',
+                refId: playerChoice,
+            });
+            const normalized = normalizeClientMapToken(response);
+            if (normalized) {
+                setMapState((prev) => ({
+                    ...prev,
+                    tokens: prev.tokens.concat(normalized),
+                    updatedAt: response?.updatedAt || prev.updatedAt,
+                }));
+            }
+            setPlayerChoice('');
+        } catch (err) {
+            alert(err.message);
+        }
+    }, [game.id, playerChoice]);
+
+    const handleAddDemonToken = useCallback(async () => {
+        if (!demonChoice) return;
+        try {
+            const response = await Games.addMapToken(game.id, {
+                kind: 'demon',
+                refId: demonChoice,
+            });
+            const normalized = normalizeClientMapToken(response);
+            if (normalized) {
+                setMapState((prev) => ({
+                    ...prev,
+                    tokens: prev.tokens.concat(normalized),
+                    updatedAt: response?.updatedAt || prev.updatedAt,
+                }));
+            }
+            setDemonChoice('');
+        } catch (err) {
+            alert(err.message);
+        }
+    }, [demonChoice, game.id]);
+
+    const handleToggleAllowDrawing = useCallback(async () => {
+        try {
+            const updated = await Games.updateMapSettings(game.id, {
+                allowPlayerDrawing: !mapState.settings.allowPlayerDrawing,
+            });
+            setMapState(normalizeClientMapState(updated));
+        } catch (err) {
+            alert(err.message);
+        }
+    }, [game.id, mapState.settings.allowPlayerDrawing]);
+
+    const handleToggleAllowMoves = useCallback(async () => {
+        try {
+            const updated = await Games.updateMapSettings(game.id, {
+                allowPlayerTokenMoves: !mapState.settings.allowPlayerTokenMoves,
+            });
+            setMapState(normalizeClientMapState(updated));
+        } catch (err) {
+            alert(err.message);
+        }
+    }, [game.id, mapState.settings.allowPlayerTokenMoves]);
+
+    const handleTogglePause = useCallback(async () => {
+        try {
+            const updated = await Games.updateMapSettings(game.id, { paused: !mapState.paused });
+            setMapState(normalizeClientMapState(updated));
+        } catch (err) {
+            alert(err.message);
+        }
+    }, [game.id, mapState.paused]);
+
+    const handleClearStrokes = useCallback(async () => {
+        if (!isDM) return;
+        if (!confirm('Clear all drawings from the map?')) return;
+        try {
+            await Games.clearMapStrokes(game.id);
+            setMapState((prev) => ({
+                ...prev,
+                strokes: [],
+                updatedAt: new Date().toISOString(),
+            }));
+        } catch (err) {
+            alert(err.message);
+        }
+    }, [game.id, isDM]);
+
+    return (
+        <div className="map-tab">
+            <div className="map-toolbar card">
+                <div className="map-toolbar__row">
+                    <div className="map-toolbar__tools">
+                        <span className="text-small">Tool</span>
+                        <div className="map-toolbar__buttons">
+                            <button
+                                type="button"
+                                className={`btn btn-small${tool === 'select' ? ' is-active' : ' secondary'}`}
+                                onClick={() => setTool('select')}
+                            >
+                                Select
+                            </button>
+                            <button
+                                type="button"
+                                className={`btn btn-small${tool === 'draw' ? ' is-active' : ' secondary'}`}
+                                onClick={() => setTool('draw')}
+                                disabled={!canDraw}
+                            >
+                                Draw
+                            </button>
+                        </div>
+                    </div>
+                    <div className="map-toolbar__status">
+                        <span className={`pill ${mapState.paused ? 'warn' : 'success'}`}>
+                            {mapState.paused ? 'Updates paused' : 'Live updates'}
+                        </span>
+                        {isDM && (
+                            <button type="button" className="btn btn-small" onClick={handleTogglePause}>
+                                {mapState.paused ? 'Resume sharing' : 'Pause updates'}
+                            </button>
+                        )}
+                    </div>
+                </div>
+                {canDraw && (
+                    <div className="map-toolbar__row map-toolbar__brush">
+                        <div>
+                            <span className="text-small">Brush color</span>
+                            <div className="map-toolbar__colors">
+                                {MAP_BRUSH_COLORS.map((color) => (
+                                    <button
+                                        key={color}
+                                        type="button"
+                                        className={`map-color${brushColor === color ? ' is-active' : ''}`}
+                                        style={{ background: color }}
+                                        onClick={() => setBrushColor(color)}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                        <label className="map-brush-size">
+                            <span className="text-small">Brush size</span>
+                            <input
+                                type="range"
+                                min="2"
+                                max="18"
+                                value={brushSize}
+                                onChange={(event) => setBrushSize(Number(event.target.value) || 4)}
+                            />
+                        </label>
+                    </div>
+                )}
+                {isDM && (
+                    <div className="map-toolbar__row map-toolbar__settings">
+                        <label className="perm-toggle">
+                            <input
+                                type="checkbox"
+                                checked={mapState.settings.allowPlayerDrawing}
+                                onChange={handleToggleAllowDrawing}
+                            />
+                            <span className="perm-toggle__text">Allow players to draw</span>
+                        </label>
+                        <label className="perm-toggle">
+                            <input
+                                type="checkbox"
+                                checked={mapState.settings.allowPlayerTokenMoves}
+                                onChange={handleToggleAllowMoves}
+                            />
+                            <span className="perm-toggle__text">Allow players to move their token</span>
+                        </label>
+                        <button
+                            type="button"
+                            className="btn ghost btn-small"
+                            onClick={handleClearStrokes}
+                            disabled={mapState.strokes.length === 0}
+                        >
+                            Clear drawings
+                        </button>
+                    </div>
+                )}
+            </div>
+            <div className="map-layout">
+                <div className="map-board card" ref={boardRef}>
+                    <canvas
+                        ref={canvasRef}
+                        className="map-board__canvas"
+                        onPointerDown={handleCanvasPointerDown}
+                        onPointerMove={handleCanvasPointerMove}
+                        onPointerUp={handleCanvasPointerFinish}
+                        onPointerCancel={handleCanvasPointerFinish}
+                        onPointerLeave={handleCanvasPointerFinish}
+                    />
+                    <div className="map-board__tokens" style={{ pointerEvents: tokenLayerPointerEvents }}>
+                        {mapState.tokens.map((token) => {
+                            const player = token.kind === 'player' ? playerMap.get(token.refId) : null;
+                            const demon = token.kind === 'demon' ? demonMap.get(token.refId) : null;
+                            const display = dragPreview && dragPreview.id === token.id
+                                ? { ...token, x: dragPreview.x, y: dragPreview.y }
+                                : token;
+                            const showTooltip = token.showTooltip && token.tooltip;
+                            const canDrag = canMoveToken(token);
+                            const label = token.label || (player ? describePlayerName(player) : demon ? demon.name : 'Marker');
+                            return (
+                                <button
+                                    key={token.id}
+                                    type="button"
+                                    className={`map-token map-token--${token.kind}${canDrag ? ' is-draggable' : ''}`}
+                                    style={{ left: `${display.x * 100}%`, top: `${display.y * 100}%`, background: token.color }}
+                                    onPointerDown={(event) => handleTokenPointerDown(token, event)}
+                                    onPointerMove={(event) => handleTokenPointerMove(token, event)}
+                                    onPointerUp={(event) => handleTokenPointerUp(token, event)}
+                                    onPointerCancel={(event) => handleTokenPointerUp(token, event)}
+                                >
+                                    <span className="map-token__label">{label.slice(0, 2).toUpperCase()}</span>
+                                    {showTooltip && <span className="map-token__tooltip">{token.tooltip}</span>}
+                                </button>
+                            );
+                        })}
+                    </div>
+                    {mapState.paused && !isDM && (
+                        <div className="map-board__overlay">
+                            <div className="map-board__overlay-content">
+                                <span className="pill warn">Updates paused</span>
+                                <p>The DM is preparing the battlefield. Drawings and token moves will appear once play resumes.</p>
+                            </div>
+                        </div>
+                    )}
+                </div>
+                <aside className="map-sidebar">
+                    <div className="map-panel card">
+                        <h3>Player tokens</h3>
+                        {isDM && availablePlayers.length > 0 && (
+                            <div className="map-panel__add">
+                                <label className="text-small" htmlFor="map-add-player">Add party member</label>
+                                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                                    <select
+                                        id="map-add-player"
+                                        value={playerChoice}
+                                        onChange={(event) => setPlayerChoice(event.target.value)}
+                                    >
+                                        <option value="">Select a player…</option>
+                                        {availablePlayers.map((player) => (
+                                            <option key={player.id} value={player.id}>
+                                                {player.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <button
+                                        type="button"
+                                        className="btn btn-small"
+                                        onClick={handleAddPlayerToken}
+                                        disabled={!playerChoice}
+                                    >
+                                        Place token
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                        {playerTokens.length === 0 ? (
+                            <p className="map-empty text-muted">No party members on the board yet.</p>
+                        ) : (
+                            <div className="list">
+                                {playerTokens.map((token) => {
+                                    const player = playerMap.get(token.refId);
+                                    const label = token.label || describePlayerName(player);
+                                    const subtitle = describePlayerTooltip(player);
+                                    return (
+                                        <div key={token.id} className="map-token-row">
+                                            <div>
+                                                <strong>{label}</strong>
+                                                {subtitle && <div className="text-muted text-small">{subtitle}</div>}
+                                            </div>
+                                            {isDM && (
+                                                <div className="row" style={{ gap: 8 }}>
+                                                    <label className="perm-toggle">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={token.showTooltip}
+                                                            onChange={(event) => handleToggleTooltip(token, event.target.checked)}
+                                                        />
+                                                        <span className="perm-toggle__text">Tooltip</span>
+                                                    </label>
+                                                    <button
+                                                        type="button"
+                                                        className="btn ghost btn-small"
+                                                        onClick={() => handleRemoveToken(token)}
+                                                    >
+                                                        Remove
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                    <div className="map-panel card">
+                        <h3>Companion tokens</h3>
+                        {isDM && (
+                            <div className="map-panel__add">
+                                <label className="text-small" htmlFor="map-demon-search">Search codex</label>
+                                <input
+                                    id="map-demon-search"
+                                    type="text"
+                                    value={demonQuery}
+                                    onChange={(event) => setDemonQuery(event.target.value)}
+                                    placeholder="Filter demons…"
+                                />
+                                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                                    <select
+                                        value={demonChoice}
+                                        onChange={(event) => setDemonChoice(event.target.value)}
+                                    >
+                                        <option value="">Select a demon…</option>
+                                        {demonOptions.map((option) => (
+                                            <option key={option.id} value={option.id}>
+                                                {option.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <button
+                                        type="button"
+                                        className="btn btn-small"
+                                        onClick={handleAddDemonToken}
+                                        disabled={!demonChoice}
+                                    >
+                                        Summon
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                        {demonTokens.length === 0 ? (
+                            <p className="map-empty text-muted">No companions placed.</p>
+                        ) : (
+                            <div className="list">
+                                {demonTokens.map((token) => {
+                                    const demon = demonMap.get(token.refId);
+                                    const label = token.label || demon?.name || 'Demon';
+                                    const subtitle = describeDemonTooltip(demon);
+                                    return (
+                                        <div key={token.id} className="map-token-row">
+                                            <div>
+                                                <strong>{label}</strong>
+                                                {subtitle && <div className="text-muted text-small">{subtitle}</div>}
+                                            </div>
+                                            {isDM && (
+                                                <div className="row" style={{ gap: 8 }}>
+                                                    <label className="perm-toggle">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={token.showTooltip}
+                                                            onChange={(event) => handleToggleTooltip(token, event.target.checked)}
+                                                        />
+                                                        <span className="perm-toggle__text">Tooltip</span>
+                                                    </label>
+                                                    <button
+                                                        type="button"
+                                                        className="btn ghost btn-small"
+                                                        onClick={() => handleRemoveToken(token)}
+                                                    >
+                                                        Remove
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                </aside>
+            </div>
+        </div>
     );
 }
 
