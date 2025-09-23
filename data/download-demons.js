@@ -6,6 +6,14 @@ import { fileURLToPath } from "url";
 import pLimit from "p-limit";           // npm i p-limit
 import { chromium } from "playwright";  // npm i -D playwright
 
+const MIN_HUMAN_DELAY_MS = 1_200;
+const MAX_HUMAN_DELAY_MS = 3_400;
+const POST_SAVE_DELAY_MS = [600, 1_200];
+const MAX_ATTEMPTS = 3;
+const RETRY_DELAY_BASE_MS = 2_000;
+const RETRY_DELAY_JITTER_MS = 2_500;
+const RETRY_GROWTH_MS = 1_500;
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -37,7 +45,42 @@ function extFromContentType(ct) {
     return null;
 }
 
-async function downloadWithPage(context, demon) {
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function randomBetween(min, max) {
+    return min + Math.random() * (max - min);
+}
+
+async function humanDelay(min = MIN_HUMAN_DELAY_MS, max = MAX_HUMAN_DELAY_MS) {
+    const delay = randomBetween(min, max);
+    await sleep(delay);
+    return delay;
+}
+
+function shouldRetry(status, reason) {
+    if (!status && !reason) return false;
+    const retryableStatuses = new Set([403, 408, 409, 425, 429, 500, 502, 503, 504]);
+    if (status && retryableStatuses.has(status)) return true;
+
+    if (reason) {
+        const lower = reason.toLowerCase();
+        if (
+            lower.includes("cloudflare") ||
+            lower.includes("timeout") ||
+            lower.includes("etimedout") ||
+            lower.includes("navigation") ||
+            lower.includes("net::err")
+        ) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+async function attemptDownload(context, demon) {
     const { name, image } = demon || {};
     if (!name || !image) return { ok: false, name, reason: "missing fields" };
 
@@ -48,8 +91,9 @@ async function downloadWithPage(context, demon) {
     const page = await context.newPage();
     page.setDefaultTimeout(TIMEOUT_MS);
 
+    let status = null;
+
     try {
-        // Look like a real browser visit from their site.
         await page.setExtraHTTPHeaders({
             Referer: "https://megatenwiki.com/",
             Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
@@ -61,9 +105,20 @@ async function downloadWithPage(context, demon) {
             "Chrome/120.0.0.0 Safari/537.36"
         );
 
+        await humanDelay();
+
         const resp = await page.goto(image, { waitUntil: "networkidle" });
         if (!resp) throw new Error("No response");
-        if (resp.status() !== 200) throw new Error(`HTTP ${resp.status()}`);
+
+        status = resp.status();
+        if (status !== 200) {
+            const err = new Error(`HTTP ${status}`);
+            err.status = status;
+            throw err;
+        }
+
+        await page.waitForLoadState("networkidle").catch(() => {});
+        await humanDelay(650, 1_500);
 
         let ext = extFromContentType(resp.headers()["content-type"]);
         if (!ext) {
@@ -74,14 +129,59 @@ async function downloadWithPage(context, demon) {
         const outPath = path.join(demonDir, `${safeName}${ext}`);
         const buff = await resp.body();
         fs.writeFileSync(outPath, buff);
-        console.log(`✅ Saved ${name} -> ${outPath}`);
+
         return { ok: true, name, path: outPath };
     } catch (err) {
-        console.error(`❌ Failed for ${name}: ${err.message}`);
-        return { ok: false, name, reason: err.message };
+        return {
+            ok: false,
+            name,
+            reason: err?.message || "unknown error",
+            status: err?.status ?? status,
+        };
     } finally {
         await page.close().catch(() => {});
     }
+}
+
+async function downloadDemon(context, demon) {
+    const { name } = demon || {};
+    if (!name || !demon?.image) {
+        return { ok: false, name, reason: "missing fields" };
+    }
+
+    let lastResult = { ok: false, name, reason: "unknown" };
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+        await humanDelay();
+        const result = await attemptDownload(context, demon);
+
+        if (result.ok) {
+            console.log(`✅ Saved ${result.name} -> ${result.path}`);
+            await humanDelay(...POST_SAVE_DELAY_MS);
+            return result;
+        }
+
+        const { reason, status } = result;
+        const retry = attempt < MAX_ATTEMPTS && shouldRetry(status, reason);
+        const statusInfo = status ? ` [${status}]` : "";
+        const prefix = retry ? "⚠️" : "❌";
+        console.warn(`${prefix} Failed for ${result.name} (attempt ${attempt}/${MAX_ATTEMPTS}): ${reason}${statusInfo}`);
+
+        lastResult = result;
+
+        if (!retry) {
+            return result;
+        }
+
+        const waitMs =
+            RETRY_DELAY_BASE_MS +
+            attempt * RETRY_GROWTH_MS +
+            Math.floor(Math.random() * RETRY_DELAY_JITTER_MS);
+        console.warn(`   Waiting ${(waitMs / 1000).toFixed(1)}s before retry...`);
+        await sleep(waitMs);
+    }
+
+    return lastResult;
 }
 
 async function main() {
@@ -107,7 +207,7 @@ async function main() {
     } catch {}
 
     const limit = pLimit(CONCURRENCY);
-    const tasks = demons.map((d) => limit(() => downloadWithPage(context, d)));
+    const tasks = demons.map((d) => limit(() => downloadDemon(context, d)));
     const results = await Promise.all(tasks);
 
     const ok = results.filter((r) => r.ok).length;
