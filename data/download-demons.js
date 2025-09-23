@@ -9,6 +9,7 @@ const __dirname = path.dirname(__filename);
 
 // ==== CONFIG ====
 const DEFAULT_API_BASE = "http://localhost:3000/api/personas";
+const DEFAULT_FALLBACK_BASE = "https://persona-compendium.onrender.com/personas";
 const OUTPUT_DIR = path.resolve(__dirname, "demon_images");
 const LOCAL_DEMONS_PATH = path.resolve(__dirname, "demons.json");
 const CONCURRENCY = 6;
@@ -26,6 +27,10 @@ function stripTrailingSlashes(value) {
 
 const personaApiBaseRaw = process.env.PERSONA_API_BASE || DEFAULT_API_BASE;
 const PERSONA_API_BASE = stripTrailingSlashes(personaApiBaseRaw) || DEFAULT_API_BASE;
+const personaFallbackBaseRaw =
+    process.env.PERSONA_FALLBACK_BASE || DEFAULT_FALLBACK_BASE;
+const PERSONA_FALLBACK_BASE =
+    stripTrailingSlashes(personaFallbackBaseRaw) || DEFAULT_FALLBACK_BASE;
 const imageProxyBaseRaw = process.env.PERSONA_IMAGE_PROXY || `${PERSONA_API_BASE}/image-proxy`;
 const IMAGE_PROXY_ENDPOINT = stripTrailingSlashes(imageProxyBaseRaw) || `${PERSONA_API_BASE}/image-proxy`;
 
@@ -123,10 +128,45 @@ async function fetchAllSlugs() {
 }
 
 async function fetchPersona(slug) {
-    // Use your local proxy (preferred) so you can add caching/rate-limits later
-    const url = `${PERSONA_API_BASE}/${encodeURIComponent(slug)}`;
-    const r = await axios.get(url, { timeout: 30000 });
-    return r.data;
+    // Prefer the local API when available but fall back to the upstream source
+    const attempts = [];
+
+    async function tryFetch(base, label) {
+        if (!base) return null;
+        const url = `${base}/${encodeURIComponent(slug)}`;
+        try {
+            const response = await axios.get(url, { timeout: 30000 });
+            if (response?.data) {
+                if (label === "fallback") {
+                    console.warn(`ℹ️ Using fallback persona API for ${slug}.`);
+                }
+                return response.data;
+            }
+            throw new Error("empty response body");
+        } catch (error) {
+            const status = error?.response?.status;
+            const statusText = error?.response?.statusText;
+            const message =
+                status && statusText
+                    ? `${status} ${statusText}`
+                    : status
+                      ? `HTTP ${status}`
+                      : error?.message || "unknown error";
+            attempts.push(`${label}: ${message}`);
+            return null;
+        }
+    }
+
+    const local = await tryFetch(PERSONA_API_BASE, "local");
+    if (local) return local;
+
+    if (PERSONA_FALLBACK_BASE && PERSONA_FALLBACK_BASE !== PERSONA_API_BASE) {
+        const fallback = await tryFetch(PERSONA_FALLBACK_BASE, "fallback");
+        if (fallback) return fallback;
+    }
+
+    const details = attempts.length > 0 ? ` (${attempts.join(", ")})` : "";
+    throw new Error(`failed to fetch persona${details}`);
 }
 
 function normalizeImageUrl(raw) {
