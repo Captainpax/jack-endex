@@ -1,4 +1,4 @@
-// data/download-demons-playwright.js
+// data/download-demons.js
 /* eslint-env node */
 import fs from "fs";
 import path from "path";
@@ -28,6 +28,7 @@ const demons = JSON.parse(fs.readFileSync(DEMONS_JSON_PATH, "utf8"));
 function slugify(name) {
     return String(name)
         .trim()
+        // eslint-disable-next-line no-control-regex
         .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
         .replace(/\s+/g, " ")
         .replace(/^\.+$/, "_")
@@ -48,11 +49,9 @@ function extFromContentType(ct) {
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
-
 function randomBetween(min, max) {
     return min + Math.random() * (max - min);
 }
-
 async function humanDelay(min = MIN_HUMAN_DELAY_MS, max = MAX_HUMAN_DELAY_MS) {
     const delay = randomBetween(min, max);
     await sleep(delay);
@@ -61,8 +60,8 @@ async function humanDelay(min = MIN_HUMAN_DELAY_MS, max = MAX_HUMAN_DELAY_MS) {
 
 function shouldRetry(status, reason) {
     if (!status && !reason) return false;
-    const retryableStatuses = new Set([403, 408, 409, 425, 429, 500, 502, 503, 504]);
-    if (status && retryableStatuses.has(status)) return true;
+    const retryable = new Set([403, 408, 409, 425, 429, 500, 502, 503, 504]);
+    if (status && retryable.has(status)) return true;
 
     if (reason) {
         const lower = reason.toLowerCase();
@@ -76,8 +75,14 @@ function shouldRetry(status, reason) {
             return true;
         }
     }
-
     return false;
+}
+
+function alreadyHasFile(dir, base) {
+    const candidates = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"].map(
+        (ext) => path.join(dir, `${base}${ext}`)
+    );
+    return candidates.find((p) => fs.existsSync(p)) || null;
 }
 
 async function attemptDownload(context, demon) {
@@ -88,25 +93,21 @@ async function attemptDownload(context, demon) {
     const demonDir = path.join(OUTPUT_DIR, safeName);
     if (!fs.existsSync(demonDir)) fs.mkdirSync(demonDir, { recursive: true });
 
+    // skip if file already present
+    const pre = alreadyHasFile(demonDir, safeName);
+    if (pre) {
+        return { ok: true, name, path: pre, skipped: true };
+    }
+
     const page = await context.newPage();
     page.setDefaultTimeout(TIMEOUT_MS);
 
     let status = null;
 
     try {
-        await page.setExtraHTTPHeaders({
-            Referer: "https://megatenwiki.com/",
-            Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-            "Cache-Control": "no-cache",
-        });
-
-        await page.setUserAgent(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
-            "Chrome/120.0.0.0 Safari/537.36"
-        );
-
         await humanDelay();
 
+        // Go straight to the image URL; context carries UA + headers
         const resp = await page.goto(image, { waitUntil: "networkidle" });
         if (!resp) throw new Error("No response");
 
@@ -155,9 +156,13 @@ async function downloadDemon(context, demon) {
         await humanDelay();
         const result = await attemptDownload(context, demon);
 
-        if (result.ok) {
+        if (result.ok && !result.skipped) {
             console.log(`✅ Saved ${result.name} -> ${result.path}`);
             await humanDelay(...POST_SAVE_DELAY_MS);
+            return result;
+        }
+        if (result.ok && result.skipped) {
+            console.log(`⏭️  Skipped ${result.name} (already exists at ${result.path})`);
             return result;
         }
 
@@ -169,9 +174,7 @@ async function downloadDemon(context, demon) {
 
         lastResult = result;
 
-        if (!retry) {
-            return result;
-        }
+        if (!retry) return result;
 
         const waitMs =
             RETRY_DELAY_BASE_MS +
@@ -192,11 +195,18 @@ async function main() {
     if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
     const browser = await chromium.launch({ headless: true });
+
+    // Set UA + headers on the CONTEXT (not the page)
     const context = await browser.newContext({
         baseURL: "https://megatenwiki.com",
         userAgent:
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
             "Chrome/120.0.0.0 Safari/537.36",
+    });
+    await context.setExtraHTTPHeaders({
+        Referer: "https://megatenwiki.com/",
+        Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "Cache-Control": "no-cache",
     });
 
     // Warm-up to pick up cookies/tokens if needed
@@ -204,11 +214,10 @@ async function main() {
         const warm = await context.newPage();
         await warm.goto("https://megatenwiki.com/", { waitUntil: "domcontentloaded" });
         await warm.close();
-    } catch {}
+    } catch { /* empty */ }
 
     const limit = pLimit(CONCURRENCY);
-    const tasks = demons.map((d) => limit(() => downloadDemon(context, d)));
-    const results = await Promise.all(tasks);
+    const results = await Promise.all(demons.map((d) => limit(() => downloadDemon(context, d))));
 
     const ok = results.filter((r) => r.ok).length;
     const fail = results.length - ok;
