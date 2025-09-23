@@ -8,9 +8,38 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // ==== CONFIG ====
-const LOCAL_API_BASE = process.env.PERSONA_API_BASE || "http://localhost:3000/api/personas";
+const DEFAULT_API_BASE = "http://localhost:3000/api/personas";
 const OUTPUT_DIR = path.resolve(__dirname, "demon_images");
 const CONCURRENCY = 6;
+const DEMON_IMAGE_REFERER =
+    process.env.DEMON_IMAGE_REFERER || "https://megatenwiki.com/wiki/Main_Page";
+
+function stripTrailingSlashes(value) {
+    if (typeof value !== "string") return "";
+    let out = value;
+    while (out.endsWith("/")) {
+        out = out.slice(0, -1);
+    }
+    return out;
+}
+
+const personaApiBaseRaw = process.env.PERSONA_API_BASE || DEFAULT_API_BASE;
+const PERSONA_API_BASE = stripTrailingSlashes(personaApiBaseRaw) || DEFAULT_API_BASE;
+const imageProxyBaseRaw = process.env.PERSONA_IMAGE_PROXY || `${PERSONA_API_BASE}/image-proxy`;
+const IMAGE_PROXY_ENDPOINT = stripTrailingSlashes(imageProxyBaseRaw) || `${PERSONA_API_BASE}/image-proxy`;
+
+const BROWSER_HEADERS = {
+    "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+    Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Cache-Control": "no-cache",
+    Pragma: "no-cache",
+    Referer: DEMON_IMAGE_REFERER,
+    "Sec-Fetch-Dest": "image",
+    "Sec-Fetch-Mode": "no-cors",
+    "Sec-Fetch-Site": "same-origin",
+};
 
 // ========= UTIL =========
 function slugify(s) {
@@ -48,9 +77,22 @@ async function fetchAllSlugs() {
 
 async function fetchPersona(slug) {
     // Use your local proxy (preferred) so you can add caching/rate-limits later
-    const url = `${LOCAL_API_BASE}/${encodeURIComponent(slug)}`;
+    const url = `${PERSONA_API_BASE}/${encodeURIComponent(slug)}`;
     const r = await axios.get(url, { timeout: 30000 });
     return r.data;
+}
+
+function normalizeImageUrl(raw) {
+    if (!raw || typeof raw !== "string") return null;
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    try {
+        const url = new URL(trimmed, "https://megatenwiki.com/");
+        if (!/^https?:$/i.test(url.protocol)) return null;
+        return url.toString();
+    } catch {
+        return null;
+    }
 }
 
 async function downloadImage(name, imageUrl) {
@@ -58,40 +100,89 @@ async function downloadImage(name, imageUrl) {
     const dir = path.join(OUTPUT_DIR, safe);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-    // HEAD to guess extension (optional)
-    let ext = path.extname(new URL(imageUrl).pathname);
-    try {
-        const head = await axios.head(imageUrl, { timeout: 15000, maxRedirects: 5, validateStatus: () => true });
-        const guess = extFromContentType(head.headers["content-type"]);
-        if (!ext && guess) ext = guess;
-    } catch {
-        // ignore
+    const normalizedUrl = normalizeImageUrl(imageUrl);
+    if (!normalizedUrl) {
+        throw new Error("invalid or unsupported image url");
+    }
+
+    const attempts = [];
+
+    async function attemptDirect() {
+        const resp = await axios.get(normalizedUrl, {
+            responseType: "arraybuffer",
+            timeout: 60000,
+            maxRedirects: 5,
+            headers: BROWSER_HEADERS,
+            decompress: true,
+            validateStatus: () => true,
+        });
+
+        if (resp.status !== 200 || !resp.data) {
+            throw new Error(`direct HTTP ${resp.status}`);
+        }
+        return {
+            buffer: resp.data,
+            contentType: resp.headers["content-type"] || "",
+            source: "direct",
+        };
+    }
+
+    async function attemptProxy() {
+        if (!IMAGE_PROXY_ENDPOINT) {
+            throw new Error("image proxy disabled");
+        }
+        const qs = new URLSearchParams({ src: normalizedUrl });
+        const proxyUrl = `${IMAGE_PROXY_ENDPOINT}?${qs.toString()}`;
+        const resp = await axios.get(proxyUrl, {
+            responseType: "arraybuffer",
+            timeout: 60000,
+            headers: BROWSER_HEADERS,
+            decompress: true,
+            validateStatus: () => true,
+        });
+        if (resp.status !== 200 || !resp.data) {
+            throw new Error(`proxy HTTP ${resp.status}`);
+        }
+        return {
+            buffer: resp.data,
+            contentType: resp.headers["content-type"] || "",
+            source: "proxy",
+        };
+    }
+
+    async function tryFetch() {
+        try {
+            return await attemptDirect();
+        } catch (error) {
+            attempts.push(error);
+            console.warn(`⚠️ Direct fetch failed for ${name}: ${error.message}`);
+        }
+
+        try {
+            return await attemptProxy();
+        } catch (error) {
+            attempts.push(error);
+            console.warn(`⚠️ Proxy fetch failed for ${name}: ${error.message}`);
+        }
+
+        const messages = attempts.map((err) => err.message).join(", ");
+        throw new Error(`all fetch attempts failed (${messages || "no attempts"})`);
+    }
+
+    const { buffer, contentType, source } = await tryFetch();
+
+    let ext = path.extname(new URL(normalizedUrl).pathname) || "";
+    if (!ext) {
+        const guess = extFromContentType(contentType);
+        if (guess) {
+            ext = guess;
+        }
     }
     if (!ext) ext = ".png";
 
     const outPath = path.join(dir, `${safe}${ext}`);
-
-    const resp = await axios.get(imageUrl, {
-        responseType: "arraybuffer",
-        timeout: 60000,
-        maxRedirects: 5,
-        headers: {
-            // browser-y headers; most CDNs are fine with this
-            "User-Agent":
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-            Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-            "Cache-Control": "no-cache",
-            Referer: "https://persona-compendium.onrender.com/",
-        },
-        validateStatus: () => true,
-    });
-
-    if (resp.status !== 200 || !resp.data) {
-        throw new Error(`HTTP ${resp.status} for ${imageUrl}`);
-    }
-
-    fs.writeFileSync(outPath, resp.data);
-    return outPath;
+    fs.writeFileSync(outPath, buffer);
+    return { outPath, source };
 }
 
 function pLimit(n) {
@@ -120,12 +211,20 @@ function pLimit(n) {
 async function main() {
     if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
+    console.log(`API base: ${PERSONA_API_BASE}`);
+    if (IMAGE_PROXY_ENDPOINT) {
+        console.log(`Image proxy: ${IMAGE_PROXY_ENDPOINT}`);
+    }
+
     console.log("🔎 Fetching persona slugs…");
     const slugs = await fetchAllSlugs();
     console.log(`Found ${slugs.length} personas.`);
 
     const limit = pLimit(CONCURRENCY);
-    let ok = 0, fail = 0;
+    let ok = 0;
+    let fail = 0;
+    let directHits = 0;
+    let proxyHits = 0;
 
     await Promise.all(
         slugs.map((slug) =>
@@ -136,8 +235,13 @@ async function main() {
                     const imageUrl = persona?.image || persona?.img || persona?.picture || null;
                     if (!imageUrl) throw new Error("no image field on persona");
 
-                    const p = await downloadImage(name, imageUrl);
-                    console.log(`✅ ${name} -> ${p}`);
+                    const result = await downloadImage(name, imageUrl);
+                    if (result.source === "proxy") {
+                        proxyHits += 1;
+                    } else {
+                        directHits += 1;
+                    }
+                    console.log(`✅ ${name} (${result.source}) -> ${result.outPath}`);
                     ok++;
                 } catch (e) {
                     console.warn(`❌ ${slug}: ${e.message}`);
@@ -147,7 +251,9 @@ async function main() {
         )
     );
 
-    console.log(`\nDone. ✅ ${ok} succeeded, ❌ ${fail} failed.`);
+    console.log(
+        `\nDone. ✅ ${ok} succeeded (direct: ${directHits}, proxy: ${proxyHits}), ❌ ${fail} failed.`,
+    );
 }
 
 main().catch((e) => {
