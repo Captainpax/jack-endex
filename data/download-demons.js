@@ -10,6 +10,7 @@ const __dirname = path.dirname(__filename);
 // ==== CONFIG ====
 const DEFAULT_API_BASE = "http://localhost:3000/api/personas";
 const OUTPUT_DIR = path.resolve(__dirname, "demon_images");
+const LOCAL_DEMONS_PATH = path.resolve(__dirname, "demons.json");
 const CONCURRENCY = 6;
 const DEMON_IMAGE_REFERER =
     process.env.DEMON_IMAGE_REFERER || "https://megatenwiki.com/wiki/Main_Page";
@@ -50,6 +51,38 @@ function slugify(s) {
         .replace(/\s+/g, " ")
         .slice(0, 120);
 }
+
+function normalizePersonaSlug(value) {
+    if (!value) return null;
+    const normalized = String(value)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+    return normalized || null;
+}
+
+function loadFallbackSlugs() {
+    if (!fs.existsSync(LOCAL_DEMONS_PATH)) return [];
+
+    try {
+        const raw = fs.readFileSync(LOCAL_DEMONS_PATH, "utf8");
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+
+        const seen = new Set();
+        const slugs = [];
+        for (const entry of parsed) {
+            const slug = normalizePersonaSlug(entry?.query || entry?.slug || entry?.name);
+            if (!slug || seen.has(slug)) continue;
+            seen.add(slug);
+            slugs.push(slug);
+        }
+        return slugs;
+    } catch (error) {
+        console.warn(`⚠️ Failed to load fallback slugs from ${LOCAL_DEMONS_PATH}: ${error.message}`);
+        return [];
+    }
+}
 function extFromContentType(ct) {
     if (!ct) return null;
     const m = ct.toLowerCase();
@@ -65,14 +98,28 @@ function extFromContentType(ct) {
 async function fetchAllSlugs() {
     // We can piggyback your /search route by enumerating the upstream root,
     // but better: call the upstream root exactly like your /search does.
-    const rootResp = await axios.get("https://persona-compendium.onrender.com/", { timeout: 30000 });
-    const data = rootResp.data || {};
-    const list = data["Persona Compendium API is live! Here's a list of all possible endpoints: /personas/"] || [];
-    const slugs = list
-        .map(String)
-        .filter((p) => p.startsWith("/personas/") && p.endsWith("/"))
-        .map((p) => p.replace("/personas/", "").replace("/", ""));
-    return slugs;
+    try {
+        const rootResp = await axios.get("https://persona-compendium.onrender.com/", { timeout: 30000 });
+        const data = rootResp.data || {};
+        const list = data["Persona Compendium API is live! Here's a list of all possible endpoints: /personas/"] || [];
+        const slugs = list
+            .map(String)
+            .filter((p) => p.startsWith("/personas/") && p.endsWith("/"))
+            .map((p) => p.replace("/personas/", "").replace("/", ""));
+        if (slugs.length > 0) {
+            return slugs;
+        }
+        throw new Error("remote persona slug list was empty");
+    } catch (error) {
+        const message = error?.message || "unknown error";
+        console.warn(`⚠️ Failed to fetch persona slugs from persona-compendium.onrender.com: ${message}`);
+        const fallback = loadFallbackSlugs();
+        if (fallback.length > 0) {
+            console.log(`Using ${fallback.length} local persona entries from data/demons.json as a fallback.`);
+            return fallback;
+        }
+        throw new Error(`Unable to load persona slugs (remote + fallback failed). Last error: ${message}`);
+    }
 }
 
 async function fetchPersona(slug) {
