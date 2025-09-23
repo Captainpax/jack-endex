@@ -4,6 +4,32 @@ import path from "path";
 import { fileURLToPath } from "url";
 import axios from "axios";
 
+let httpCrawlerLoader;
+
+async function ensureHttpCrawler() {
+    if (!httpCrawlerLoader) {
+        httpCrawlerLoader = (async () => {
+            try {
+                const mod = await import("crawlee");
+                if (mod?.HttpCrawler) {
+                    console.log("🕷️ Using Crawlee HttpCrawler for image downloads.");
+                    return mod.HttpCrawler;
+                }
+                console.warn("⚠️ Crawlee was imported but HttpCrawler was not found. Falling back to axios downloads.");
+                return null;
+            } catch (error) {
+                const reason = error?.message || "unknown error";
+                console.warn(
+                    `⚠️ Crawlee is not available (${reason}). Falling back to axios for image downloads.\n` +
+                        "   Install the 'crawlee' package to enable crawler-based downloads.",
+                );
+                return null;
+            }
+        })();
+    }
+    return httpCrawlerLoader;
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -182,6 +208,94 @@ function normalizeImageUrl(raw) {
     }
 }
 
+function resolveContentType(headers) {
+    if (!headers) return "";
+    if (typeof headers.get === "function") {
+        return headers.get("content-type") || headers.get("Content-Type") || "";
+    }
+    if (typeof headers === "object") {
+        const lowered = Object.create(null);
+        for (const [key, value] of Object.entries(headers)) {
+            lowered[String(key).toLowerCase()] = value;
+        }
+        return lowered["content-type"] || "";
+    }
+    return "";
+}
+
+async function fetchWithCrawlee(HttpCrawler, url, source) {
+    let outcome = null;
+    const errors = [];
+
+    const crawler = new HttpCrawler({
+        maxConcurrency: 1,
+        maxRequestRetries: 0,
+        requestHandler: async ({ sendRequest }) => {
+            const response = await sendRequest({
+                headers: BROWSER_HEADERS,
+                responseType: "buffer",
+                throwHttpErrors: false,
+            });
+
+            const status = response?.statusCode ?? response?.status ?? 0;
+            const body = response?.body ?? response?.rawBody;
+            if (status !== 200 || !body || body.length === 0) {
+                throw new Error(`HTTP ${status || "unknown"}`);
+            }
+
+            const buffer = Buffer.isBuffer(body) ? body : Buffer.from(body);
+            const contentType = resolveContentType(response?.headers);
+            outcome = { buffer, contentType, source };
+        },
+        failedRequestHandler: async ({ error }) => {
+            errors.push(error);
+        },
+    });
+
+    await crawler.run([{ url }]).catch((error) => {
+        errors.push(error);
+    });
+
+    if (!outcome) {
+        const message = errors
+            .map((err) => err?.message)
+            .filter(Boolean)
+            .join(", ") || "request failed";
+        throw new Error(message);
+    }
+
+    return outcome;
+}
+
+async function fetchWithAxios(url, source) {
+    const response = await axios.get(url, {
+        responseType: "arraybuffer",
+        timeout: 60000,
+        maxRedirects: 5,
+        headers: BROWSER_HEADERS,
+        decompress: true,
+        validateStatus: () => true,
+    });
+
+    if (response.status !== 200 || !response.data) {
+        throw new Error(`HTTP ${response.status}`);
+    }
+
+    const buffer = Buffer.isBuffer(response.data)
+        ? response.data
+        : Buffer.from(response.data);
+    const contentType = resolveContentType(response.headers);
+    return { buffer, contentType, source };
+}
+
+async function tryFetchImage(url, source) {
+    const HttpCrawler = await ensureHttpCrawler();
+    if (HttpCrawler) {
+        return fetchWithCrawlee(HttpCrawler, url, source);
+    }
+    return fetchWithAxios(url, source);
+}
+
 async function downloadImage(name, imageUrl) {
     const safe = slugify(name);
     const dir = path.join(OUTPUT_DIR, safe);
@@ -192,71 +306,33 @@ async function downloadImage(name, imageUrl) {
         throw new Error("invalid or unsupported image url");
     }
 
-    const attempts = [];
+    const attemptMessages = [];
+    let result = null;
 
-    async function attemptDirect() {
-        const resp = await axios.get(normalizedUrl, {
-            responseType: "arraybuffer",
-            timeout: 60000,
-            maxRedirects: 5,
-            headers: BROWSER_HEADERS,
-            decompress: true,
-            validateStatus: () => true,
-        });
-
-        if (resp.status !== 200 || !resp.data) {
-            throw new Error(`direct HTTP ${resp.status}`);
-        }
-        return {
-            buffer: resp.data,
-            contentType: resp.headers["content-type"] || "",
-            source: "direct",
-        };
+    try {
+        result = await tryFetchImage(normalizedUrl, "direct");
+    } catch (error) {
+        attemptMessages.push(`direct: ${error.message}`);
+        console.warn(`⚠️ Direct fetch failed for ${name}: ${error.message}`);
     }
 
-    async function attemptProxy() {
-        if (!IMAGE_PROXY_ENDPOINT) {
-            throw new Error("image proxy disabled");
-        }
+    if (!result && IMAGE_PROXY_ENDPOINT) {
         const qs = new URLSearchParams({ src: normalizedUrl });
         const proxyUrl = `${IMAGE_PROXY_ENDPOINT}?${qs.toString()}`;
-        const resp = await axios.get(proxyUrl, {
-            responseType: "arraybuffer",
-            timeout: 60000,
-            headers: BROWSER_HEADERS,
-            decompress: true,
-            validateStatus: () => true,
-        });
-        if (resp.status !== 200 || !resp.data) {
-            throw new Error(`proxy HTTP ${resp.status}`);
-        }
-        return {
-            buffer: resp.data,
-            contentType: resp.headers["content-type"] || "",
-            source: "proxy",
-        };
-    }
-
-    async function tryFetch() {
         try {
-            return await attemptDirect();
+            result = await tryFetchImage(proxyUrl, "proxy");
         } catch (error) {
-            attempts.push(error);
-            console.warn(`⚠️ Direct fetch failed for ${name}: ${error.message}`);
-        }
-
-        try {
-            return await attemptProxy();
-        } catch (error) {
-            attempts.push(error);
+            attemptMessages.push(`proxy: ${error.message}`);
             console.warn(`⚠️ Proxy fetch failed for ${name}: ${error.message}`);
         }
-
-        const messages = attempts.map((err) => err.message).join(", ");
-        throw new Error(`all fetch attempts failed (${messages || "no attempts"})`);
     }
 
-    const { buffer, contentType, source } = await tryFetch();
+    if (!result) {
+        const summary = attemptMessages.join(", ") || "no attempts";
+        throw new Error(`all fetch attempts failed (${summary})`);
+    }
+
+    const { buffer, contentType, source } = result;
 
     let ext = path.extname(new URL(normalizedUrl).pathname) || "";
     if (!ext) {
