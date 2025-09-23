@@ -1,50 +1,26 @@
-// data/download-demons.js
 /* eslint-env node */
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { chromium } from "playwright";  // npm i -D playwright
-
-const MIN_HUMAN_DELAY_MS = 1_200;
-const MAX_HUMAN_DELAY_MS = 3_400;
-const POST_SAVE_DELAY_MS = [600, 1_200];
-const MAX_ATTEMPTS = 3;
-const RETRY_DELAY_BASE_MS = 2_000;
-const RETRY_DELAY_JITTER_MS = 2_500;
-const RETRY_GROWTH_MS = 1_500;
+import axios from "axios";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// ==== CONFIG ====
+const LOCAL_API_BASE = process.env.PERSONA_API_BASE || "http://localhost:3000/api/personas";
 const OUTPUT_DIR = path.resolve(__dirname, "demon_images");
-const TIMEOUT_MS = 45_000;
-const HUMAN_MOUSE_STEPS = [8, 18];
-const HUMAN_VIEWPORT_WIDTH = [1_180, 1_620];
-const HUMAN_VIEWPORT_HEIGHT = [680, 940];
+const CONCURRENCY = 6;
 
-const USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.6167.86 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-];
-
-const HEADLESS = !["0", "false"].includes(String(process.env.PLAYWRIGHT_HEADLESS || "").toLowerCase());
-
-// --- load demons.json without import assertions ---
-const DEMONS_JSON_PATH = path.resolve(__dirname, "demons.json");
-const demons = JSON.parse(fs.readFileSync(DEMONS_JSON_PATH, "utf8"));
-
-function slugify(name) {
-    return String(name)
+// ========= UTIL =========
+function slugify(s) {
+    return String(s)
         .trim()
         // eslint-disable-next-line no-control-regex
         .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
         .replace(/\s+/g, " ")
-        .replace(/^\.+$/, "_")
         .slice(0, 120);
 }
-
 function extFromContentType(ct) {
     if (!ct) return null;
     const m = ct.toLowerCase();
@@ -56,262 +32,122 @@ function extFromContentType(ct) {
     return null;
 }
 
-function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+// Get the full list of persona slugs from the compendium root (via your proxy or directly)
+async function fetchAllSlugs() {
+    // We can piggyback your /search route by enumerating the upstream root,
+    // but better: call the upstream root exactly like your /search does.
+    const rootResp = await axios.get("https://persona-compendium.onrender.com/", { timeout: 30000 });
+    const data = rootResp.data || {};
+    const list = data["Persona Compendium API is live! Here's a list of all possible endpoints: /personas/"] || [];
+    const slugs = list
+        .map(String)
+        .filter((p) => p.startsWith("/personas/") && p.endsWith("/"))
+        .map((p) => p.replace("/personas/", "").replace("/", ""));
+    return slugs;
 }
-function randomBetween(min, max) {
-    return min + Math.random() * (max - min);
+
+async function fetchPersona(slug) {
+    // Use your local proxy (preferred) so you can add caching/rate-limits later
+    const url = `${LOCAL_API_BASE}/${encodeURIComponent(slug)}`;
+    const r = await axios.get(url, { timeout: 30000 });
+    return r.data;
 }
-function randomIntBetween(min, max) {
-    return Math.floor(randomBetween(min, max + 1));
-}
-function randomChoice(list = []) {
-    if (!Array.isArray(list) || list.length === 0) return undefined;
-    const index = randomIntBetween(0, list.length - 1);
-    return list[index];
-}
-async function humanDelay(min = MIN_HUMAN_DELAY_MS, max = MAX_HUMAN_DELAY_MS) {
-    if (Array.isArray(min)) {
-        [min, max] = min;
+
+async function downloadImage(name, imageUrl) {
+    const safe = slugify(name);
+    const dir = path.join(OUTPUT_DIR, safe);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+    // HEAD to guess extension (optional)
+    let ext = path.extname(new URL(imageUrl).pathname);
+    try {
+        const head = await axios.head(imageUrl, { timeout: 15000, maxRedirects: 5, validateStatus: () => true });
+        const guess = extFromContentType(head.headers["content-type"]);
+        if (!ext && guess) ext = guess;
+    } catch {
+        // ignore
     }
-    const delay = randomBetween(min, max ?? min);
-    await sleep(delay);
-    return delay;
-}
+    if (!ext) ext = ".png";
 
-function shouldRetry(status, reason) {
-    if (!status && !reason) return false;
-    const retryable = new Set([403, 408, 409, 425, 429, 500, 502, 503, 504]);
-    if (status && retryable.has(status)) return true;
+    const outPath = path.join(dir, `${safe}${ext}`);
 
-    if (reason) {
-        const lower = reason.toLowerCase();
-        if (
-            lower.includes("cloudflare") ||
-            lower.includes("timeout") ||
-            lower.includes("etimedout") ||
-            lower.includes("navigation") ||
-            lower.includes("net::err")
-        ) {
-            return true;
-        }
-    }
-    return false;
-}
-
-function alreadyHasFile(dir, base) {
-    const candidates = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"].map(
-        (ext) => path.join(dir, `${base}${ext}`)
-    );
-    return candidates.find((p) => fs.existsSync(p)) || null;
-}
-
-async function openHumanPage(context) {
-    const page = await context.newPage();
-    page.setDefaultTimeout(TIMEOUT_MS);
-
-    const width = randomIntBetween(...HUMAN_VIEWPORT_WIDTH);
-    const height = randomIntBetween(...HUMAN_VIEWPORT_HEIGHT);
-    await page.setViewportSize({ width, height }).catch(() => {});
-
-    await humanDelay([220, 620]);
-
-    const mouseSteps = randomIntBetween(...HUMAN_MOUSE_STEPS);
-    await page.mouse.move(randomIntBetween(0, width), randomIntBetween(0, height), {
-        steps: mouseSteps,
+    const resp = await axios.get(imageUrl, {
+        responseType: "arraybuffer",
+        timeout: 60000,
+        maxRedirects: 5,
+        headers: {
+            // browser-y headers; most CDNs are fine with this
+            "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+            Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+            "Cache-Control": "no-cache",
+            Referer: "https://persona-compendium.onrender.com/",
+        },
+        validateStatus: () => true,
     });
 
-    if (Math.random() < 0.35) {
-        try {
-            await page.mouse.wheel(0, randomIntBetween(-220, 320));
-        } catch {
-            /* ignore */
-        }
+    if (resp.status !== 200 || !resp.data) {
+        throw new Error(`HTTP ${resp.status} for ${imageUrl}`);
     }
 
-    return page;
+    fs.writeFileSync(outPath, resp.data);
+    return outPath;
 }
 
-async function attemptDownload(context, demon) {
-    const { name, image } = demon || {};
-    if (!name || !image) return { ok: false, name, reason: "missing fields" };
-
-    const safeName = slugify(name);
-    const demonDir = path.join(OUTPUT_DIR, safeName);
-    if (!fs.existsSync(demonDir)) fs.mkdirSync(demonDir, { recursive: true });
-
-    // skip if file already present
-    const pre = alreadyHasFile(demonDir, safeName);
-    if (pre) {
-        return { ok: true, name, path: pre, skipped: true };
-    }
-
-    const page = await openHumanPage(context);
-
-    let status = null;
-
-    try {
-        await humanDelay();
-
-        const imageUrl = new URL(image);
-        const origin = `${imageUrl.protocol}//${imageUrl.host}/`;
-
-        if (Math.random() < 0.6) {
-            try {
-                await page.goto(origin, { waitUntil: "domcontentloaded" });
-                await humanDelay([900, 2_000]);
-            } catch (warmErr) {
-                console.warn(`⚠️  Warm up visit failed for ${name}: ${warmErr?.message ?? warmErr}`);
-            }
-        }
-
-        // Go straight to the image URL; context carries UA + headers
-        const resp = await page.goto(image, { waitUntil: "networkidle" });
-        if (!resp) throw new Error("No response");
-
-        status = resp.status();
-        if (status !== 200) {
-            const err = new Error(`HTTP ${status}`);
-            err.status = status;
-            throw err;
-        }
-
-        await page.waitForLoadState("networkidle").catch(() => {});
-        await humanDelay([650, 1_500]);
-
-        let ext = extFromContentType(resp.headers()["content-type"]);
-        if (!ext) {
-            const urlPath = new URL(image).pathname;
-            ext = path.extname(urlPath) || ".png";
-        }
-
-        const outPath = path.join(demonDir, `${safeName}${ext}`);
-        const buff = await resp.body();
-        fs.writeFileSync(outPath, buff);
-
-        return { ok: true, name, path: outPath };
-    } catch (err) {
-        return {
-            ok: false,
-            name,
-            reason: err?.message || "unknown error",
-            status: err?.status ?? status,
-        };
-    } finally {
-        await page.close().catch(() => {});
-    }
-}
-
-async function downloadDemon(context, demon) {
-    const { name } = demon || {};
-    if (!name || !demon?.image) {
-        return { ok: false, name, reason: "missing fields" };
-    }
-
-    let lastResult = { ok: false, name, reason: "unknown" };
-
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
-        await humanDelay();
-        const result = await attemptDownload(context, demon);
-
-        if (result.ok && !result.skipped) {
-            console.log(`✅ Saved ${result.name} -> ${result.path}`);
-            await humanDelay(...POST_SAVE_DELAY_MS);
-            return result;
-        }
-        if (result.ok && result.skipped) {
-            console.log(`⏭️  Skipped ${result.name} (already exists at ${result.path})`);
-            return result;
-        }
-
-        const { reason, status } = result;
-        const retry = attempt < MAX_ATTEMPTS && shouldRetry(status, reason);
-        const statusInfo = status ? ` [${status}]` : "";
-        const prefix = retry ? "⚠️" : "❌";
-        console.warn(`${prefix} Failed for ${result.name} (attempt ${attempt}/${MAX_ATTEMPTS}): ${reason}${statusInfo}`);
-
-        lastResult = result;
-
-        if (!retry) return result;
-
-        const waitMs =
-            RETRY_DELAY_BASE_MS +
-            attempt * RETRY_GROWTH_MS +
-            Math.floor(Math.random() * RETRY_DELAY_JITTER_MS);
-        console.warn(`   Waiting ${(waitMs / 1000).toFixed(1)}s before retry...`);
-        await sleep(waitMs);
-    }
-
-    return lastResult;
+function pLimit(n) {
+    const q = [];
+    let active = 0;
+    const next = () => {
+        active--;
+        if (q.length) q.shift()();
+    };
+    return (fn) =>
+        new Promise((res, rej) => {
+            const run = () => {
+                active++;
+                fn().then((v) => {
+                    res(v);
+                    next();
+                }, (e) => {
+                    rej(e);
+                    next();
+                });
+            };
+            active < n ? run() : q.push(run);
+        });
 }
 
 async function main() {
-    if (!Array.isArray(demons)) {
-        console.error("demons.json is not an array.");
-        process.exit(1);
-    }
     if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
-    const browser = await chromium.launch({
-        headless: HEADLESS,
-        args: ["--disable-blink-features=AutomationControlled"],
-    });
+    console.log("🔎 Fetching persona slugs…");
+    const slugs = await fetchAllSlugs();
+    console.log(`Found ${slugs.length} personas.`);
 
-    const userAgent = randomChoice(USER_AGENTS) ?? USER_AGENTS[0];
-    const locale = randomChoice(["en-US", "en-GB", "en-CA"]) ?? "en-US";
-    const timezoneId = randomChoice([
-        "America/New_York",
-        "America/Los_Angeles",
-        "Europe/London",
-        "America/Toronto",
-    ]) ?? "America/New_York";
+    const limit = pLimit(CONCURRENCY);
+    let ok = 0, fail = 0;
 
-    const context = await browser.newContext({
-        baseURL: "https://megatenwiki.com",
-        userAgent,
-        locale,
-        timezoneId,
-        viewport: {
-            width: randomIntBetween(...HUMAN_VIEWPORT_WIDTH),
-            height: randomIntBetween(...HUMAN_VIEWPORT_HEIGHT),
-        },
-    });
-    await context.setExtraHTTPHeaders({
-        Referer: "https://megatenwiki.com/",
-        "Accept-Language": `${locale},en;q=0.9`,
-        Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-        "Cache-Control": "no-cache",
-        DNT: "1",
-    });
-    await context.addInitScript(() => {
-        Object.defineProperty(navigator, "webdriver", {
-            get: () => undefined,
-        });
-    });
+    await Promise.all(
+        slugs.map((slug) =>
+            limit(async () => {
+                try {
+                    const persona = await fetchPersona(slug);
+                    const name = persona?.name || slug;
+                    const imageUrl = persona?.image || persona?.img || persona?.picture || null;
+                    if (!imageUrl) throw new Error("no image field on persona");
 
-    // Warm-up to pick up cookies/tokens if needed
-    try {
-        const warm = await openHumanPage(context);
-        await warm.goto("https://megatenwiki.com/", { waitUntil: "domcontentloaded" });
-        await humanDelay([1_000, 2_200]);
-        await warm.close();
-    } catch (err) {
-        console.warn("⚠️  Initial warm up failed:", err?.message ?? err);
-    }
+                    const p = await downloadImage(name, imageUrl);
+                    console.log(`✅ ${name} -> ${p}`);
+                    ok++;
+                } catch (e) {
+                    console.warn(`❌ ${slug}: ${e.message}`);
+                    fail++;
+                }
+            })
+        )
+    );
 
-    const results = [];
-    for (const demon of demons) {
-        const result = await downloadDemon(context, demon);
-        results.push(result);
-        await humanDelay([950, 2_100]);
-    }
-
-    const ok = results.filter((r) => r.ok).length;
-    const fail = results.length - ok;
     console.log(`\nDone. ✅ ${ok} succeeded, ❌ ${fail} failed.`);
-
-    await context.close();
-    await browser.close();
 }
 
 main().catch((e) => {
