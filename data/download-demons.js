@@ -3,7 +3,6 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import pLimit from "p-limit";           // npm i p-limit
 import { chromium } from "playwright";  // npm i -D playwright
 
 const MIN_HUMAN_DELAY_MS = 1_200;
@@ -18,8 +17,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const OUTPUT_DIR = path.resolve(__dirname, "demon_images");
-const CONCURRENCY = 4; // polite + stable
 const TIMEOUT_MS = 45_000;
+const HUMAN_MOUSE_STEPS = [8, 18];
+const HUMAN_VIEWPORT_WIDTH = [1_180, 1_620];
+const HUMAN_VIEWPORT_HEIGHT = [680, 940];
+
+const USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.6167.86 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+];
+
+const HEADLESS = !["0", "false"].includes(String(process.env.PLAYWRIGHT_HEADLESS || "").toLowerCase());
 
 // --- load demons.json without import assertions ---
 const DEMONS_JSON_PATH = path.resolve(__dirname, "demons.json");
@@ -52,8 +62,19 @@ function sleep(ms) {
 function randomBetween(min, max) {
     return min + Math.random() * (max - min);
 }
+function randomIntBetween(min, max) {
+    return Math.floor(randomBetween(min, max + 1));
+}
+function randomChoice(list = []) {
+    if (!Array.isArray(list) || list.length === 0) return undefined;
+    const index = randomIntBetween(0, list.length - 1);
+    return list[index];
+}
 async function humanDelay(min = MIN_HUMAN_DELAY_MS, max = MAX_HUMAN_DELAY_MS) {
-    const delay = randomBetween(min, max);
+    if (Array.isArray(min)) {
+        [min, max] = min;
+    }
+    const delay = randomBetween(min, max ?? min);
     await sleep(delay);
     return delay;
 }
@@ -85,6 +106,32 @@ function alreadyHasFile(dir, base) {
     return candidates.find((p) => fs.existsSync(p)) || null;
 }
 
+async function openHumanPage(context) {
+    const page = await context.newPage();
+    page.setDefaultTimeout(TIMEOUT_MS);
+
+    const width = randomIntBetween(...HUMAN_VIEWPORT_WIDTH);
+    const height = randomIntBetween(...HUMAN_VIEWPORT_HEIGHT);
+    await page.setViewportSize({ width, height }).catch(() => {});
+
+    await humanDelay([220, 620]);
+
+    const mouseSteps = randomIntBetween(...HUMAN_MOUSE_STEPS);
+    await page.mouse.move(randomIntBetween(0, width), randomIntBetween(0, height), {
+        steps: mouseSteps,
+    });
+
+    if (Math.random() < 0.35) {
+        try {
+            await page.mouse.wheel(0, randomIntBetween(-220, 320));
+        } catch {
+            /* ignore */
+        }
+    }
+
+    return page;
+}
+
 async function attemptDownload(context, demon) {
     const { name, image } = demon || {};
     if (!name || !image) return { ok: false, name, reason: "missing fields" };
@@ -99,13 +146,24 @@ async function attemptDownload(context, demon) {
         return { ok: true, name, path: pre, skipped: true };
     }
 
-    const page = await context.newPage();
-    page.setDefaultTimeout(TIMEOUT_MS);
+    const page = await openHumanPage(context);
 
     let status = null;
 
     try {
         await humanDelay();
+
+        const imageUrl = new URL(image);
+        const origin = `${imageUrl.protocol}//${imageUrl.host}/`;
+
+        if (Math.random() < 0.6) {
+            try {
+                await page.goto(origin, { waitUntil: "domcontentloaded" });
+                await humanDelay([900, 2_000]);
+            } catch (warmErr) {
+                console.warn(`⚠️  Warm up visit failed for ${name}: ${warmErr?.message ?? warmErr}`);
+            }
+        }
 
         // Go straight to the image URL; context carries UA + headers
         const resp = await page.goto(image, { waitUntil: "networkidle" });
@@ -119,7 +177,7 @@ async function attemptDownload(context, demon) {
         }
 
         await page.waitForLoadState("networkidle").catch(() => {});
-        await humanDelay(650, 1_500);
+        await humanDelay([650, 1_500]);
 
         let ext = extFromContentType(resp.headers()["content-type"]);
         if (!ext) {
@@ -194,30 +252,59 @@ async function main() {
     }
     if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
-    const browser = await chromium.launch({ headless: true });
+    const browser = await chromium.launch({
+        headless: HEADLESS,
+        args: ["--disable-blink-features=AutomationControlled"],
+    });
 
-    // Set UA + headers on the CONTEXT (not the page)
+    const userAgent = randomChoice(USER_AGENTS) ?? USER_AGENTS[0];
+    const locale = randomChoice(["en-US", "en-GB", "en-CA"]) ?? "en-US";
+    const timezoneId = randomChoice([
+        "America/New_York",
+        "America/Los_Angeles",
+        "Europe/London",
+        "America/Toronto",
+    ]) ?? "America/New_York";
+
     const context = await browser.newContext({
         baseURL: "https://megatenwiki.com",
-        userAgent:
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
-            "Chrome/120.0.0.0 Safari/537.36",
+        userAgent,
+        locale,
+        timezoneId,
+        viewport: {
+            width: randomIntBetween(...HUMAN_VIEWPORT_WIDTH),
+            height: randomIntBetween(...HUMAN_VIEWPORT_HEIGHT),
+        },
     });
     await context.setExtraHTTPHeaders({
         Referer: "https://megatenwiki.com/",
+        "Accept-Language": `${locale},en;q=0.9`,
         Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
         "Cache-Control": "no-cache",
+        DNT: "1",
+    });
+    await context.addInitScript(() => {
+        Object.defineProperty(navigator, "webdriver", {
+            get: () => undefined,
+        });
     });
 
     // Warm-up to pick up cookies/tokens if needed
     try {
-        const warm = await context.newPage();
+        const warm = await openHumanPage(context);
         await warm.goto("https://megatenwiki.com/", { waitUntil: "domcontentloaded" });
+        await humanDelay([1_000, 2_200]);
         await warm.close();
-    } catch { /* empty */ }
+    } catch (err) {
+        console.warn("⚠️  Initial warm up failed:", err?.message ?? err);
+    }
 
-    const limit = pLimit(CONCURRENCY);
-    const results = await Promise.all(demons.map((d) => limit(() => downloadDemon(context, d))));
+    const results = [];
+    for (const demon of demons) {
+        const result = await downloadDemon(context, demon);
+        results.push(result);
+        await humanDelay([950, 2_100]);
+    }
 
     const ok = results.filter((r) => r.ok).length;
     const fail = results.length - ok;
