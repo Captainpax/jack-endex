@@ -66,7 +66,7 @@ const DEFAULT_SHAPE_STROKE_WIDTH = 2;
 const DEFAULT_SHAPE_OPACITY = 0.6;
 const DEFAULT_BACKGROUND_SCALE = 1;
 const DEFAULT_BACKGROUND_OPACITY = 1;
-const MAP_SHAPE_TYPES = new Set(['rectangle', 'circle', 'line']);
+const MAP_SHAPE_TYPES = new Set(['rectangle', 'circle', 'line', 'diamond', 'triangle', 'cone', 'image']);
 const MIN_SHAPE_SIZE = 0.02;
 const DEFAULT_DB_PATH = path.join(__dirname, 'data', 'db.json');
 
@@ -412,37 +412,47 @@ function normalizeMapShape(entry) {
     const updatedAt = typeof entry.updatedAt === 'string' ? entry.updatedAt : createdAt;
     const x = clamp01(Object.prototype.hasOwnProperty.call(entry, 'x') ? entry.x : 0.5);
     const y = clamp01(Object.prototype.hasOwnProperty.call(entry, 'y') ? entry.y : 0.5);
-    const widthSource = Object.prototype.hasOwnProperty.call(entry, 'width') ? entry.width : 0.25;
-    const heightSource = Object.prototype.hasOwnProperty.call(entry, 'height') ? entry.height : widthSource;
+    const defaultSize = type === 'image' ? 0.4 : 0.25;
+    const widthSource = Object.prototype.hasOwnProperty.call(entry, 'width') ? entry.width : defaultSize;
+    const heightFallback = type === 'line' ? MIN_SHAPE_SIZE : defaultSize;
+    const heightSource = Object.prototype.hasOwnProperty.call(entry, 'height') ? entry.height : heightFallback;
     let width = clamp01(widthSource);
     let height = clamp01(heightSource);
-    if (!Number.isFinite(width) || width <= 0) width = 0.25;
+    if (!Number.isFinite(width) || width <= 0) width = defaultSize;
     if (!Number.isFinite(height) || height <= 0) height = type === 'line' ? MIN_SHAPE_SIZE : width;
     width = Math.max(MIN_SHAPE_SIZE, Math.min(1, width));
-    height = Math.max(MIN_SHAPE_SIZE, Math.min(1, type === 'circle' ? width : height));
+    height = Math.max(
+        MIN_SHAPE_SIZE,
+        Math.min(1, type === 'circle' || type === 'diamond' ? width : height),
+    );
     const rotation = normalizeRotation(entry.rotation);
-    const fill = sanitizeColor(entry.fill, type === 'line' ? DEFAULT_SHAPE_STROKE : DEFAULT_SHAPE_FILL);
+    const fillFallback = type === 'line' ? DEFAULT_SHAPE_STROKE : DEFAULT_SHAPE_FILL;
+    const fill = type === 'image' ? 'transparent' : sanitizeColor(entry.fill, fillFallback);
     const stroke = sanitizeColor(entry.stroke, DEFAULT_SHAPE_STROKE);
     const strokeWidthRaw = Number(entry.strokeWidth);
     const strokeWidth = Number.isFinite(strokeWidthRaw)
         ? Math.min(20, Math.max(0, strokeWidthRaw))
         : DEFAULT_SHAPE_STROKE_WIDTH;
     const opacityRaw = Number(entry.opacity);
-    const opacity = Number.isFinite(opacityRaw)
-        ? Math.min(1, Math.max(0.05, opacityRaw))
-        : DEFAULT_SHAPE_OPACITY;
+    const opacity = type === 'image'
+        ? Math.min(1, Math.max(0.05, Number.isFinite(opacityRaw) ? opacityRaw : 1))
+        : Number.isFinite(opacityRaw)
+            ? Math.min(1, Math.max(0.05, opacityRaw))
+            : DEFAULT_SHAPE_OPACITY;
+    const url = type === 'image' && typeof entry.url === 'string' ? entry.url.trim() : '';
     return {
         id,
         type,
         x,
         y,
         width,
-        height: type === 'circle' ? width : height,
+        height: type === 'circle' || type === 'diamond' ? width : height,
         rotation,
         fill,
         stroke,
         strokeWidth,
         opacity,
+        ...(type === 'image' ? { url } : {}),
         createdAt,
         updatedAt,
     };
@@ -482,7 +492,7 @@ function applyMapShapeUpdate(shape, payload) {
         const value = Math.max(MIN_SHAPE_SIZE, Math.min(1, raw));
         if (shape.width !== value) {
             shape.width = value;
-            if (shape.type === 'circle') {
+            if (shape.type === 'circle' || shape.type === 'diamond') {
                 shape.height = value;
             }
             changed = true;
@@ -491,7 +501,7 @@ function applyMapShapeUpdate(shape, payload) {
     if (Object.prototype.hasOwnProperty.call(payload, 'height')) {
         const raw = clamp01(payload.height);
         const value = Math.max(MIN_SHAPE_SIZE, Math.min(1, raw));
-        if (shape.type === 'circle') {
+        if (shape.type === 'circle' || shape.type === 'diamond') {
             if (shape.width !== value) {
                 shape.width = value;
                 shape.height = value;
@@ -537,6 +547,13 @@ function applyMapShapeUpdate(shape, payload) {
         const value = Number.isFinite(raw) ? Math.min(1, Math.max(0.05, raw)) : shape.opacity;
         if (shape.opacity !== value) {
             shape.opacity = value;
+            changed = true;
+        }
+    }
+    if (shape.type === 'image' && Object.prototype.hasOwnProperty.call(payload, 'url')) {
+        const nextUrl = typeof payload.url === 'string' ? payload.url.trim() : '';
+        if (shape.url !== nextUrl) {
+            shape.url = nextUrl;
             changed = true;
         }
     }
