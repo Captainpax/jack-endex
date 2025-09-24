@@ -3319,16 +3319,20 @@ async function ensureInitialItemDocs() {
 
 async function ensureInitialDemonDocs() {
     try {
-        const existing = await Demon.estimatedDocumentCount();
+        const existing = await Demon.countDocuments({});
         if (existing > 0) {
             console.log(`[db] Demon codex already contains ${existing} entries.`);
             return existing;
         }
+
         const entries = await loadDemonEntries();
         if (entries.length === 0) {
             console.warn('[db] No demons found in data/demons.json; skipping codex seed.');
             return 0;
         }
+
+        console.log('[db] Demon codex empty; seeding from data/demons.json…');
+
         const bulkOps = entries.map((entry) => ({
             replaceOne: {
                 filter: { slug: entry.slug },
@@ -3336,6 +3340,7 @@ async function ensureInitialDemonDocs() {
                 upsert: true,
             },
         }));
+
         await Demon.bulkWrite(bulkOps, { ordered: false });
         console.log(`[db] Seeded ${entries.length} demons into the codex.`);
         return entries.length;
