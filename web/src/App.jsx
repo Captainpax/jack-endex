@@ -2260,6 +2260,10 @@ function GameView({
     const isDM = game.dmId === me.id;
     const [apiBusy, setApiBusy] = useState(false);
     const [refreshBusy, setRefreshBusy] = useState(false);
+    const [sidebarOpen, setSidebarOpen] = useState(() =>
+        typeof window === "undefined" ? true : window.innerWidth > 960
+    );
+    const [logoutBusy, setLogoutBusy] = useState(false);
     const loadedTabRef = useRef(false);
     const loadedSheetRef = useRef(false);
 
@@ -2277,6 +2281,20 @@ function GameView({
     }, [sheetPrefKey]);
 
     const navItems = useMemo(() => (isDM ? DM_NAV : PLAYER_NAV), [isDM]);
+
+    const handleSelectNav = useCallback(
+        (key) => {
+            setTab(key);
+            if (typeof window !== "undefined" && window.innerWidth < 960) {
+                setSidebarOpen(false);
+            }
+        },
+        [setTab]
+    );
+
+    const toggleSidebar = useCallback(() => {
+        setSidebarOpen((prev) => !prev);
+    }, []);
 
     useEffect(() => {
         if (navItems.length === 0) return;
@@ -2332,6 +2350,18 @@ function GameView({
         [campaignPlayers, me.id]
     );
 
+    const playerMaccaInfo = useMemo(() => {
+        if (!myEntry) {
+            return { value: 0, label: "0" };
+        }
+        const raw = Number(myEntry.character?.resources?.macca);
+        const value = Number.isFinite(raw) ? raw : 0;
+        return {
+            value,
+            label: Number.isFinite(raw) ? value.toLocaleString() : "0",
+        };
+    }, [myEntry]);
+
     const demonCount = Array.isArray(game.demons) ? game.demons.length : 0;
 
     const headerPills = useMemo(() => {
@@ -2348,9 +2378,6 @@ function GameView({
         const maxHP = Number.isFinite(maxRaw) ? maxRaw : 0;
         const lvlRaw = Number(myEntry.character?.resources?.level);
         const level = Number.isFinite(lvlRaw) ? lvlRaw : null;
-        const maccaRaw = Number(myEntry.character?.resources?.macca);
-        const macca = Number.isFinite(maccaRaw) ? maccaRaw : 0;
-        const maccaLabel = Number.isFinite(maccaRaw) ? macca.toLocaleString() : "0";
         const tone =
             maxHP > 0
                 ? hp <= 0
@@ -2368,9 +2395,28 @@ function GameView({
             label: `HP ${hpLabel}`,
             tone,
         });
-        pills.push({ label: `Macca ${maccaLabel}`, tone: 'light' });
         return pills;
     }, [campaignPlayers.length, demonCount, isDM, myEntry]);
+
+    const handleMainMenu = useCallback(() => {
+        if (typeof window !== "undefined") {
+            window.location.href = "/";
+        }
+    }, []);
+
+    const handleLogout = useCallback(async () => {
+        try {
+            setLogoutBusy(true);
+            await Auth.logout();
+            if (typeof window !== "undefined") {
+                window.location.href = "/";
+            }
+        } catch (err) {
+            alert(err?.message || "Failed to log out");
+        } finally {
+            setLogoutBusy(false);
+        }
+    }, []);
 
     const refreshGameData = useCallback(async () => {
         if (!game?.id) return null;
@@ -2454,6 +2500,8 @@ function GameView({
         }
     }, [game.media, syncMedia]);
 
+    const shellClassName = `app-shell ${sidebarOpen ? "is-sidebar-open" : "is-sidebar-collapsed"}`;
+
     return (
         <RealtimeContext.Provider value={realtime}>
             <div className="app-root">
@@ -2462,58 +2510,96 @@ function GameView({
                 </div>
                 <SharedMediaDisplay isDM={isDM} />
                 <AlertOverlay />
-                <div className="app-shell">
-            <aside className="app-sidebar">
-                <div className="sidebar__header">
-                    <span className="sidebar__mode">
-                        {isDM ? "Dungeon Master Mode" : "Player Mode"}
-                    </span>
-                    <h2 className="sidebar__title">{game.name}</h2>
-                    <p className="sidebar__summary">
-                        {isDM
-                            ? "Share quick links, manage characters, and keep your table organized."
-                            : "Track your hero, review the party, and stay aligned with your DM."}
-                    </p>
-                </div>
-                <nav className="sidebar__nav">
-                    {navItems.map((item) => (
-                        <button
-                            key={item.key}
-                            type="button"
-                            className={`sidebar__nav-button${tab === item.key ? " is-active" : ""}`}
-                            onClick={() => setTab(item.key)}
-                        >
-                            <span className="sidebar__nav-label">{item.label}</span>
-                            <span className="sidebar__nav-desc">{item.description}</span>
-                        </button>
-                    ))}
-                </nav>
-                <div className="sidebar__footer">
-                    {isDM && <InviteButton gameId={game.id} />}
-                    <button
-                        type="button"
-                        className="btn ghost"
-                        onClick={() => {
-                            setActive(null);
-                            setDmSheetPlayerId(null);
-                        }}
+                <div className={shellClassName}>
+                    <aside
+                        id="game-sidebar"
+                        className="app-sidebar"
+                        aria-hidden={!sidebarOpen}
                     >
-                        Back to games
-                    </button>
-                </div>
-            </aside>
-            <main className="app-main">
-                <header className="app-main__header">
-                    <div>
-                        <span className="eyebrow">
-                            {isDM ? "Dungeon Master" : "Player"} View
-                        </span>
-                        <h1>{activeNav?.label || ""}</h1>
-                        {activeNav?.description && (
-                            <p className="text-muted">{activeNav.description}</p>
-                        )}
-                    </div>
-                    <div className="app-main__header-meta">
+                        <div className="sidebar__header">
+                            <span className="sidebar__mode">
+                                {isDM ? "Dungeon Master Mode" : "Player Mode"}
+                            </span>
+                            <h2 className="sidebar__title">{game.name}</h2>
+                            <p className="sidebar__summary">
+                                {isDM
+                                    ? "Share quick links, manage characters, and keep your table organized."
+                                    : "Track your hero, review the party, and stay aligned with your DM."}
+                            </p>
+                        </div>
+                        <nav className="sidebar__nav">
+                            {navItems.map((item) => (
+                                <button
+                                    key={item.key}
+                                    type="button"
+                                    className={`sidebar__nav-button${tab === item.key ? " is-active" : ""}`}
+                                    onClick={() => handleSelectNav(item.key)}
+                                >
+                                    <span className="sidebar__nav-label">{item.label}</span>
+                                    <span className="sidebar__nav-desc">{item.description}</span>
+                                </button>
+                            ))}
+                        </nav>
+                        <div className="sidebar__footer">
+                            {!isDM && myEntry && (
+                                <div className="sidebar__player-info" aria-live="polite">
+                                    <span className="sidebar__player-label">Macca</span>
+                                    <span className="sidebar__player-value">{playerMaccaInfo.label}</span>
+                                </div>
+                            )}
+                            {isDM && <InviteButton gameId={game.id} />}
+                            <button type="button" className="btn ghost" onClick={handleMainMenu}>
+                                Main menu
+                            </button>
+                            <button
+                                type="button"
+                                className="btn ghost"
+                                onClick={() => {
+                                    setActive(null);
+                                    setDmSheetPlayerId(null);
+                                }}
+                            >
+                                Back to games
+                            </button>
+                            <button
+                                type="button"
+                                className="btn danger"
+                                onClick={handleLogout}
+                                disabled={logoutBusy}
+                            >
+                                {logoutBusy ? "Logging out…" : "Log out"}
+                            </button>
+                        </div>
+                    </aside>
+                    <main className="app-main">
+                        <header className="app-main__header">
+                            <div className="header-leading">
+                                <button
+                                    type="button"
+                                    className={`sidebar-toggle${sidebarOpen ? "" : " is-closed"}`}
+                                    onClick={toggleSidebar}
+                                    aria-expanded={sidebarOpen}
+                                    aria-controls="game-sidebar"
+                                    title={sidebarOpen ? "Hide navigation" : "Show navigation"}
+                                >
+                                    <span className="sidebar-toggle__icon" aria-hidden>
+                                        ☰
+                                    </span>
+                                    <span className="sidebar-toggle__label">
+                                        {sidebarOpen ? "Hide menu" : "Show menu"}
+                                    </span>
+                                </button>
+                                <div>
+                                    <span className="eyebrow">
+                                        {isDM ? "Dungeon Master" : "Player"} View
+                                    </span>
+                                    <h1>{activeNav?.label || ""}</h1>
+                                    {activeNav?.description && (
+                                        <p className="text-muted">{activeNav.description}</p>
+                                    )}
+                                </div>
+                            </div>
+                        <div className="app-main__header-meta">
                         <div className="header-actions">
                             <button
                                 type="button"
