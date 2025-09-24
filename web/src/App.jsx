@@ -2837,7 +2837,25 @@ const MAP_DEFAULT_BACKGROUND = Object.freeze({
     rotation: 0,
     opacity: 1,
 });
-const MAP_SHAPE_TYPES = ['rectangle', 'circle', 'line'];
+const MAP_SHAPE_TYPES = ['rectangle', 'circle', 'line', 'diamond', 'triangle', 'cone', 'image'];
+const MAP_STANDARD_SHAPE_TYPES = MAP_SHAPE_TYPES.filter((type) => type !== 'image');
+const MAP_SHAPE_LABELS = {
+    rectangle: 'Rectangle',
+    circle: 'Circle',
+    line: 'Line',
+    diamond: 'Diamond',
+    triangle: 'Triangle',
+    cone: 'Cone',
+    image: 'Image overlay',
+};
+const ENEMY_TOOLTIP_PREFIX = '__enemy__v1:';
+const ENEMY_TOOLTIP_MAX_LENGTH = 480;
+const MAP_SIDEBAR_TABS = [
+    { key: 'tokens', label: 'Tokens' },
+    { key: 'overlays', label: 'External Images' },
+    { key: 'shapes', label: 'Shapes' },
+    { key: 'library', label: 'Library' },
+];
 
 function mapClamp01(value) {
     const num = Number(value);
@@ -2889,6 +2907,292 @@ function normalizeClientMapStroke(stroke) {
     };
 }
 
+function clampText(value, max = 200) {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    if (trimmed.length <= max) return trimmed;
+    return trimmed.slice(0, max).trim();
+}
+
+function normalizeEnemyStats(value, { maxLines = 6, maxLength = 100 } = {}) {
+    const lines = Array.isArray(value)
+        ? value
+        : typeof value === 'string'
+            ? value.split(/\r?\n/)
+            : [];
+    const out = [];
+    for (const line of lines) {
+        const normalized = clampText(line, maxLength);
+        if (!normalized) continue;
+        out.push(normalized);
+        if (out.length >= maxLines) break;
+    }
+    return out;
+}
+
+function buildEnemyTooltipText(info) {
+    if (!info) return '';
+    const parts = [];
+    if (info.showName && info.name) parts.push(info.name);
+    if (info.showStats && Array.isArray(info.stats) && info.stats.length > 0) {
+        parts.push(info.stats.join('\n'));
+    }
+    if (info.showNotes && info.notes) parts.push(info.notes);
+    return parts.join('\n').trim();
+}
+
+function enemyHasVisibleContent(info) {
+    if (!info) return false;
+    return (
+        (info.showName && !!info.name) ||
+        (info.showStats && Array.isArray(info.stats) && info.stats.length > 0) ||
+        (info.showNotes && !!info.notes) ||
+        (info.showImage && !!info.image)
+    );
+}
+
+function decodeEnemyTooltip(raw) {
+    if (typeof raw !== 'string') return null;
+    const trimmed = raw.trim();
+    if (!trimmed.startsWith(ENEMY_TOOLTIP_PREFIX)) return null;
+    try {
+        const payload = JSON.parse(trimmed.slice(ENEMY_TOOLTIP_PREFIX.length));
+        if (!payload || typeof payload !== 'object') return null;
+        const stats = normalizeEnemyStats(payload.stats);
+        const notes = clampText(payload.notes, 280);
+        const image = clampText(payload.image, 280);
+        const name = clampText(payload.name, 80);
+        return {
+            name,
+            showName: payload.showName !== false && !!name,
+            stats,
+            showStats: !!payload.showStats && stats.length > 0,
+            notes,
+            showNotes: !!payload.showNotes && !!notes,
+            image,
+            showImage: !!payload.showImage && !!image,
+            demonId: typeof payload.demonId === 'string' ? payload.demonId : '',
+        };
+    } catch {
+        return null;
+    }
+}
+
+function encodeEnemyTooltip(info) {
+    if (!info || typeof info !== 'object') return '';
+    const stats = normalizeEnemyStats(info.stats);
+    const name = clampText(info.name, 80);
+    const image = clampText(info.image, 280);
+    const notes = clampText(info.notes, 280);
+    const payload = {
+        v: 1,
+        name,
+        showName: !!info.showName && !!name,
+        stats,
+        showStats: !!info.showStats && stats.length > 0,
+        notes,
+        showNotes: !!info.showNotes && !!notes,
+        image,
+        showImage: !!info.showImage && !!image,
+    };
+    if (info.demonId) {
+        payload.demonId = String(info.demonId).slice(0, 160);
+    }
+    let json = JSON.stringify(payload);
+    if (json.length > ENEMY_TOOLTIP_MAX_LENGTH) {
+        payload.notes = '';
+        payload.showNotes = false;
+        json = JSON.stringify(payload);
+    }
+    if (json.length > ENEMY_TOOLTIP_MAX_LENGTH) {
+        payload.stats = payload.stats.slice(0, 3);
+        payload.showStats = payload.stats.length > 0 && payload.showStats;
+        json = JSON.stringify(payload);
+    }
+    if (json.length > ENEMY_TOOLTIP_MAX_LENGTH) {
+        payload.image = '';
+        payload.showImage = false;
+        json = JSON.stringify(payload);
+    }
+    if (json.length > ENEMY_TOOLTIP_MAX_LENGTH) {
+        delete payload.demonId;
+        json = JSON.stringify(payload);
+    }
+    if (json.length > ENEMY_TOOLTIP_MAX_LENGTH && payload.name) {
+        const trimBy = json.length - ENEMY_TOOLTIP_MAX_LENGTH;
+        payload.name = payload.name.slice(0, Math.max(0, payload.name.length - trimBy));
+        json = JSON.stringify(payload);
+    }
+    if (json.length > ENEMY_TOOLTIP_MAX_LENGTH) {
+        json = json.slice(0, ENEMY_TOOLTIP_MAX_LENGTH);
+        // Attempt to close JSON if truncated mid-structure
+        const lastBrace = json.lastIndexOf('}');
+        if (lastBrace > -1) {
+            json = json.slice(0, lastBrace + 1);
+        }
+        try {
+            JSON.parse(json);
+        } catch {
+            return clampText(buildEnemyTooltipText(info), ENEMY_TOOLTIP_MAX_LENGTH);
+        }
+    }
+    return `${ENEMY_TOOLTIP_PREFIX}${json}`;
+}
+
+function normalizeEnemyInfo(raw, { fallbackLabel = '' } = {}) {
+    if (!raw || typeof raw !== 'object') {
+        return {
+            name: '',
+            showName: false,
+            stats: [],
+            showStats: false,
+            notes: '',
+            showNotes: false,
+            image: '',
+            showImage: false,
+            demonId: '',
+        };
+    }
+    const stats = normalizeEnemyStats(raw.stats);
+    const name = clampText(raw.name, 80) || clampText(fallbackLabel, 80);
+    const image = clampText(raw.image, 280);
+    const notes = clampText(raw.notes, 280);
+    return {
+        name,
+        showName: raw.showName !== false && !!name,
+        stats,
+        showStats: !!raw.showStats && stats.length > 0,
+        notes,
+        showNotes: !!raw.showNotes && !!notes,
+        image,
+        showImage: !!raw.showImage && !!image,
+        demonId: typeof raw.demonId === 'string' ? raw.demonId : '',
+    };
+}
+
+function createEnemyDetails() {
+    return {
+        demonId: '',
+        name: '',
+        image: '',
+        stats: '',
+        notes: '',
+        showName: true,
+        showImage: false,
+        showStats: true,
+        showNotes: false,
+    };
+}
+
+function createEnemyFormState() {
+    return {
+        id: null,
+        label: '',
+        color: MAP_ENEMY_DEFAULT_COLOR,
+        showTooltip: true,
+        details: createEnemyDetails(),
+    };
+}
+
+function detailsFromEnemyInfo(info, { fallbackLabel = '' } = {}) {
+    const normalized = normalizeEnemyInfo(info || {}, { fallbackLabel });
+    return {
+        demonId: normalized.demonId || '',
+        name: clampText(normalized.name, 80),
+        image: normalized.image || '',
+        stats: (normalized.stats || []).join('\n'),
+        notes: normalized.notes || '',
+        showName: normalized.showName,
+        showImage: normalized.showImage,
+        showStats: normalized.showStats,
+        showNotes: normalized.showNotes,
+    };
+}
+
+function buildEnemyInfoFromDetails(details, { fallbackLabel = '' } = {}) {
+    const stats = normalizeEnemyStats(details?.stats);
+    const name = clampText(details?.name, 80) || clampText(fallbackLabel, 80);
+    const image = clampText(details?.image, 280);
+    const notes = clampText(details?.notes, 280);
+    return {
+        name,
+        showName: !!details?.showName && !!name,
+        stats,
+        showStats: !!details?.showStats && stats.length > 0,
+        notes,
+        showNotes: !!details?.showNotes && !!notes,
+        image,
+        showImage: !!details?.showImage && !!image,
+        demonId: typeof details?.demonId === 'string' ? details.demonId : '',
+    };
+}
+
+function describeDemonEnemyStats(demon) {
+    if (!demon || typeof demon !== 'object') return '';
+    const lines = [];
+    if (demon.arcana) lines.push(`Arcana: ${demon.arcana}`);
+    if (demon.alignment) lines.push(`Alignment: ${demon.alignment}`);
+    const levelRaw = Number(demon.level);
+    if (Number.isFinite(levelRaw) && levelRaw > 0) lines.push(`Level ${levelRaw}`);
+    const abilities = demon.stats || {};
+    const abilityOrder = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'];
+    const abilityLine = abilityOrder
+        .map((key) => {
+            const value = Number(abilities?.[key]);
+            return `${key} ${Number.isFinite(value) ? value : '-'}`;
+        })
+        .join(' · ');
+    if (abilityLine.trim()) {
+        lines.push(abilityLine);
+    }
+    return lines.join('\n');
+}
+
+function MapAccordionSection({ title, description, children, defaultOpen = true }) {
+    const [open, setOpen] = useState(defaultOpen);
+    return (
+        <section className={`map-accordion${open ? ' is-open' : ''}`}>
+            <button type="button" className="map-accordion__header" onClick={() => setOpen((prev) => !prev)}>
+                <span>{title}</span>
+                <span className="map-accordion__icon">{open ? '▾' : '▸'}</span>
+            </button>
+            {description && <p className="map-accordion__description">{description}</p>}
+            {open && <div className="map-accordion__body">{children}</div>}
+        </section>
+    );
+}
+
+function EnemyTooltipCard({ info, label }) {
+    if (!info) return null;
+    const hasName = info.showName && info.name;
+    const hasStats = info.showStats && Array.isArray(info.stats) && info.stats.length > 0;
+    const hasNotes = info.showNotes && info.notes;
+    const hasImage = info.showImage && info.image;
+    if (!hasName && !hasStats && !hasNotes && !hasImage) {
+        return null;
+    }
+    return (
+        <div className="map-token__tooltip-card">
+            {hasImage && (
+                <div className="map-token__tooltip-image">
+                    <DemonImage src={info.image} alt={info.name || label} personaSlug={info.demonId || undefined} />
+                </div>
+            )}
+            <div className="map-token__tooltip-body">
+                {hasName && <div className="map-token__tooltip-name">{info.name}</div>}
+                {hasStats && (
+                    <div className="map-token__tooltip-stats">
+                        {info.stats.map((line, idx) => (
+                            <span key={idx}>{line}</span>
+                        ))}
+                    </div>
+                )}
+                {hasNotes && <div className="map-token__tooltip-notes">{info.notes}</div>}
+            </div>
+        </div>
+    );
+}
+
 function normalizeClientMapToken(token) {
     if (!token || typeof token !== 'object') return null;
     const kind = typeof token.kind === 'string' ? token.kind : 'custom';
@@ -2896,15 +3200,38 @@ function normalizeClientMapToken(token) {
     const label =
         labelRaw.trim() ||
         (kind === 'player' ? 'Player' : kind === 'demon' ? 'Demon' : kind === 'enemy' ? 'Enemy' : 'Marker');
-    const tooltipRaw = typeof token.tooltip === 'string' ? token.tooltip : '';
-    const tooltipTrimmed = tooltipRaw.trim();
-    const tooltip = tooltipTrimmed || label;
-    const showTooltip = token.showTooltip !== false && !!tooltip;
+    const tooltipSource = typeof token.tooltip === 'string' ? token.tooltip : '';
+    let tooltipTrimmed = tooltipSource.trim();
+    let tooltip = tooltipTrimmed || label;
+    let showTooltip = token.showTooltip !== false && !!tooltipTrimmed;
+    let enemyInfo = null;
     let color = typeof token.color === 'string' && token.color ? token.color : '#a855f7';
     if (!token.color) {
         if (kind === 'player') color = '#38bdf8';
         else if (kind === 'demon') color = '#f97316';
         else if (kind === 'enemy') color = MAP_ENEMY_DEFAULT_COLOR;
+    }
+    if (kind === 'enemy') {
+        const decoded = decodeEnemyTooltip(tooltipSource);
+        if (decoded) {
+            enemyInfo = normalizeEnemyInfo(decoded, { fallbackLabel: label });
+            tooltip = buildEnemyTooltipText(enemyInfo);
+            tooltipTrimmed = tooltip.trim();
+            showTooltip = token.showTooltip !== false && enemyHasVisibleContent(enemyInfo);
+        } else {
+            enemyInfo = normalizeEnemyInfo(
+                {
+                    name: label,
+                    showName: true,
+                    notes: tooltipTrimmed && tooltipTrimmed !== label ? tooltipTrimmed : '',
+                    showNotes: !!tooltipTrimmed && tooltipTrimmed !== label,
+                },
+                { fallbackLabel: label },
+            );
+            tooltip = tooltipTrimmed || label;
+            tooltipTrimmed = tooltip.trim();
+            showTooltip = token.showTooltip !== false && !!tooltipTrimmed;
+        }
     }
     return {
         id: token.id || `token-${Math.random().toString(36).slice(2, 10)}`,
@@ -2913,11 +3240,13 @@ function normalizeClientMapToken(token) {
         label,
         tooltip,
         rawTooltip: tooltipTrimmed,
+        tooltipSource: tooltipSource.trim(),
         showTooltip,
         color,
         x: mapClamp01(token.x),
         y: mapClamp01(token.y),
         ownerId: typeof token.ownerId === 'string' ? token.ownerId : null,
+        ...(enemyInfo ? { enemyInfo } : {}),
     };
 }
 
@@ -2928,17 +3257,42 @@ function normalizeClientMapShape(shape) {
     const id = typeof shape.id === 'string' && shape.id ? shape.id : `shape-${Math.random().toString(36).slice(2, 10)}`;
     const x = mapClamp01(Object.prototype.hasOwnProperty.call(shape, 'x') ? shape.x : 0.5);
     const y = mapClamp01(Object.prototype.hasOwnProperty.call(shape, 'y') ? shape.y : 0.5);
-    const width = clamp(shape.width, 0.02, 1, 0.25);
-    const height = type === 'circle' ? width : clamp(shape.height, 0.02, 1, width);
+    const defaultSize = type === 'image' ? 0.4 : 0.25;
+    const width = clamp(shape.width, 0.02, 1, defaultSize);
+    let height = clamp(shape.height, 0.02, 1, type === 'line' ? 0.05 : defaultSize);
+    if (type === 'circle' || type === 'diamond') {
+        height = width;
+    }
     const rotationRaw = Number(shape.rotation);
     const rotation = Number.isFinite(rotationRaw) ? ((rotationRaw % 360) + 360) % 360 : 0;
-    const fill = typeof shape.fill === 'string' && shape.fill ? shape.fill : '#1e293b';
+    const fill =
+        type === 'image'
+            ? 'transparent'
+            : typeof shape.fill === 'string' && shape.fill
+                ? shape.fill
+                : '#1e293b';
     const stroke = typeof shape.stroke === 'string' && shape.stroke ? shape.stroke : '#f8fafc';
     const strokeWidth = clamp(shape.strokeWidth, 0, 20, 2);
-    const opacity = clamp(shape.opacity, 0.05, 1, 0.6);
+    const opacity = clamp(shape.opacity, 0.05, 1, type === 'image' ? 1 : 0.6);
     const createdAt = typeof shape.createdAt === 'string' ? shape.createdAt : null;
     const updatedAt = typeof shape.updatedAt === 'string' ? shape.updatedAt : createdAt;
-    return { id, type, x, y, width, height, rotation, fill, stroke, strokeWidth, opacity, createdAt, updatedAt };
+    const url = type === 'image' && typeof shape.url === 'string' ? shape.url.trim() : '';
+    return {
+        id,
+        type,
+        x,
+        y,
+        width,
+        height,
+        rotation,
+        fill,
+        stroke,
+        strokeWidth,
+        opacity,
+        createdAt,
+        updatedAt,
+        ...(type === 'image' ? { url } : {}),
+    };
 }
 
 function normalizeClientMapBackground(background) {
@@ -3155,12 +3509,21 @@ function MapTab({ game, me }) {
     const [playerChoice, setPlayerChoice] = useState('');
     const [demonChoice, setDemonChoice] = useState('');
     const [demonQuery, setDemonQuery] = useState('');
-    const [enemyForm, setEnemyForm] = useState({
-        label: '',
-        tooltip: '',
-        color: MAP_ENEMY_DEFAULT_COLOR,
-        showTooltip: true,
+    const [enemyForm, setEnemyForm] = useState(createEnemyFormState);
+    const [enemyDemonChoice, setEnemyDemonChoice] = useState('');
+    const [enemyQuery, setEnemyQuery] = useState('');
+    const [sidebarTab, setSidebarTab] = useState('tokens');
+    const [overlayForm, setOverlayForm] = useState({
+        url: '',
+        width: 0.4,
+        height: 0.4,
+        opacity: 1,
+        rotation: 0,
     });
+    const resetEnemyForm = useCallback(() => {
+        setEnemyForm(createEnemyFormState());
+        setEnemyDemonChoice('');
+    }, []);
 
     useEffect(() => {
         if (!isDM && tool === 'draw' && (!mapState.settings.allowPlayerDrawing || mapState.paused)) {
@@ -3191,9 +3554,10 @@ function MapTab({ game, me }) {
     const canDraw = isDM || (!mapState.paused && mapState.settings.allowPlayerDrawing);
     const canPaint = canDraw && tool === 'draw';
     const isBackgroundTool = tool === 'background';
-    const tokenLayerPointerEvents = canPaint || isBackgroundTool ? 'none' : 'auto';
-    const shapeLayerPointerEvents = canPaint || isBackgroundTool ? 'none' : 'auto';
-    const canvasPointerEvents = isBackgroundTool ? 'none' : 'auto';
+    const isShapeTool = tool === 'shape';
+    const tokenLayerPointerEvents = canPaint || isBackgroundTool || (isDM && isShapeTool) ? 'none' : 'auto';
+    const shapeLayerPointerEvents = isDM && isShapeTool ? 'auto' : 'none';
+    const canvasPointerEvents = isBackgroundTool || isShapeTool ? 'none' : 'auto';
     const backgroundDisplay = useMemo(() => {
         const base = mapState.background || MAP_DEFAULT_BACKGROUND;
         if (dragPreview && dragPreview.kind === 'background') {
@@ -3236,7 +3600,20 @@ function MapTab({ game, me }) {
         () => mapState.tokens.filter((token) => token.kind === 'enemy'),
         [mapState.tokens]
     );
+    const imageShapes = useMemo(
+        () => mapState.shapes.filter((shape) => shape.type === 'image'),
+        [mapState.shapes]
+    );
+    const areaShapes = useMemo(
+        () => mapState.shapes.filter((shape) => shape.type !== 'image'),
+        [mapState.shapes]
+    );
+    const enemyDetailsInfo = useMemo(
+        () => buildEnemyInfoFromDetails(enemyForm.details, { fallbackLabel: enemyForm.label || 'Enemy' }),
+        [enemyForm.details, enemyForm.label]
+    );
     const enemyFormValid = enemyForm.label.trim().length > 0;
+    const enemyFormHasVisibleTooltip = enemyHasVisibleContent(enemyDetailsInfo);
 
     const availablePlayers = useMemo(() => {
         if (!isDM) return [];
@@ -3273,6 +3650,24 @@ function MapTab({ game, me }) {
                 subtitle: describeDemonTooltip(demon),
             }));
     }, [demonQuery, game.demons, isDM]);
+
+    const enemyDemonOptions = useMemo(() => {
+        if (!isDM) return [];
+        const term = enemyQuery.trim().toLowerCase();
+        return (game.demons || [])
+            .filter(
+                (demon) =>
+                    demon &&
+                    demon.id &&
+                    (!term || (demon.name || '').toLowerCase().includes(term))
+            )
+            .slice(0, 25)
+            .map((demon) => ({
+                id: demon.id,
+                label: demon.name || 'Demon',
+                subtitle: describeDemonTooltip(demon),
+            }));
+    }, [enemyQuery, game.demons, isDM]);
 
     const getPointerPosition = useCallback(
         (event) => {
@@ -3699,40 +4094,58 @@ function MapTab({ game, me }) {
         }
     }, [demonChoice, game.id]);
 
-    const handleAddEnemyToken = useCallback(async () => {
+    const handleSubmitEnemyToken = useCallback(async () => {
         const name = enemyForm.label.trim();
         if (!name) return;
         try {
+            const info = buildEnemyInfoFromDetails(enemyForm.details, { fallbackLabel: name });
             const payload = {
                 kind: 'enemy',
                 label: name,
                 color: enemyForm.color || MAP_ENEMY_DEFAULT_COLOR,
-                showTooltip: !!enemyForm.showTooltip,
+                showTooltip: !!enemyForm.showTooltip && enemyHasVisibleContent(info),
             };
-            const tooltip = enemyForm.tooltip.trim();
-            if (tooltip) {
-                payload.tooltip = tooltip;
+            if (enemyHasVisibleContent(info) || info.demonId) {
+                const encoded = encodeEnemyTooltip(info);
+                if (encoded) {
+                    payload.tooltip = encoded;
+                }
             }
-            const response = await Games.addMapToken(game.id, payload);
-            const normalized = normalizeClientMapToken(response);
-            if (normalized) {
-                setMapState((prev) => ({
-                    ...prev,
-                    tokens: prev.tokens.concat(normalized),
-                    updatedAt: response?.updatedAt || prev.updatedAt,
-                }));
+            if (enemyForm.id) {
+                const response = await Games.updateMapToken(game.id, enemyForm.id, {
+                    ...payload,
+                    tooltip: payload.tooltip ?? '',
+                });
+                const normalized = normalizeClientMapToken(response);
+                if (normalized) {
+                    setMapState((prev) => ({
+                        ...prev,
+                        tokens: prev.tokens.map((entry) => (entry.id === normalized.id ? normalized : entry)),
+                        updatedAt: response?.updatedAt || prev.updatedAt,
+                    }));
+                }
+            } else {
+                const response = await Games.addMapToken(game.id, payload);
+                const normalized = normalizeClientMapToken(response);
+                if (normalized) {
+                    setMapState((prev) => ({
+                        ...prev,
+                        tokens: prev.tokens.concat(normalized),
+                        updatedAt: response?.updatedAt || prev.updatedAt,
+                    }));
+                }
             }
-            setEnemyForm({ label: '', tooltip: '', color: MAP_ENEMY_DEFAULT_COLOR, showTooltip: true });
+            resetEnemyForm();
         } catch (err) {
             alert(err.message);
         }
-    }, [enemyForm, game.id]);
+    }, [enemyForm, game.id, resetEnemyForm]);
 
     const handleAddShape = useCallback(
-        async (type) => {
+        async (type, extras = {}) => {
             if (!isDM) return;
             try {
-                const response = await Games.addMapShape(game.id, { type });
+                const response = await Games.addMapShape(game.id, { type, ...extras });
                 const normalized = normalizeClientMapShape(response);
                 if (normalized) {
                     setMapState((prev) => ({
@@ -3789,7 +4202,7 @@ function MapTab({ game, me }) {
 
     const handleShapePointerDown = useCallback(
         (shape, event) => {
-            if (!shape || !isDM || isBackgroundTool || tool === 'draw') return;
+            if (!shape || !isDM || tool !== 'shape') return;
             event.preventDefault();
             event.stopPropagation();
             const { x, y } = getPointerPosition(event);
@@ -3806,7 +4219,7 @@ function MapTab({ game, me }) {
             setDragging({ kind: 'shape', id: shape.id, pointerId: event.pointerId, offsetX, offsetY });
             setDragPreview({ kind: 'shape', id: shape.id, x: mapClamp01(x - offsetX), y: mapClamp01(y - offsetY) });
         },
-        [getPointerPosition, isBackgroundTool, isDM, tool]
+        [getPointerPosition, isDM, tool]
     );
 
     const handleShapePointerMove = useCallback(
@@ -3850,6 +4263,55 @@ function MapTab({ game, me }) {
     );
 
     const storyConfigured = !!game.story?.webhookConfigured;
+
+    const handleEditEnemyToken = useCallback(
+        (token) => {
+            if (!isDM || !token) return;
+            const details = detailsFromEnemyInfo(token.enemyInfo || {}, { fallbackLabel: token.label || 'Enemy' });
+            setEnemyForm({
+                id: token.id,
+                label: token.label || '',
+                color: token.color || MAP_ENEMY_DEFAULT_COLOR,
+                showTooltip: token.showTooltip,
+                details,
+            });
+            setEnemyDemonChoice(details.demonId || '');
+            setSidebarTab('tokens');
+        },
+        [isDM]
+    );
+
+    const handleImportEnemyDemon = useCallback(() => {
+        if (!isDM) return;
+        const slug = (enemyDemonChoice || '').trim();
+        if (!slug) return;
+        const demon = demonMap.get(slug);
+        if (!demon) return;
+        const statsText = describeDemonEnemyStats(demon);
+        const description = clampText(demon.description, 280);
+        setEnemyForm((prev) => {
+            const nextName = demon.name || prev.details.name || prev.label || 'Enemy';
+            const nextStats = statsText || prev.details.stats;
+            const nextNotes = prev.details.notes || description;
+            return {
+                ...prev,
+                label: prev.id ? prev.label : prev.label || demon.name || 'Enemy',
+                details: {
+                    ...prev.details,
+                    demonId: demon.id || prev.details.demonId || '',
+                    name: nextName,
+                    image: demon.image || prev.details.image || '',
+                    stats: nextStats,
+                    notes: nextNotes,
+                    showName: true,
+                    showImage: !!(demon.image || prev.details.image),
+                    showStats: !!nextStats,
+                    showNotes: !!nextNotes,
+                },
+            };
+        });
+        setEnemyDemonChoice('');
+    }, [demonMap, enemyDemonChoice, isDM]);
 
     const handleShareMapToStory = useCallback(
         async () => {
@@ -3983,6 +4445,15 @@ function MapTab({ game, me }) {
                                     Background
                                 </button>
                             )}
+                            {isDM && (
+                                <button
+                                    type="button"
+                                    className={`btn btn-small${tool === 'shape' ? ' is-active' : ' secondary'}`}
+                                    onClick={() => setTool('shape')}
+                                >
+                                    Shapes
+                                </button>
+                            )}
                         </div>
                     </div>
                     <div className="map-toolbar__status">
@@ -4098,28 +4569,67 @@ function MapTab({ game, me }) {
                                     : shape;
                             const widthPercent = Math.max(display.width * 100, 1);
                             const heightPercent = Math.max(display.height * 100, 1);
-                            const style = {
+                            const baseStyle = {
                                 left: `${display.x * 100}%`,
                                 top: `${display.y * 100}%`,
                                 width: `${widthPercent}%`,
                                 height: `${heightPercent}%`,
                                 transform: `translate(-50%, -50%) rotate(${display.rotation}deg)`,
+                            };
+                            const className = [
+                                'map-shape',
+                                `map-shape--${display.type}`,
+                                isDM && tool === 'shape' ? 'is-editing' : '',
+                            ]
+                                .filter(Boolean)
+                                .join(' ');
+                            if (display.type === 'image') {
+                                return (
+                                    <div
+                                        key={shape.id}
+                                        className={className}
+                                        style={baseStyle}
+                                        onPointerDown={(event) => handleShapePointerDown(shape, event)}
+                                        onPointerMove={(event) => handleShapePointerMove(shape, event)}
+                                        onPointerUp={(event) => handleShapePointerUp(shape, event)}
+                                        onPointerCancel={(event) => handleShapePointerUp(shape, event)}
+                                    >
+                                        {display.url ? (
+                                            <img
+                                                src={display.url}
+                                                alt=""
+                                                className="map-shape__image"
+                                                draggable={false}
+                                            />
+                                        ) : (
+                                            <span className="map-shape__empty">Set image URL</span>
+                                        )}
+                                    </div>
+                                );
+                            }
+                            const surfaceStyle = {
                                 background: display.type === 'line' ? display.stroke : display.fill,
                                 opacity: display.opacity,
                                 borderColor: display.stroke,
                                 borderWidth: display.type === 'line' ? 0 : `${display.strokeWidth}px`,
-                                borderStyle: 'solid',
+                                borderStyle: display.type === 'line' ? 'none' : 'solid',
+                                boxShadow:
+                                    display.type === 'line' || display.strokeWidth <= 0
+                                        ? 'none'
+                                        : `0 0 0 ${display.strokeWidth}px ${display.stroke}`,
                             };
                             return (
                                 <div
                                     key={shape.id}
-                                    className={`map-shape map-shape--${display.type}`}
-                                    style={style}
+                                    className={className}
+                                    style={baseStyle}
                                     onPointerDown={(event) => handleShapePointerDown(shape, event)}
                                     onPointerMove={(event) => handleShapePointerMove(shape, event)}
                                     onPointerUp={(event) => handleShapePointerUp(shape, event)}
                                     onPointerCancel={(event) => handleShapePointerUp(shape, event)}
-                                />
+                                >
+                                    <div className="map-shape__surface" style={surfaceStyle} />
+                                </div>
                             );
                         })}
                     </div>
@@ -4146,7 +4656,15 @@ function MapTab({ game, me }) {
                                     onPointerCancel={(event) => handleTokenPointerUp(token, event)}
                                 >
                                     <span className="map-token__label">{label.slice(0, 2).toUpperCase()}</span>
-                                    {showTooltip && <span className="map-token__tooltip">{token.tooltip}</span>}
+                                    {showTooltip && (
+                                        token.kind === 'enemy' && token.enemyInfo ? (
+                                            <span className="map-token__tooltip map-token__tooltip--card">
+                                                <EnemyTooltipCard info={token.enemyInfo} label={label} />
+                                            </span>
+                                        ) : (
+                                            <span className="map-token__tooltip">{token.tooltip}</span>
+                                        )
+                                    )}
                                 </button>
                             );
                         })}
@@ -4161,626 +4679,1297 @@ function MapTab({ game, me }) {
                     )}
                 </div>
                 <aside className="map-sidebar">
-                    <div className="map-panel card">
-                        <h3>Player tokens</h3>
-                        {isDM && availablePlayers.length > 0 && (
-                            <div className="map-panel__add">
-                                <label className="text-small" htmlFor="map-add-player">Add party member</label>
-                                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                                    <select
-                                        id="map-add-player"
-                                        value={playerChoice}
-                                        onChange={(event) => setPlayerChoice(event.target.value)}
-                                    >
-                                        <option value="">Select a player…</option>
-                                        {availablePlayers.map((player) => (
-                                            <option key={player.id} value={player.id}>
-                                                {player.label}
-                                            </option>
-                                        ))}
-                                    </select>
-                                    <button
-                                        type="button"
-                                        className="btn btn-small"
-                                        onClick={handleAddPlayerToken}
-                                        disabled={!playerChoice}
-                                    >
-                                        Place token
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-                        {playerTokens.length === 0 ? (
-                            <p className="map-empty text-muted">No party members on the board yet.</p>
-                        ) : (
-                            <div className="list">
-                                {playerTokens.map((token) => {
-                                    const player = playerMap.get(token.refId);
-                                    const label = token.label || describePlayerName(player);
-                                    const subtitle = describePlayerTooltip(player);
-                                    return (
-                                        <div key={token.id} className="map-token-row">
-                                            <div>
-                                                <strong>{label}</strong>
-                                                {subtitle && <div className="text-muted text-small">{subtitle}</div>}
-                                            </div>
-                                            {isDM && (
-                                                <div className="row" style={{ gap: 8 }}>
-                                                    <label className="perm-toggle">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={token.showTooltip}
-                                                            onChange={(event) => handleToggleTooltip(token, event.target.checked)}
-                                                        />
-                                                        <span className="perm-toggle__text">Tooltip</span>
-                                                    </label>
-                                                    <button
-                                                        type="button"
-                                                        className="btn ghost btn-small"
-                                                        onClick={() => handleRemoveToken(token)}
-                                                    >
-                                                        Remove
-                                                    </button>
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        )}
+                    <div className="map-sidebar__tabs">
+                        {MAP_SIDEBAR_TABS.map((tab) => (
+                            <button
+                                key={tab.key}
+                                type="button"
+                                className={`map-sidebar__tab${sidebarTab === tab.key ? ' is-active' : ''}`}
+                                onClick={() => setSidebarTab(tab.key)}
+                            >
+                                {tab.label}
+                            </button>
+                        ))}
                     </div>
-                    <div className="map-panel card">
-                        <h3>Companion tokens</h3>
-                        {isDM && (
-                            <div className="map-panel__add">
-                                <label className="text-small" htmlFor="map-demon-search">Search codex</label>
-                                <input
-                                    id="map-demon-search"
-                                    type="text"
-                                    value={demonQuery}
-                                    onChange={(event) => setDemonQuery(event.target.value)}
-                                    placeholder="Filter demons…"
-                                />
-                                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                                    <select
-                                        value={demonChoice}
-                                        onChange={(event) => setDemonChoice(event.target.value)}
-                                    >
-                                        <option value="">Select a demon…</option>
-                                        {demonOptions.map((option) => (
-                                            <option key={option.id} value={option.id}>
-                                                {option.label}
-                                            </option>
-                                        ))}
-                                    </select>
-                                    <button
-                                        type="button"
-                                        className="btn btn-small"
-                                        onClick={handleAddDemonToken}
-                                        disabled={!demonChoice}
-                                    >
-                                        Summon
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-                        {demonTokens.length === 0 ? (
-                            <p className="map-empty text-muted">No companions placed.</p>
-                        ) : (
-                            <div className="list">
-                                {demonTokens.map((token) => {
-                                    const demon = demonMap.get(token.refId);
-                                    const label = token.label || demon?.name || 'Demon';
-                                    const subtitle = describeDemonTooltip(demon);
-                                    return (
-                                        <div key={token.id} className="map-token-row">
-                                            <div>
-                                                <strong>{label}</strong>
-                                                {subtitle && <div className="text-muted text-small">{subtitle}</div>}
-                                            </div>
-                                            {isDM && (
-                                                <div className="row" style={{ gap: 8 }}>
-                                                    <label className="perm-toggle">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={token.showTooltip}
-                                                            onChange={(event) => handleToggleTooltip(token, event.target.checked)}
-                                                        />
-                                                        <span className="perm-toggle__text">Tooltip</span>
-                                                    </label>
-                                                    <button
-                                                        type="button"
-                                                        className="btn ghost btn-small"
-                                                        onClick={() => handleRemoveToken(token)}
-                                                    >
-                                                        Remove
-                                                    </button>
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        )}
-                    </div>
-                    <div className="map-panel card">
-                        <h3>Enemy tokens</h3>
-                        {isDM && (
-                            <div className="map-panel__add">
-                                <label className="text-small" htmlFor="map-enemy-name">Enemy name</label>
-                                <input
-                                    id="map-enemy-name"
-                                    type="text"
-                                    value={enemyForm.label}
-                                    onChange={(event) =>
-                                        setEnemyForm((prev) => ({
-                                            ...prev,
-                                            label: event.target.value,
-                                        }))
-                                    }
-                                    placeholder="e.g. Shadow Trooper"
-                                />
-                                <label className="text-small" htmlFor="map-enemy-tooltip">Tooltip (optional)</label>
-                                <textarea
-                                    id="map-enemy-tooltip"
-                                    rows={2}
-                                    value={enemyForm.tooltip}
-                                    onChange={(event) =>
-                                        setEnemyForm((prev) => ({
-                                            ...prev,
-                                            tooltip: event.target.value,
-                                        }))
-                                    }
-                                    placeholder="HP, status, or notes…"
-                                />
-                                <div className="row" style={{ justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                                    <label className="color-input" htmlFor="map-enemy-color">
-                                        <span className="text-small">Token color</span>
-                                        <input
-                                            id="map-enemy-color"
-                                            type="color"
-                                            value={enemyForm.color}
-                                            onChange={(event) =>
-                                                setEnemyForm((prev) => ({
-                                                    ...prev,
-                                                    color: event.target.value || MAP_ENEMY_DEFAULT_COLOR,
-                                                }))
-                                            }
-                                        />
-                                        <span className="text-muted text-small">
-                                            {(enemyForm.color || MAP_ENEMY_DEFAULT_COLOR).toUpperCase()}
-                                        </span>
-                                    </label>
-                                    <label className="perm-toggle" style={{ marginLeft: 'auto' }}>
-                                        <input
-                                            type="checkbox"
-                                            checked={enemyForm.showTooltip}
-                                            onChange={(event) =>
-                                                setEnemyForm((prev) => ({
-                                                    ...prev,
-                                                    showTooltip: event.target.checked,
-                                                }))
-                                            }
-                                        />
-                                        <span className="perm-toggle__text">Show tooltip on hover</span>
-                                    </label>
-                                </div>
-                                <button
-                                    type="button"
-                                    className="btn btn-small"
-                                    onClick={handleAddEnemyToken}
-                                    disabled={!enemyFormValid}
+                    <div className="map-sidebar__content">
+                        {sidebarTab === 'tokens' && (
+                            <div className="stack">
+                                <MapAccordionSection
+                                    title="Player tokens"
+                                    description="Place and manage party members on the encounter map."
                                 >
-                                    Place enemy
-                                </button>
-                            </div>
-                        )}
-                        {enemyTokens.length === 0 ? (
-                            <p className="map-empty text-muted">No enemies placed.</p>
-                        ) : (
-                            <div className="list">
-                                {enemyTokens.map((token) => (
-                                    <div key={token.id} className="map-token-row">
-                                        <div>
-                                            <strong>{token.label}</strong>
-                                            {token.rawTooltip && (
-                                                <div className="text-muted text-small">{token.rawTooltip}</div>
+                                    {isDM && (
+                                        <>
+                                            {availablePlayers.length > 0 ? (
+                                                <div className="map-token-form">
+                                                    <label className="text-small" htmlFor="map-add-player">
+                                                        Add party member
+                                                    </label>
+                                                    <div className="map-token-form__controls">
+                                                        <select
+                                                            id="map-add-player"
+                                                            value={playerChoice}
+                                                            onChange={(event) => setPlayerChoice(event.target.value)}
+                                                        >
+                                                            <option value="">Select a player…</option>
+                                                            {availablePlayers.map((player) => (
+                                                                <option key={player.id} value={player.id}>
+                                                                    {player.label}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                        <button
+                                                            type="button"
+                                                            className="btn btn-small"
+                                                            onClick={handleAddPlayerToken}
+                                                            disabled={!playerChoice}
+                                                        >
+                                                            Place token
+                                                        </button>
+                                                    </div>
+                                                    <p className="text-small text-muted">
+                                                        Tokens can be dragged when the Select tool is active.
+                                                    </p>
+                                                </div>
+                                            ) : (
+                                                <p className="text-small text-muted">
+                                                    Every party member already has a token on the board.
+                                                </p>
                                             )}
-                                        </div>
-                                        {isDM && (
-                                            <div className="row" style={{ gap: 8 }}>
-                                                <label className="perm-toggle">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={token.showTooltip}
-                                                        onChange={(event) =>
-                                                            handleToggleTooltip(token, event.target.checked)
-                                                        }
-                                                    />
-                                                    <span className="perm-toggle__text">Tooltip</span>
-                                                </label>
+                                        </>
+                                    )}
+                                    {playerTokens.length === 0 ? (
+                                        <p className="map-empty text-muted">No party members on the board yet.</p>
+                                    ) : (
+                                        <ul className="map-token-list">
+                                            {playerTokens.map((token) => {
+                                                const player = playerMap.get(token.refId);
+                                                const label = token.label || describePlayerName(player);
+                                                const subtitle = describePlayerTooltip(player);
+                                                return (
+                                                    <li key={token.id} className="map-token-list__item">
+                                                        <div className="map-token-list__info">
+                                                            <strong>{label}</strong>
+                                                            {subtitle && (
+                                                                <span className="text-muted text-small">{subtitle}</span>
+                                                            )}
+                                                        </div>
+                                                        {isDM && (
+                                                            <div className="map-token-list__actions">
+                                                                <label className="perm-toggle">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={token.showTooltip}
+                                                                        onChange={(event) =>
+                                                                            handleToggleTooltip(token, event.target.checked)
+                                                                        }
+                                                                    />
+                                                                    <span className="perm-toggle__text">Tooltip</span>
+                                                                </label>
+                                                                <button
+                                                                    type="button"
+                                                                    className="btn ghost btn-small"
+                                                                    onClick={() => handleRemoveToken(token)}
+                                                                >
+                                                                    Remove
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </li>
+                                                );
+                                            })}
+                                        </ul>
+                                    )}
+                                </MapAccordionSection>
+                                <MapAccordionSection
+                                    title="Companion tokens"
+                                    description="Summon demons or allies from your codex."
+                                >
+                                    {isDM && (
+                                        <div className="map-token-form">
+                                            <label className="text-small" htmlFor="map-demon-search">
+                                                Search codex
+                                            </label>
+                                            <input
+                                                id="map-demon-search"
+                                                type="text"
+                                                value={demonQuery}
+                                                onChange={(event) => setDemonQuery(event.target.value)}
+                                                placeholder="Filter demons…"
+                                            />
+                                            <div className="map-token-form__controls">
+                                                <select
+                                                    value={demonChoice}
+                                                    onChange={(event) => setDemonChoice(event.target.value)}
+                                                >
+                                                    <option value="">Select a demon…</option>
+                                                    {demonOptions.map((option) => (
+                                                        <option key={option.id} value={option.id}>
+                                                            {option.label}
+                                                        </option>
+                                                    ))}
+                                                </select>
                                                 <button
                                                     type="button"
-                                                    className="btn ghost btn-small"
-                                                    onClick={() => handleRemoveToken(token)}
+                                                    className="btn btn-small"
+                                                    onClick={handleAddDemonToken}
+                                                    disabled={!demonChoice}
                                                 >
-                                                    Remove
+                                                    Summon
                                                 </button>
                                             </div>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                    {isDM && (
-                        <div className="map-panel card">
-                            <h3>Background image</h3>
-                            <label className="text-small" htmlFor="map-background-url">Image URL</label>
-                            <input
-                                id="map-background-url"
-                                type="text"
-                                value={backgroundDraft.url}
-                                onChange={(event) =>
-                                    setBackgroundDraft((prev) => ({ ...prev, url: event.target.value || '' }))
-                                }
-                                placeholder="https://example.com/map.png"
-                            />
-                            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                                <button
-                                    type="button"
-                                    className="btn btn-small"
-                                    onClick={() => {
-                                        const trimmed = (backgroundDraft.url || '').trim();
-                                        if (!trimmed) return;
-                                        handleUpdateBackground({ url: trimmed });
-                                    }}
-                                    disabled={!backgroundDraft.url || !backgroundDraft.url.trim()}
+                                        </div>
+                                    )}
+                                    {demonTokens.length === 0 ? (
+                                        <p className="map-empty text-muted">No companions placed.</p>
+                                    ) : (
+                                        <ul className="map-token-list">
+                                            {demonTokens.map((token) => {
+                                                const demon = demonMap.get(token.refId);
+                                                const label = token.label || demon?.name || 'Demon';
+                                                const subtitle = describeDemonTooltip(demon);
+                                                return (
+                                                    <li key={token.id} className="map-token-list__item">
+                                                        <div className="map-token-list__info">
+                                                            <strong>{label}</strong>
+                                                            {subtitle && (
+                                                                <span className="text-muted text-small">{subtitle}</span>
+                                                            )}
+                                                        </div>
+                                                        {isDM && (
+                                                            <div className="map-token-list__actions">
+                                                                <label className="perm-toggle">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={token.showTooltip}
+                                                                        onChange={(event) =>
+                                                                            handleToggleTooltip(token, event.target.checked)
+                                                                        }
+                                                                    />
+                                                                    <span className="perm-toggle__text">Tooltip</span>
+                                                                </label>
+                                                                <button
+                                                                    type="button"
+                                                                    className="btn ghost btn-small"
+                                                                    onClick={() => handleRemoveToken(token)}
+                                                                >
+                                                                    Remove
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </li>
+                                                );
+                                            })}
+                                        </ul>
+                                    )}
+                                </MapAccordionSection>
+                                <MapAccordionSection
+                                    title="Enemy tokens"
+                                    description="Create foes with detailed tooltips, including art and stats."
                                 >
-                                    Apply URL
-                                </button>
-                                <button
-                                    type="button"
-                                    className="btn btn-small ghost"
-                                    onClick={handleClearBackground}
-                                    disabled={!mapState.background?.url}
-                                >
-                                    Clear
-                                </button>
-                            </div>
-                            <div className="map-background-controls">
-                                <label className="map-background-slider">
-                                    <span className="text-small">Horizontal</span>
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max="100"
-                                        value={Math.round((backgroundDraft.x ?? 0.5) * 100)}
-                                        onChange={(event) => {
-                                            const value = clamp(Number(event.target.value) / 100, 0, 1, backgroundDraft.x ?? 0.5);
-                                            queueBackgroundUpdate({ x: value });
-                                        }}
-                                    />
-                                </label>
-                                <label className="map-background-slider">
-                                    <span className="text-small">Vertical</span>
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max="100"
-                                        value={Math.round((backgroundDraft.y ?? 0.5) * 100)}
-                                        onChange={(event) => {
-                                            const value = clamp(Number(event.target.value) / 100, 0, 1, backgroundDraft.y ?? 0.5);
-                                            queueBackgroundUpdate({ y: value });
-                                        }}
-                                    />
-                                </label>
-                                <label className="map-background-slider">
-                                    <span className="text-small">Scale ({backgroundDraft.scale.toFixed(2)}x)</span>
-                                    <input
-                                        type="range"
-                                        min="20"
-                                        max="400"
-                                        value={Math.round((backgroundDraft.scale ?? 1) * 100)}
-                                        onChange={(event) => {
-                                            const value = clamp(Number(event.target.value) / 100, 0.2, 4, backgroundDraft.scale ?? 1);
-                                            queueBackgroundUpdate({ scale: value });
-                                        }}
-                                    />
-                                </label>
-                                <label className="map-background-slider">
-                                    <span className="text-small">Rotation ({Math.round(backgroundDraft.rotation)}°)</span>
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max="360"
-                                        value={Math.round(backgroundDraft.rotation)}
-                                        onChange={(event) => {
-                                            const value = clamp(Number(event.target.value), 0, 360, backgroundDraft.rotation);
-                                            queueBackgroundUpdate({ rotation: value });
-                                        }}
-                                    />
-                                </label>
-                                <label className="map-background-slider">
-                                    <span className="text-small">Opacity ({Math.round(backgroundDraft.opacity * 100)}%)</span>
-                                    <input
-                                        type="range"
-                                        min="10"
-                                        max="100"
-                                        value={Math.round((backgroundDraft.opacity ?? 1) * 100)}
-                                        onChange={(event) => {
-                                            const value = clamp(Number(event.target.value) / 100, 0.1, 1, backgroundDraft.opacity ?? 1);
-                                            queueBackgroundUpdate({ opacity: value });
-                                        }}
-                                    />
-                                </label>
-                            </div>
-                        </div>
-                    )}
-                    <div className="map-panel card">
-                        <h3>Battle shapes</h3>
-                        {isDM && (
-                            <div className="map-panel__add">
-                                <span className="text-small">Add shape</span>
-                                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                                    {MAP_SHAPE_TYPES.map((type) => (
-                                        <button
-                                            key={type}
-                                            type="button"
-                                            className="btn btn-small secondary"
-                                            onClick={() => handleAddShape(type)}
+                                    {isDM && (
+                                        <form
+                                            className="map-enemy-form"
+                                            onSubmit={(event) => {
+                                                event.preventDefault();
+                                                handleSubmitEnemyToken();
+                                            }}
                                         >
-                                            {type === 'rectangle' ? 'Rectangle' : type === 'circle' ? 'Circle' : 'Line'}
-                                        </button>
-                                    ))}
-                                </div>
+                                            <fieldset className="map-enemy-form__section">
+                                                <legend>Token</legend>
+                                                <label className="text-small" htmlFor="map-enemy-label">
+                                                    Enemy label
+                                                </label>
+                                                <input
+                                                    id="map-enemy-label"
+                                                    type="text"
+                                                    value={enemyForm.label}
+                                                    onChange={(event) =>
+                                                        setEnemyForm((prev) => ({
+                                                            ...prev,
+                                                            label: event.target.value,
+                                                        }))
+                                                    }
+                                                    placeholder="e.g. Shadow Trooper"
+                                                />
+                                                <div className="map-enemy-form__controls">
+                                                    <label className="color-input" htmlFor="map-enemy-color">
+                                                        <span className="text-small">Token color</span>
+                                                        <input
+                                                            id="map-enemy-color"
+                                                            type="color"
+                                                            value={enemyForm.color}
+                                                            onChange={(event) =>
+                                                                setEnemyForm((prev) => ({
+                                                                    ...prev,
+                                                                    color: event.target.value || MAP_ENEMY_DEFAULT_COLOR,
+                                                                }))
+                                                            }
+                                                        />
+                                                        <span className="text-muted text-small">
+                                                            {(enemyForm.color || MAP_ENEMY_DEFAULT_COLOR).toUpperCase()}
+                                                        </span>
+                                                    </label>
+                                                    <label className="perm-toggle">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={enemyForm.showTooltip}
+                                                            onChange={(event) =>
+                                                                setEnemyForm((prev) => ({
+                                                                    ...prev,
+                                                                    showTooltip: event.target.checked,
+                                                                }))
+                                                            }
+                                                        />
+                                                        <span className="perm-toggle__text">Tooltip on hover</span>
+                                                    </label>
+                                                </div>
+                                            </fieldset>
+                                            <fieldset className="map-enemy-form__section">
+                                                <legend>Import from codex</legend>
+                                                <p className="text-small text-muted">
+                                                    Prefill details from demons saved in this campaign.
+                                                </p>
+                                                <div className="map-enemy-form__controls map-enemy-form__controls--wrap">
+                                                    <input
+                                                        type="text"
+                                                        value={enemyQuery}
+                                                        onChange={(event) => setEnemyQuery(event.target.value)}
+                                                        placeholder="Search demon name…"
+                                                    />
+                                                    <select
+                                                        value={enemyDemonChoice}
+                                                        onChange={(event) => setEnemyDemonChoice(event.target.value)}
+                                                    >
+                                                        <option value="">Select a demon…</option>
+                                                        {enemyDemonOptions.map((option) => (
+                                                            <option key={option.id} value={option.id}>
+                                                                {option.label}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    <button
+                                                        type="button"
+                                                        className="btn btn-small"
+                                                        onClick={handleImportEnemyDemon}
+                                                        disabled={!enemyDemonChoice}
+                                                    >
+                                                        Import
+                                                    </button>
+                                                </div>
+                                            </fieldset>
+                                            <fieldset className="map-enemy-form__section">
+                                                <legend>Tooltip details</legend>
+                                                <div className="map-enemy-form__detail">
+                                                    <div className="map-enemy-form__detail-header">
+                                                        <label htmlFor="map-enemy-name">Display name</label>
+                                                        <label className="perm-toggle">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={enemyForm.details.showName}
+                                                                onChange={(event) =>
+                                                                    setEnemyForm((prev) => ({
+                                                                        ...prev,
+                                                                        details: {
+                                                                            ...prev.details,
+                                                                            showName: event.target.checked,
+                                                                        },
+                                                                    }))
+                                                                }
+                                                            />
+                                                            <span className="perm-toggle__text">Visible</span>
+                                                        </label>
+                                                    </div>
+                                                    <input
+                                                        id="map-enemy-name"
+                                                        type="text"
+                                                        value={enemyForm.details.name}
+                                                        onChange={(event) =>
+                                                            setEnemyForm((prev) => ({
+                                                                ...prev,
+                                                                details: {
+                                                                    ...prev.details,
+                                                                    name: event.target.value,
+                                                                },
+                                                            }))
+                                                        }
+                                                        placeholder="Optional override name"
+                                                    />
+                                                </div>
+                                                <div className="map-enemy-form__detail">
+                                                    <div className="map-enemy-form__detail-header">
+                                                        <label htmlFor="map-enemy-image">Image URL</label>
+                                                        <label className="perm-toggle">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={enemyForm.details.showImage}
+                                                                onChange={(event) =>
+                                                                    setEnemyForm((prev) => ({
+                                                                        ...prev,
+                                                                        details: {
+                                                                            ...prev.details,
+                                                                            showImage: event.target.checked,
+                                                                        },
+                                                                    }))
+                                                                }
+                                                            />
+                                                            <span className="perm-toggle__text">Visible</span>
+                                                        </label>
+                                                    </div>
+                                                    <input
+                                                        id="map-enemy-image"
+                                                        type="text"
+                                                        value={enemyForm.details.image}
+                                                        onChange={(event) =>
+                                                            setEnemyForm((prev) => ({
+                                                                ...prev,
+                                                                details: {
+                                                                    ...prev.details,
+                                                                    image: event.target.value,
+                                                                },
+                                                            }))
+                                                        }
+                                                        placeholder="https://example.com/enemy.png"
+                                                    />
+                                                    <p className="text-small text-muted">
+                                                        Hotlinks are proxied automatically for supported demon wikis.
+                                                    </p>
+                                                </div>
+                                                <div className="map-enemy-form__detail">
+                                                    <div className="map-enemy-form__detail-header">
+                                                        <label htmlFor="map-enemy-stats">Stats</label>
+                                                        <label className="perm-toggle">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={enemyForm.details.showStats}
+                                                                onChange={(event) =>
+                                                                    setEnemyForm((prev) => ({
+                                                                        ...prev,
+                                                                        details: {
+                                                                            ...prev.details,
+                                                                            showStats: event.target.checked,
+                                                                        },
+                                                                    }))
+                                                                }
+                                                            />
+                                                            <span className="perm-toggle__text">Visible</span>
+                                                        </label>
+                                                    </div>
+                                                    <textarea
+                                                        id="map-enemy-stats"
+                                                        rows={3}
+                                                        value={enemyForm.details.stats}
+                                                        onChange={(event) =>
+                                                            setEnemyForm((prev) => ({
+                                                                ...prev,
+                                                                details: {
+                                                                    ...prev.details,
+                                                                    stats: event.target.value,
+                                                                },
+                                                            }))
+                                                        }
+                                                        placeholder={'HP 45 / 45\nWeak: Bless · Resists: Gun'}
+                                                    />
+                                                </div>
+                                                <div className="map-enemy-form__detail">
+                                                    <div className="map-enemy-form__detail-header">
+                                                        <label htmlFor="map-enemy-notes">Notes</label>
+                                                        <label className="perm-toggle">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={enemyForm.details.showNotes}
+                                                                onChange={(event) =>
+                                                                    setEnemyForm((prev) => ({
+                                                                        ...prev,
+                                                                        details: {
+                                                                            ...prev.details,
+                                                                            showNotes: event.target.checked,
+                                                                        },
+                                                                    }))
+                                                                }
+                                                            />
+                                                            <span className="perm-toggle__text">Visible</span>
+                                                        </label>
+                                                    </div>
+                                                    <textarea
+                                                        id="map-enemy-notes"
+                                                        rows={3}
+                                                        value={enemyForm.details.notes}
+                                                        onChange={(event) =>
+                                                            setEnemyForm((prev) => ({
+                                                                ...prev,
+                                                                details: {
+                                                                    ...prev.details,
+                                                                    notes: event.target.value,
+                                                                },
+                                                            }))
+                                                        }
+                                                        placeholder="Tactical reminders, conditions, or lore."
+                                                    />
+                                                </div>
+                                                <EnemyTooltipCard
+                                                    info={enemyDetailsInfo}
+                                                    label={enemyForm.label || 'Enemy'}
+                                                />
+                                                <p className="text-small text-muted">
+                                                    {enemyForm.showTooltip && enemyFormHasVisibleTooltip
+                                                        ? 'Players will see the selected fields on hover.'
+                                                        : 'Tooltip hidden from players.'}
+                                                </p>
+                                            </fieldset>
+                                            <div className="map-enemy-form__actions">
+                                                {enemyForm.id && (
+                                                    <button
+                                                        type="button"
+                                                        className="btn ghost btn-small"
+                                                        onClick={resetEnemyForm}
+                                                    >
+                                                        Cancel edit
+                                                    </button>
+                                                )}
+                                                <button type="submit" className="btn btn-small" disabled={!enemyFormValid}>
+                                                    {enemyForm.id ? 'Save enemy' : 'Place enemy'}
+                                                </button>
+                                            </div>
+                                        </form>
+                                    )}
+                                    {enemyTokens.length === 0 ? (
+                                        <p className="map-empty text-muted">No enemies placed.</p>
+                                    ) : (
+                                        <ul className="map-token-list">
+                                            {enemyTokens.map((token) => (
+                                                <li key={token.id} className="map-token-list__item">
+                                                    <div className="map-token-list__info">
+                                                        <strong>{token.label}</strong>
+                                                        {token.rawTooltip && (
+                                                            <span className="text-muted text-small">{token.rawTooltip}</span>
+                                                        )}
+                                                        {isDM && token.enemyInfo && (
+                                                            <EnemyTooltipCard info={token.enemyInfo} label={token.label} />
+                                                        )}
+                                                    </div>
+                                                    {isDM && (
+                                                        <div className="map-token-list__actions">
+                                                            <label className="perm-toggle">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={token.showTooltip}
+                                                                    onChange={(event) =>
+                                                                        handleToggleTooltip(token, event.target.checked)
+                                                                    }
+                                                                />
+                                                                <span className="perm-toggle__text">Tooltip</span>
+                                                            </label>
+                                                            <button
+                                                                type="button"
+                                                                className="btn btn-small"
+                                                                onClick={() => handleEditEnemyToken(token)}
+                                                            >
+                                                                Edit
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                className="btn ghost btn-small"
+                                                                onClick={() => handleRemoveToken(token)}
+                                                            >
+                                                                Remove
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    )}
+                                </MapAccordionSection>
                             </div>
                         )}
-                        {mapState.shapes.length === 0 ? (
-                            <p className="map-empty text-muted">No shapes placed.</p>
-                        ) : (
-                            <div className="list">
-                                {mapState.shapes.map((shape, index) => (
-                                    <div key={shape.id} className="map-shape-row">
-                                        <div className="map-shape-row__header">
-                                            <strong>
-                                                {`${shape.type.charAt(0).toUpperCase()}${shape.type.slice(1)} ${index + 1}`}
-                                            </strong>
-                                            {isDM && (
-                                                <button
-                                                    type="button"
-                                                    className="btn ghost btn-small"
-                                                    onClick={() => handleRemoveShape(shape.id)}
-                                                >
-                                                    Remove
-                                                </button>
-                                            )}
-                                        </div>
-                                        {isDM && (
-                                            <div className="map-shape-row__controls">
-                                                {shape.type !== 'line' && (
-                                                    <label className="color-input">
-                                                        <span className="text-small">Fill</span>
-                                                        <input
-                                                            type="color"
-                                                            value={shape.fill}
-                                                            onChange={(event) => {
-                                                                const value = event.target.value || shape.fill;
-                                                                setMapState((prev) => ({
-                                                                    ...prev,
-                                                                    shapes: prev.shapes.map((entry) =>
-                                                                        entry.id === shape.id
-                                                                            ? { ...entry, fill: value }
-                                                                            : entry
-                                                                    ),
-                                                                }));
-                                                                handleUpdateShape(shape.id, { fill: value });
-                                                            }}
-                                                        />
-                                                        <span className="text-muted text-small">{shape.fill.toUpperCase()}</span>
-                                                    </label>
-                                                )}
-                                                <label className="color-input">
-                                                    <span className="text-small">Stroke</span>
-                                                    <input
-                                                        type="color"
-                                                        value={shape.stroke}
-                                                        onChange={(event) => {
-                                                            const value = event.target.value || shape.stroke;
-                                                            setMapState((prev) => ({
-                                                                ...prev,
-                                                                shapes: prev.shapes.map((entry) =>
-                                                                    entry.id === shape.id
-                                                                        ? { ...entry, stroke: value }
-                                                                        : entry
-                                                                ),
-                                                            }));
-                                                            handleUpdateShape(shape.id, { stroke: value });
-                                                        }}
-                                                    />
-                                                    <span className="text-muted text-small">{shape.stroke.toUpperCase()}</span>
-                                                </label>
-                                                <label className="map-shape-slider">
-                                                    <span className="text-small">Width ({Math.round(shape.width * 100)}%)</span>
-                                                    <input
-                                                        type="range"
-                                                        min="5"
-                                                        max="100"
-                                                        value={Math.round(shape.width * 100)}
-                                                        onChange={(event) => {
-                                                            const value = clamp(Number(event.target.value) / 100, 0.05, 1, shape.width);
-                                                            setMapState((prev) => ({
-                                                                ...prev,
-                                                                shapes: prev.shapes.map((entry) =>
-                                                                    entry.id === shape.id
-                                                                        ? {
-                                                                              ...entry,
-                                                                              width: value,
-                                                                              ...(entry.type === 'circle' ? { height: value } : {}),
-                                                                          }
-                                                                        : entry
-                                                                ),
-                                                            }));
-                                                            handleUpdateShape(shape.id, {
-                                                                width: value,
-                                                                ...(shape.type === 'circle' ? { height: value } : {}),
-                                                            });
-                                                        }}
-                                                    />
-                                                </label>
-                                                {shape.type !== 'circle' && (
-                                                    <label className="map-shape-slider">
-                                                        <span className="text-small">Height ({Math.round(shape.height * 100)}%)</span>
-                                                        <input
-                                                            type="range"
-                                                            min="5"
-                                                            max="100"
-                                                            value={Math.round(shape.height * 100)}
-                                                            onChange={(event) => {
-                                                                const value = clamp(
-                                                                    Number(event.target.value) / 100,
-                                                                    0.05,
-                                                                    1,
-                                                                    shape.height
-                                                                );
-                                                                setMapState((prev) => ({
-                                                                    ...prev,
-                                                                    shapes: prev.shapes.map((entry) =>
-                                                                        entry.id === shape.id
-                                                                            ? { ...entry, height: value }
-                                                                            : entry
-                                                                    ),
-                                                                }));
-                                                                handleUpdateShape(shape.id, { height: value });
-                                                            }}
-                                                        />
-                                                    </label>
-                                                )}
-                                                <label className="map-shape-slider">
-                                                    <span className="text-small">Stroke ({Math.round(shape.strokeWidth)}px)</span>
-                                                    <input
-                                                        type="range"
-                                                        min="0"
-                                                        max="20"
-                                                        value={Math.round(shape.strokeWidth)}
-                                                        onChange={(event) => {
-                                                            const value = clamp(Number(event.target.value), 0, 20, shape.strokeWidth);
-                                                            setMapState((prev) => ({
-                                                                ...prev,
-                                                                shapes: prev.shapes.map((entry) =>
-                                                                    entry.id === shape.id
-                                                                        ? { ...entry, strokeWidth: value }
-                                                                        : entry
-                                                                ),
-                                                            }));
-                                                            handleUpdateShape(shape.id, { strokeWidth: value });
-                                                        }}
-                                                    />
-                                                </label>
-                                                <label className="map-shape-slider">
-                                                    <span className="text-small">Rotation ({Math.round(shape.rotation)}°)</span>
-                                                    <input
-                                                        type="range"
-                                                        min="0"
-                                                        max="360"
-                                                        value={Math.round(shape.rotation)}
-                                                        onChange={(event) => {
-                                                            const value = clamp(Number(event.target.value), 0, 360, shape.rotation);
-                                                            setMapState((prev) => ({
-                                                                ...prev,
-                                                                shapes: prev.shapes.map((entry) =>
-                                                                    entry.id === shape.id
-                                                                        ? { ...entry, rotation: value }
-                                                                        : entry
-                                                                ),
-                                                            }));
-                                                            handleUpdateShape(shape.id, { rotation: value });
-                                                        }}
-                                                    />
-                                                </label>
-                                                <label className="map-shape-slider">
-                                                    <span className="text-small">Opacity ({Math.round(shape.opacity * 100)}%)</span>
+                        {sidebarTab === 'overlays' && (
+                            <div className="stack">
+                                {isDM && (
+                                    <MapAccordionSection
+                                        title="Add overlay image"
+                                        description="Layer supplemental art, grids, or handouts on top of the battlefield."
+                                    >
+                                        <form
+                                            className="map-overlay-form"
+                                            onSubmit={async (event) => {
+                                                event.preventDefault();
+                                                const trimmed = (overlayForm.url || '').trim();
+                                                if (!trimmed) return;
+                                                await handleAddShape('image', {
+                                                    url: trimmed,
+                                                    width: overlayForm.width,
+                                                    height: overlayForm.height,
+                                                    opacity: overlayForm.opacity,
+                                                    rotation: overlayForm.rotation,
+                                                });
+                                                setOverlayForm({
+                                                    url: '',
+                                                    width: 0.4,
+                                                    height: 0.4,
+                                                    opacity: 1,
+                                                    rotation: 0,
+                                                });
+                                            }}
+                                        >
+                                            <label className="text-small" htmlFor="map-overlay-url">
+                                                Image URL
+                                            </label>
+                                            <input
+                                                id="map-overlay-url"
+                                                type="text"
+                                                value={overlayForm.url}
+                                                onChange={(event) =>
+                                                    setOverlayForm((prev) => ({ ...prev, url: event.target.value }))
+                                                }
+                                                placeholder="https://example.com/reference.png"
+                                            />
+                                            <div className="map-overlay-form__sliders">
+                                                <label>
+                                                    <span className="text-small">
+                                                        Width ({Math.round(overlayForm.width * 100)}%)
+                                                    </span>
                                                     <input
                                                         type="range"
                                                         min="10"
                                                         max="100"
-                                                        value={Math.round(shape.opacity * 100)}
-                                                        onChange={(event) => {
-                                                            const value = clamp(Number(event.target.value) / 100, 0.1, 1, shape.opacity);
-                                                            setMapState((prev) => ({
+                                                        value={Math.round(overlayForm.width * 100)}
+                                                        onChange={(event) =>
+                                                            setOverlayForm((prev) => ({
                                                                 ...prev,
-                                                                shapes: prev.shapes.map((entry) =>
-                                                                    entry.id === shape.id
-                                                                        ? { ...entry, opacity: value }
-                                                                        : entry
-                                                                ),
-                                                            }));
-                                                            handleUpdateShape(shape.id, { opacity: value });
-                                                        }}
+                                                                width: clamp(Number(event.target.value) / 100, 0.1, 1, prev.width),
+                                                            }))
+                                                        }
+                                                    />
+                                                </label>
+                                                <label>
+                                                    <span className="text-small">
+                                                        Height ({Math.round(overlayForm.height * 100)}%)
+                                                    </span>
+                                                    <input
+                                                        type="range"
+                                                        min="10"
+                                                        max="100"
+                                                        value={Math.round(overlayForm.height * 100)}
+                                                        onChange={(event) =>
+                                                            setOverlayForm((prev) => ({
+                                                                ...prev,
+                                                                height: clamp(Number(event.target.value) / 100, 0.1, 1, prev.height),
+                                                            }))
+                                                        }
+                                                    />
+                                                </label>
+                                                <label>
+                                                    <span className="text-small">
+                                                        Opacity ({Math.round(overlayForm.opacity * 100)}%)
+                                                    </span>
+                                                    <input
+                                                        type="range"
+                                                        min="10"
+                                                        max="100"
+                                                        value={Math.round(overlayForm.opacity * 100)}
+                                                        onChange={(event) =>
+                                                            setOverlayForm((prev) => ({
+                                                                ...prev,
+                                                                opacity: clamp(Number(event.target.value) / 100, 0.1, 1, prev.opacity),
+                                                            }))
+                                                        }
+                                                    />
+                                                </label>
+                                                <label>
+                                                    <span className="text-small">
+                                                        Rotation ({Math.round(overlayForm.rotation)}°)
+                                                    </span>
+                                                    <input
+                                                        type="range"
+                                                        min="0"
+                                                        max="360"
+                                                        value={Math.round(overlayForm.rotation)}
+                                                        onChange={(event) =>
+                                                            setOverlayForm((prev) => ({
+                                                                ...prev,
+                                                                rotation: clamp(Number(event.target.value), 0, 360, prev.rotation),
+                                                            }))
+                                                        }
                                                     />
                                                 </label>
                                             </div>
-                                        )}
-                                    </div>
-                                ))}
+                                            <div className="map-overlay-form__actions">
+                                                <button type="submit" className="btn btn-small" disabled={!overlayForm.url.trim()}>
+                                                    Add overlay
+                                                </button>
+                                                <p className="text-small text-muted">
+                                                    Use the Shapes tool to drag overlays into position.
+                                                </p>
+                                            </div>
+                                        </form>
+                                    </MapAccordionSection>
+                                )}
+                                <MapAccordionSection
+                                    title="Overlay images"
+                                    description="Manage existing overlays. Drag with the Shapes tool to reposition."
+                                    defaultOpen={imageShapes.length > 0}
+                                >
+                                    {imageShapes.length === 0 ? (
+                                        <p className="map-empty text-muted">No overlays on the board.</p>
+                                    ) : (
+                                        <div className="map-shape-list">
+                                            {imageShapes.map((shape) => (
+                                                <div key={shape.id} className="map-shape-card">
+                                                    <div className="map-shape-card__preview">
+                                                        {shape.url ? (
+                                                            <img src={shape.url} alt="" className="map-shape-card__image" />
+                                                        ) : (
+                                                            <span className="text-muted text-small">Set image URL</span>
+                                                        )}
+                                                    </div>
+                                                    <div className="map-shape-card__body">
+                                                        <label className="text-small" htmlFor={`map-overlay-url-${shape.id}`}>
+                                                            Image URL
+                                                        </label>
+                                                        <input
+                                                            id={`map-overlay-url-${shape.id}`}
+                                                            type="text"
+                                                            value={shape.url}
+                                                            onChange={(event) => {
+                                                                const value = event.target.value;
+                                                                setMapState((prev) => ({
+                                                                    ...prev,
+                                                                    shapes: prev.shapes.map((entry) =>
+                                                                        entry.id === shape.id ? { ...entry, url: value } : entry
+                                                                    ),
+                                                                }));
+                                                            }}
+                                                            onBlur={(event) => {
+                                                                const trimmed = event.target.value.trim();
+                                                                setMapState((prev) => ({
+                                                                    ...prev,
+                                                                    shapes: prev.shapes.map((entry) =>
+                                                                        entry.id === shape.id ? { ...entry, url: trimmed } : entry
+                                                                    ),
+                                                                }));
+                                                                handleUpdateShape(shape.id, { url: trimmed });
+                                                            }}
+                                                        />
+                                                        <div className="map-shape-card__sliders">
+                                                            <label>
+                                                                <span className="text-small">
+                                                                    Width ({Math.round(shape.width * 100)}%)
+                                                                </span>
+                                                                <input
+                                                                    type="range"
+                                                                    min="10"
+                                                                    max="100"
+                                                                    value={Math.round(shape.width * 100)}
+                                                                    onChange={(event) => {
+                                                                        const value = clamp(
+                                                                            Number(event.target.value) / 100,
+                                                                            0.1,
+                                                                            1,
+                                                                            shape.width,
+                                                                        );
+                                                                        setMapState((prev) => ({
+                                                                            ...prev,
+                                                                            shapes: prev.shapes.map((entry) =>
+                                                                                entry.id === shape.id
+                                                                                    ? { ...entry, width: value }
+                                                                                    : entry
+                                                                            ),
+                                                                        }));
+                                                                        handleUpdateShape(shape.id, { width: value });
+                                                                    }}
+                                                                />
+                                                            </label>
+                                                            <label>
+                                                                <span className="text-small">
+                                                                    Height ({Math.round(shape.height * 100)}%)
+                                                                </span>
+                                                                <input
+                                                                    type="range"
+                                                                    min="10"
+                                                                    max="100"
+                                                                    value={Math.round(shape.height * 100)}
+                                                                    onChange={(event) => {
+                                                                        const value = clamp(
+                                                                            Number(event.target.value) / 100,
+                                                                            0.1,
+                                                                            1,
+                                                                            shape.height,
+                                                                        );
+                                                                        setMapState((prev) => ({
+                                                                            ...prev,
+                                                                            shapes: prev.shapes.map((entry) =>
+                                                                                entry.id === shape.id
+                                                                                    ? { ...entry, height: value }
+                                                                                    : entry
+                                                                            ),
+                                                                        }));
+                                                                        handleUpdateShape(shape.id, { height: value });
+                                                                    }}
+                                                                />
+                                                            </label>
+                                                            <label>
+                                                                <span className="text-small">
+                                                                    Rotation ({Math.round(shape.rotation)}°)
+                                                                </span>
+                                                                <input
+                                                                    type="range"
+                                                                    min="0"
+                                                                    max="360"
+                                                                    value={Math.round(shape.rotation)}
+                                                                    onChange={(event) => {
+                                                                        const value = clamp(
+                                                                            Number(event.target.value),
+                                                                            0,
+                                                                            360,
+                                                                            shape.rotation,
+                                                                        );
+                                                                        setMapState((prev) => ({
+                                                                            ...prev,
+                                                                            shapes: prev.shapes.map((entry) =>
+                                                                                entry.id === shape.id
+                                                                                    ? { ...entry, rotation: value }
+                                                                                    : entry
+                                                                            ),
+                                                                        }));
+                                                                        handleUpdateShape(shape.id, { rotation: value });
+                                                                    }}
+                                                                />
+                                                            </label>
+                                                            <label>
+                                                                <span className="text-small">
+                                                                    Opacity ({Math.round(shape.opacity * 100)}%)
+                                                                </span>
+                                                                <input
+                                                                    type="range"
+                                                                    min="10"
+                                                                    max="100"
+                                                                    value={Math.round(shape.opacity * 100)}
+                                                                    onChange={(event) => {
+                                                                        const value = clamp(
+                                                                            Number(event.target.value) / 100,
+                                                                            0.1,
+                                                                            1,
+                                                                            shape.opacity,
+                                                                        );
+                                                                        setMapState((prev) => ({
+                                                                            ...prev,
+                                                                            shapes: prev.shapes.map((entry) =>
+                                                                                entry.id === shape.id
+                                                                                    ? { ...entry, opacity: value }
+                                                                                    : entry
+                                                                            ),
+                                                                        }));
+                                                                        handleUpdateShape(shape.id, { opacity: value });
+                                                                    }}
+                                                                />
+                                                            </label>
+                                                        </div>
+                                                        <div className="map-shape-card__actions">
+                                                            <button
+                                                                type="button"
+                                                                className="btn ghost btn-small"
+                                                                onClick={() => handleRemoveShape(shape.id)}
+                                                            >
+                                                                Remove overlay
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </MapAccordionSection>
+                                {isDM && (
+                                    <MapAccordionSection
+                                        title="Board background"
+                                        description="Set the primary image that appears behind the battle grid."
+                                    >
+                                        <label className="text-small" htmlFor="map-background-url">
+                                            Image URL
+                                        </label>
+                                        <input
+                                            id="map-background-url"
+                                            type="text"
+                                            value={backgroundDraft.url}
+                                            onChange={(event) =>
+                                                setBackgroundDraft((prev) => ({ ...prev, url: event.target.value || '' }))
+                                            }
+                                            placeholder="https://example.com/map.png"
+                                        />
+                                        <div className="map-overlay-form__actions">
+                                            <button
+                                                type="button"
+                                                className="btn btn-small"
+                                                onClick={() => {
+                                                    const trimmed = (backgroundDraft.url || '').trim();
+                                                    if (!trimmed) return;
+                                                    handleUpdateBackground({ url: trimmed });
+                                                }}
+                                                disabled={!backgroundDraft.url || !backgroundDraft.url.trim()}
+                                            >
+                                                Apply URL
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="btn btn-small ghost"
+                                                onClick={handleClearBackground}
+                                                disabled={!mapState.background?.url}
+                                            >
+                                                Clear
+                                            </button>
+                                        </div>
+                                        <div className="map-background-controls">
+                                            <label className="map-background-slider">
+                                                <span className="text-small">Horizontal</span>
+                                                <input
+                                                    type="range"
+                                                    min="0"
+                                                    max="100"
+                                                    value={Math.round((backgroundDraft.x ?? 0.5) * 100)}
+                                                    onChange={(event) => {
+                                                        const value = clamp(
+                                                            Number(event.target.value) / 100,
+                                                            0,
+                                                            1,
+                                                            backgroundDraft.x ?? 0.5,
+                                                        );
+                                                        queueBackgroundUpdate({ x: value });
+                                                    }}
+                                                />
+                                            </label>
+                                            <label className="map-background-slider">
+                                                <span className="text-small">Vertical</span>
+                                                <input
+                                                    type="range"
+                                                    min="0"
+                                                    max="100"
+                                                    value={Math.round((backgroundDraft.y ?? 0.5) * 100)}
+                                                    onChange={(event) => {
+                                                        const value = clamp(
+                                                            Number(event.target.value) / 100,
+                                                            0,
+                                                            1,
+                                                            backgroundDraft.y ?? 0.5,
+                                                        );
+                                                        queueBackgroundUpdate({ y: value });
+                                                    }}
+                                                />
+                                            </label>
+                                            <label className="map-background-slider">
+                                                <span className="text-small">
+                                                    Scale ({backgroundDraft.scale.toFixed(2)}x)
+                                                </span>
+                                                <input
+                                                    type="range"
+                                                    min="20"
+                                                    max="400"
+                                                    value={Math.round((backgroundDraft.scale ?? 1) * 100)}
+                                                    onChange={(event) => {
+                                                        const value = clamp(
+                                                            Number(event.target.value) / 100,
+                                                            0.2,
+                                                            4,
+                                                            backgroundDraft.scale ?? 1,
+                                                        );
+                                                        queueBackgroundUpdate({ scale: value });
+                                                    }}
+                                                />
+                                            </label>
+                                            <label className="map-background-slider">
+                                                <span className="text-small">
+                                                    Rotation ({Math.round(backgroundDraft.rotation)}°)
+                                                </span>
+                                                <input
+                                                    type="range"
+                                                    min="0"
+                                                    max="360"
+                                                    value={Math.round(backgroundDraft.rotation)}
+                                                    onChange={(event) => {
+                                                        const value = clamp(
+                                                            Number(event.target.value),
+                                                            0,
+                                                            360,
+                                                            backgroundDraft.rotation,
+                                                        );
+                                                        queueBackgroundUpdate({ rotation: value });
+                                                    }}
+                                                />
+                                            </label>
+                                            <label className="map-background-slider">
+                                                <span className="text-small">
+                                                    Opacity ({Math.round(backgroundDraft.opacity * 100)}%)
+                                                </span>
+                                                <input
+                                                    type="range"
+                                                    min="10"
+                                                    max="100"
+                                                    value={Math.round((backgroundDraft.opacity ?? 1) * 100)}
+                                                    onChange={(event) => {
+                                                        const value = clamp(
+                                                            Number(event.target.value) / 100,
+                                                            0.1,
+                                                            1,
+                                                            backgroundDraft.opacity ?? 1,
+                                                        );
+                                                        queueBackgroundUpdate({ opacity: value });
+                                                    }}
+                                                />
+                                            </label>
+                                        </div>
+                                    </MapAccordionSection>
+                                )}
+                            </div>
+                        )}
+                        {sidebarTab === 'shapes' && (
+                            <div className="stack">
+                                {isDM && (
+                                    <MapAccordionSection
+                                        title="Add shapes"
+                                        description="Drop areas of effect, cones, and zones for players to reference."
+                                    >
+                                        <div className="map-shape-buttons">
+                                            {MAP_STANDARD_SHAPE_TYPES.map((type) => (
+                                                <button
+                                                    key={type}
+                                                    type="button"
+                                                    className="btn btn-small"
+                                                    onClick={() => handleAddShape(type)}
+                                                >
+                                                    {MAP_SHAPE_LABELS[type]}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        <p className="text-small text-muted">
+                                            Switch to the Shapes tool to drag or rotate templates directly on the board.
+                                        </p>
+                                    </MapAccordionSection>
+                                )}
+                                <MapAccordionSection
+                                    title="Shape templates"
+                                    description="Adjust colors and sizes for existing area markers."
+                                    defaultOpen={areaShapes.length > 0}
+                                >
+                                    {areaShapes.length === 0 ? (
+                                        <p className="map-empty text-muted">No shapes placed.</p>
+                                    ) : (
+                                        <div className="map-shape-list">
+                                            {areaShapes.map((shape) => (
+                                                <div key={shape.id} className="map-shape-card">
+                                                    <div className="map-shape-card__header">
+                                                        <strong>{MAP_SHAPE_LABELS[shape.type] || 'Shape'}</strong>
+                                                        <span className="text-muted text-small">
+                                                            Rotation {Math.round(shape.rotation)}°
+                                                        </span>
+                                                    </div>
+                                                    <div className="map-shape-card__body">
+                                                        <div className="map-shape-card__colors">
+                                                            <label className="color-input">
+                                                                <span className="text-small">Fill</span>
+                                                                <input
+                                                                    type="color"
+                                                                    value={shape.fill}
+                                                                    onChange={(event) => {
+                                                                        const value = event.target.value || shape.fill;
+                                                                        setMapState((prev) => ({
+                                                                            ...prev,
+                                                                            shapes: prev.shapes.map((entry) =>
+                                                                                entry.id === shape.id
+                                                                                    ? { ...entry, fill: value }
+                                                                                    : entry
+                                                                            ),
+                                                                        }));
+                                                                        handleUpdateShape(shape.id, { fill: value });
+                                                                    }}
+                                                                    disabled={shape.type === 'line'}
+                                                                />
+                                                                <span className="text-muted text-small">
+                                                                    {shape.fill.toUpperCase()}
+                                                                </span>
+                                                            </label>
+                                                            <label className="color-input">
+                                                                <span className="text-small">
+                                                                    {shape.type === 'line' ? 'Line color' : 'Border'}
+                                                                </span>
+                                                                <input
+                                                                    type="color"
+                                                                    value={shape.stroke}
+                                                                    onChange={(event) => {
+                                                                        const value = event.target.value || shape.stroke;
+                                                                        setMapState((prev) => ({
+                                                                            ...prev,
+                                                                            shapes: prev.shapes.map((entry) =>
+                                                                                entry.id === shape.id
+                                                                                    ? { ...entry, stroke: value }
+                                                                                    : entry
+                                                                            ),
+                                                                        }));
+                                                                        handleUpdateShape(shape.id, { stroke: value });
+                                                                    }}
+                                                                />
+                                                                <span className="text-muted text-small">
+                                                                    {shape.stroke.toUpperCase()}
+                                                                </span>
+                                                            </label>
+                                                        </div>
+                                                        <div className="map-shape-card__sliders">
+                                                            <label>
+                                                                <span className="text-small">
+                                                                    Width ({Math.round(shape.width * 100)}%)
+                                                                </span>
+                                                            <input
+                                                                type="range"
+                                                                min="5"
+                                                                max="100"
+                                                                value={Math.round(shape.width * 100)}
+                                                                onChange={(event) => {
+                                                                    const value = clamp(
+                                                                        Number(event.target.value) / 100,
+                                                                        0.05,
+                                                                        1,
+                                                                        shape.width,
+                                                                    );
+                                                                    setMapState((prev) => ({
+                                                                        ...prev,
+                                                                        shapes: prev.shapes.map((entry) =>
+                                                                            entry.id === shape.id
+                                                                                ? {
+                                                                                      ...entry,
+                                                                                      width: value,
+                                                                                      ...(entry.type === 'circle' || entry.type === 'diamond'
+                                                                                          ? { height: value }
+                                                                                          : {}),
+                                                                                  }
+                                                                                : entry
+                                                                        ),
+                                                                    }));
+                                                                    handleUpdateShape(shape.id, {
+                                                                        width: value,
+                                                                        ...(shape.type === 'circle' || shape.type === 'diamond'
+                                                                            ? { height: value }
+                                                                            : {}),
+                                                                    });
+                                                                }}
+                                                            />
+                                                            </label>
+                                                            {shape.type !== 'circle' && shape.type !== 'diamond' && (
+                                                                <label>
+                                                                    <span className="text-small">
+                                                                        Height ({Math.round(shape.height * 100)}%)
+                                                                    </span>
+                                                                    <input
+                                                                        type="range"
+                                                                        min="5"
+                                                                        max="100"
+                                                                        value={Math.round(shape.height * 100)}
+                                                                        onChange={(event) => {
+                                                                            const value = clamp(
+                                                                                Number(event.target.value) / 100,
+                                                                                0.05,
+                                                                                1,
+                                                                                shape.height,
+                                                                            );
+                                                                            setMapState((prev) => ({
+                                                                                ...prev,
+                                                                                shapes: prev.shapes.map((entry) =>
+                                                                                    entry.id === shape.id
+                                                                                        ? { ...entry, height: value }
+                                                                                        : entry
+                                                                                ),
+                                                                            }));
+                                                                            handleUpdateShape(shape.id, { height: value });
+                                                                        }}
+                                                                    />
+                                                                </label>
+                                                            )}
+                                                            <label>
+                                                                <span className="text-small">
+                                                                    Border ({Math.round(shape.strokeWidth)}px)
+                                                                </span>
+                                                                <input
+                                                                    type="range"
+                                                                    min="0"
+                                                                    max="20"
+                                                                    value={Math.round(shape.strokeWidth)}
+                                                                    onChange={(event) => {
+                                                                        const value = clamp(
+                                                                            Number(event.target.value),
+                                                                            0,
+                                                                            20,
+                                                                            shape.strokeWidth,
+                                                                        );
+                                                                        setMapState((prev) => ({
+                                                                            ...prev,
+                                                                            shapes: prev.shapes.map((entry) =>
+                                                                                entry.id === shape.id
+                                                                                    ? { ...entry, strokeWidth: value }
+                                                                                    : entry
+                                                                            ),
+                                                                        }));
+                                                                        handleUpdateShape(shape.id, { strokeWidth: value });
+                                                                    }}
+                                                                />
+                                                            </label>
+                                                            <label>
+                                                                <span className="text-small">
+                                                                    Opacity ({Math.round(shape.opacity * 100)}%)
+                                                                </span>
+                                                                <input
+                                                                    type="range"
+                                                                    min="10"
+                                                                    max="100"
+                                                                    value={Math.round(shape.opacity * 100)}
+                                                                    onChange={(event) => {
+                                                                        const value = clamp(
+                                                                            Number(event.target.value) / 100,
+                                                                            0.1,
+                                                                            1,
+                                                                            shape.opacity,
+                                                                        );
+                                                                        setMapState((prev) => ({
+                                                                            ...prev,
+                                                                            shapes: prev.shapes.map((entry) =>
+                                                                                entry.id === shape.id
+                                                                                    ? { ...entry, opacity: value }
+                                                                                    : entry
+                                                                            ),
+                                                                        }));
+                                                                        handleUpdateShape(shape.id, { opacity: value });
+                                                                    }}
+                                                                />
+                                                            </label>
+                                                            <label>
+                                                                <span className="text-small">
+                                                                    Rotation ({Math.round(shape.rotation)}°)
+                                                                </span>
+                                                                <input
+                                                                    type="range"
+                                                                    min="0"
+                                                                    max="360"
+                                                                    value={Math.round(shape.rotation)}
+                                                                    onChange={(event) => {
+                                                                        const value = clamp(
+                                                                            Number(event.target.value),
+                                                                            0,
+                                                                            360,
+                                                                            shape.rotation,
+                                                                        );
+                                                                        setMapState((prev) => ({
+                                                                            ...prev,
+                                                                            shapes: prev.shapes.map((entry) =>
+                                                                                entry.id === shape.id
+                                                                                    ? { ...entry, rotation: value }
+                                                                                    : entry
+                                                                            ),
+                                                                        }));
+                                                                        handleUpdateShape(shape.id, { rotation: value });
+                                                                    }}
+                                                                />
+                                                            </label>
+                                                        </div>
+                                                        <div className="map-shape-card__actions">
+                                                            <button
+                                                                type="button"
+                                                                className="btn ghost btn-small"
+                                                                onClick={() => handleRemoveShape(shape.id)}
+                                                            >
+                                                                Remove shape
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </MapAccordionSection>
+                            </div>
+                        )}
+                        {sidebarTab === 'library' && (
+                            <div className="stack">
+                                <MapAccordionSection
+                                    title="Saved battle maps"
+                                    description="Store and recall complex encounters instantly."
+                                    defaultOpen
+                                >
+                                    {isDM ? (
+                                        <>
+                                            <div className="map-library-actions">
+                                                <button type="button" className="btn btn-small" onClick={handleSaveMap}>
+                                                    Save current map
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="btn btn-small secondary"
+                                                    onClick={refreshMapLibrary}
+                                                >
+                                                    Refresh
+                                                </button>
+                                            </div>
+                                            {mapLibrary.length === 0 ? (
+                                                <p className="map-empty text-muted">No saved maps yet.</p>
+                                            ) : (
+                                                <div className="map-library-list">
+                                                    {mapLibrary.map((entry) => {
+                                                        const updatedLabel = entry.updatedAt || entry.createdAt;
+                                                        return (
+                                                            <div key={entry.id} className="map-library-row">
+                                                                <div className="map-library-row__info">
+                                                                    <strong>{entry.name}</strong>
+                                                                    {updatedLabel && (
+                                                                        <div className="text-muted text-small">
+                                                                            Updated {new Date(updatedLabel).toLocaleString()}
+                                                                        </div>
+                                                                    )}
+                                                                    {entry.previewUrl && (
+                                                                        <div className="map-library-row__preview text-small text-muted">
+                                                                            {entry.previewUrl}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                                <div className="map-library-row__actions">
+                                                                    <button
+                                                                        type="button"
+                                                                        className="btn btn-small"
+                                                                        onClick={() => handleLoadSavedMap(entry)}
+                                                                    >
+                                                                        Load
+                                                                    </button>
+                                                                    <button
+                                                                        type="button"
+                                                                        className="btn btn-small ghost"
+                                                                        onClick={() => handleDeleteSavedMap(entry)}
+                                                                    >
+                                                                        Delete
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+                                        </>
+                                    ) : mapLibrary.length === 0 ? (
+                                        <p className="map-empty text-muted">The DM hasn’t shared any saved maps yet.</p>
+                                    ) : (
+                                        <div className="map-library-list">
+                                            {mapLibrary.map((entry) => (
+                                                <div key={entry.id} className="map-library-row">
+                                                    <div className="map-library-row__info">
+                                                        <strong>{entry.name}</strong>
+                                                        {entry.updatedAt && (
+                                                            <div className="text-muted text-small">
+                                                                Updated {new Date(entry.updatedAt).toLocaleString()}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </MapAccordionSection>
                             </div>
                         )}
                     </div>
-                    {isDM && (
-                        <div className="map-panel card">
-                            <h3>Saved battle maps</h3>
-                            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                                <button type="button" className="btn btn-small" onClick={handleSaveMap}>
-                                    Save current map
-                                </button>
-                                <button type="button" className="btn btn-small secondary" onClick={refreshMapLibrary}>
-                                    Refresh
-                                </button>
-                            </div>
-                            {mapLibrary.length === 0 ? (
-                                <p className="map-empty text-muted">No saved maps yet.</p>
-                            ) : (
-                                <div className="list">
-                                    {mapLibrary.map((entry) => {
-                                        const updatedLabel = entry.updatedAt || entry.createdAt;
-                                        return (
-                                            <div key={entry.id} className="map-library-row">
-                                                <div className="map-library-row__info">
-                                                    <strong>{entry.name}</strong>
-                                                    {updatedLabel && (
-                                                        <div className="text-muted text-small">
-                                                            Updated {new Date(updatedLabel).toLocaleString()}
-                                                        </div>
-                                                    )}
-                                                    {entry.previewUrl && (
-                                                        <div className="map-library-row__preview text-small text-muted">
-                                                            {entry.previewUrl}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                                                    <button
-                                                        type="button"
-                                                        className="btn btn-small"
-                                                        onClick={() => handleLoadSavedMap(entry)}
-                                                    >
-                                                        Load
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        className="btn btn-small ghost"
-                                                        onClick={() => handleDeleteSavedMap(entry)}
-                                                    >
-                                                        Delete
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-                        </div>
-                    )}
                 </aside>
             </div>
         </div>

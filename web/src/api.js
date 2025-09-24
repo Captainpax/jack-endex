@@ -156,153 +156,158 @@ export function createApi({
      * @param {RequestOptions} [opts]
      */
     async function request(path, opts = {}) {
-        _activeCount++;
-        notifyActivity();
+        const { quiet = false, ...rest } = opts || {};
+        if (!quiet) {
+            _activeCount++;
+            notifyActivity();
+        }
         try {
-        const {
-            method = 'GET',
-            headers = {},
-            body,
-            query,
-            signal,
-            noRetry = false,
-            retries,
-            timeoutMs: perReqTimeout = timeoutMs,
-            cache: cacheTTL = false,
-            expect = 'auto',
-            credentials = 'include',
-        } = opts;
+            const {
+                method = 'GET',
+                headers = {},
+                body,
+                query,
+                signal,
+                noRetry = false,
+                retries,
+                timeoutMs: perReqTimeout = timeoutMs,
+                cache: cacheTTL = false,
+                expect = 'auto',
+                credentials = 'include',
+            } = rest;
 
-        const url = `${baseURL}${path}${buildQuery(query)}`;
+            const url = `${baseURL}${path}${buildQuery(query)}`;
 
-        // Cache key only for GET + no body + expect auto/json/text
-        const cacheKey = method === 'GET' && !body ? `GET:${url}` : null;
-        if (cacheKey && cacheTTL && typeof cacheTTL === 'number') {
-            const hit = cacheGet(cacheKey);
-            if (hit !== undefined) return hit;
-        }
-
-        // Abort/timeout setup
-        const ac = new AbortController();
-        const timer = setTimeout(() => ac.abort(new DOMException('Request timeout', 'TimeoutError')), perReqTimeout);
-        const combinedSignal = signal
-            ? new AbortController()
-            : null;
-
-        if (combinedSignal) {
-            const cs = combinedSignal;
-            const onAbort = () => cs.abort();
-            signal.addEventListener('abort', onAbort, { once: true });
-            // Chain both
-            const relay = new AbortController();
-            const relayAbort = () => relay.abort();
-            ac.signal.addEventListener('abort', relayAbort, { once: true });
-        }
-
-        // Auto headers & body
-        /** @type {RequestInit} */
-        const init = { method, credentials };
-
-        // Determine content-type and serialize if needed
-        let finalHeaders = { ...headers };
-        let finalBody = body;
-
-        const isBodyAllowed = !['GET', 'HEAD'].includes(method);
-        const isBinary = body instanceof Blob || body instanceof ArrayBuffer || body instanceof FormData;
-        if (isBodyAllowed) {
-            if (!isBinary && body !== undefined && body !== null) {
-                finalHeaders['Content-Type'] ||= 'application/json';
-                if (finalHeaders['Content-Type'].includes('application/json')) {
-                    finalBody = JSON.stringify(body);
-                }
-            }
-            init.body = finalBody;
-        }
-
-        // Authorization
-        if (typeof getBearer === 'function') {
-            const token = getBearer(init);
-            if (token) {
-                finalHeaders['Authorization'] = `Bearer ${token}`;
-            }
-        }
-
-        init.headers = finalHeaders;
-        init.signal = ac.signal;
-
-        const doFetch = async () => {
-            let res;
-            try {
-                res = await fetch(url, init);
-            } catch (e) {
-                // Network/abort
-                throw new ApiError({ status: 0, code: 'NETWORK', message: e?.message || 'Network error', url });
-            } finally {
-                clearTimeout(timer);
+            // Cache key only for GET + no body + expect auto/json/text
+            const cacheKey = method === 'GET' && !body ? `GET:${url}` : null;
+            if (cacheKey && cacheTTL && typeof cacheTTL === 'number') {
+                const hit = cacheGet(cacheKey);
+                if (hit !== undefined) return hit;
             }
 
-            const ct = res.headers.get('content-type') || '';
-            const payload = await parseBody(res);
+            // Abort/timeout setup
+            const ac = new AbortController();
+            const timer = setTimeout(() => ac.abort(new DOMException('Request timeout', 'TimeoutError')), perReqTimeout);
+            const combinedSignal = signal
+                ? new AbortController()
+                : null;
 
-            if (!res.ok) {
-                /** @type {ApiErrorShape} */
-                const shape = {
-                    status: res.status,
-                    url,
-                    message: res.statusText || 'Request failed',
-                };
+            if (combinedSignal) {
+                const cs = combinedSignal;
+                const onAbort = () => cs.abort();
+                signal.addEventListener('abort', onAbort, { once: true });
+                // Chain both
+                const relay = new AbortController();
+                const relayAbort = () => relay.abort();
+                ac.signal.addEventListener('abort', relayAbort, { once: true });
+            }
 
-                // Try to lift API error { error, message, code, details }
-                if (ct.includes('application/json') && payload && typeof payload === 'object') {
-                    shape.message = payload.message || payload.error || shape.message;
-                    shape.code = payload.code || shape.code;
-                    shape.details = payload.details ?? payload;
-                } else if (typeof payload === 'string') {
-                    shape.message = payload || shape.message;
-                }
-                const err = new ApiError(shape);
-                if (err.status === 401 && typeof onUnauthorized === 'function') {
-                    try {
-                        onUnauthorized(err);
-                    } catch (e) {
-                        // swallow secondary errors from unauthorized handler but log for debugging
-                        console.error(e);
+            // Auto headers & body
+            /** @type {RequestInit} */
+            const init = { method, credentials };
+
+            // Determine content-type and serialize if needed
+            let finalHeaders = { ...headers };
+            let finalBody = body;
+
+            const isBodyAllowed = !['GET', 'HEAD'].includes(method);
+            const isBinary = body instanceof Blob || body instanceof ArrayBuffer || body instanceof FormData;
+            if (isBodyAllowed) {
+                if (!isBinary && body !== undefined && body !== null) {
+                    finalHeaders['Content-Type'] ||= 'application/json';
+                    if (finalHeaders['Content-Type'].includes('application/json')) {
+                        finalBody = JSON.stringify(body);
                     }
                 }
-                throw err;
+                init.body = finalBody;
             }
 
-            // If caller hints a specific type, coerce if possible
-            if (expect === 'text' && typeof payload !== 'string') {
-                return typeof payload === 'object' ? JSON.stringify(payload) : String(payload);
-            }
-            if (expect === 'json' && typeof payload === 'string') {
-                try { return JSON.parse(payload); } catch { /* leave as string */ }
-            }
-            return payload;
-        };
-
-        // Retries only for idempotent methods
-        const maxAttempts = noRetry ? 1 : (retries ?? (['GET', 'HEAD'].includes(method) ? 3 : 1));
-        let attempt = 0;
-        for (;;) {
-            try {
-                const out = await doFetch();
-                if (cacheKey && cacheTTL && typeof cacheTTL === 'number') {
-                    cacheSet(cacheKey, out, cacheTTL);
+            // Authorization
+            if (typeof getBearer === 'function') {
+                const token = getBearer(init);
+                if (token) {
+                    finalHeaders['Authorization'] = `Bearer ${token}`;
                 }
-            return out;
-        } catch (err) {
-                attempt++;
-                const ae = /** @type {ApiError} */(err);
-                const retriable = (ae.status === 0 || (ae.status >= 500 && ae.status < 600));
-                if (attempt >= maxAttempts || !retriable) throw err;
-                await sleep(backoff(attempt - 1));
             }
-        }
+
+            init.headers = finalHeaders;
+            init.signal = ac.signal;
+
+            const doFetch = async () => {
+                let res;
+                try {
+                    res = await fetch(url, init);
+                } catch (e) {
+                    // Network/abort
+                    throw new ApiError({ status: 0, code: 'NETWORK', message: e?.message || 'Network error', url });
+                } finally {
+                    clearTimeout(timer);
+                }
+
+                const ct = res.headers.get('content-type') || '';
+                const payload = await parseBody(res);
+
+                if (!res.ok) {
+                    /** @type {ApiErrorShape} */
+                    const shape = {
+                        status: res.status,
+                        url,
+                        message: res.statusText || 'Request failed',
+                    };
+
+                    // Try to lift API error { error, message, code, details }
+                    if (ct.includes('application/json') && payload && typeof payload === 'object') {
+                        shape.message = payload.message || payload.error || shape.message;
+                        shape.code = payload.code || shape.code;
+                        shape.details = payload.details ?? payload;
+                    } else if (typeof payload === 'string') {
+                        shape.message = payload || shape.message;
+                    }
+                    const err = new ApiError(shape);
+                    if (err.status === 401 && typeof onUnauthorized === 'function') {
+                        try {
+                            onUnauthorized(err);
+                        } catch (e) {
+                            // swallow secondary errors from unauthorized handler but log for debugging
+                            console.error(e);
+                        }
+                    }
+                    throw err;
+                }
+
+                // If caller hints a specific type, coerce if possible
+                if (expect === 'text' && typeof payload !== 'string') {
+                    return typeof payload === 'object' ? JSON.stringify(payload) : String(payload);
+                }
+                if (expect === 'json' && typeof payload === 'string') {
+                    try { return JSON.parse(payload); } catch { /* leave as string */ }
+                }
+                return payload;
+            };
+
+            // Retries only for idempotent methods
+            const maxAttempts = noRetry ? 1 : (retries ?? (['GET', 'HEAD'].includes(method) ? 3 : 1));
+            let attempt = 0;
+            for (;;) {
+                try {
+                    const out = await doFetch();
+                    if (cacheKey && cacheTTL && typeof cacheTTL === 'number') {
+                        cacheSet(cacheKey, out, cacheTTL);
+                    }
+                    return out;
+                } catch (err) {
+                    attempt++;
+                    const ae = /** @type {ApiError} */(err);
+                    const retriable = (ae.status === 0 || (ae.status >= 500 && ae.status < 600));
+                    if (attempt >= maxAttempts || !retriable) throw err;
+                    await sleep(backoff(attempt - 1));
+                }
+            }
         } finally {
-            _activeCount--;
-            notifyActivity();
+            if (!quiet) {
+                _activeCount = Math.max(0, _activeCount - 1);
+                notifyActivity();
+            }
         }
     }
 
@@ -462,46 +467,93 @@ export const Games = {
     delDemon: (id, demonId) => api(`/api/games/${encodeURIComponent(id)}/demons/${encodeURIComponent(demonId)}`, { method: 'DELETE' }),
 
     updateMapSettings: (id, settings) =>
-        api(`/api/games/${encodeURIComponent(id)}/map/settings`, { method: 'PUT', body: settings }),
-    getMap: (id) => api(`/api/games/${encodeURIComponent(id)}/map`),
+        api(`/api/games/${encodeURIComponent(id)}/map/settings`, {
+            method: 'PUT',
+            body: settings,
+            quiet: true,
+        }),
+    getMap: (id) => api(`/api/games/${encodeURIComponent(id)}/map`, { quiet: true }),
     addMapStroke: (id, stroke) =>
-        api(`/api/games/${encodeURIComponent(id)}/map/strokes`, { method: 'POST', body: { stroke } }),
+        api(`/api/games/${encodeURIComponent(id)}/map/strokes`, {
+            method: 'POST',
+            body: { stroke },
+            quiet: true,
+        }),
     deleteMapStroke: (id, strokeId) =>
-        api(`/api/games/${encodeURIComponent(id)}/map/strokes/${encodeURIComponent(strokeId)}`, { method: 'DELETE' }),
+        api(`/api/games/${encodeURIComponent(id)}/map/strokes/${encodeURIComponent(strokeId)}`, {
+            method: 'DELETE',
+            quiet: true,
+        }),
     clearMapStrokes: (id) =>
-        api(`/api/games/${encodeURIComponent(id)}/map/strokes/clear`, { method: 'POST' }),
+        api(`/api/games/${encodeURIComponent(id)}/map/strokes/clear`, {
+            method: 'POST',
+            quiet: true,
+        }),
     addMapShape: (id, shape) =>
-        api(`/api/games/${encodeURIComponent(id)}/map/shapes`, { method: 'POST', body: { shape } }),
+        api(`/api/games/${encodeURIComponent(id)}/map/shapes`, {
+            method: 'POST',
+            body: { shape },
+            quiet: true,
+        }),
     updateMapShape: (id, shapeId, payload) =>
         api(`/api/games/${encodeURIComponent(id)}/map/shapes/${encodeURIComponent(shapeId)}`, {
             method: 'PUT',
             body: payload,
+            quiet: true,
         }),
     deleteMapShape: (id, shapeId) =>
-        api(`/api/games/${encodeURIComponent(id)}/map/shapes/${encodeURIComponent(shapeId)}`, { method: 'DELETE' }),
+        api(`/api/games/${encodeURIComponent(id)}/map/shapes/${encodeURIComponent(shapeId)}`, {
+            method: 'DELETE',
+            quiet: true,
+        }),
     updateMapBackground: (id, payload) =>
-        api(`/api/games/${encodeURIComponent(id)}/map/background`, { method: 'PUT', body: payload }),
+        api(`/api/games/${encodeURIComponent(id)}/map/background`, {
+            method: 'PUT',
+            body: payload,
+            quiet: true,
+        }),
     clearMapBackground: (id) =>
-        api(`/api/games/${encodeURIComponent(id)}/map/background`, { method: 'DELETE' }),
+        api(`/api/games/${encodeURIComponent(id)}/map/background`, {
+            method: 'DELETE',
+            quiet: true,
+        }),
     addMapToken: (id, token) =>
-        api(`/api/games/${encodeURIComponent(id)}/map/tokens`, { method: 'POST', body: token }),
+        api(`/api/games/${encodeURIComponent(id)}/map/tokens`, {
+            method: 'POST',
+            body: token,
+            quiet: true,
+        }),
     updateMapToken: (id, tokenId, payload) =>
         api(`/api/games/${encodeURIComponent(id)}/map/tokens/${encodeURIComponent(tokenId)}`, {
             method: 'PUT',
             body: payload,
+            quiet: true,
         }),
     deleteMapToken: (id, tokenId) =>
-        api(`/api/games/${encodeURIComponent(id)}/map/tokens/${encodeURIComponent(tokenId)}`, { method: 'DELETE' }),
+        api(`/api/games/${encodeURIComponent(id)}/map/tokens/${encodeURIComponent(tokenId)}`, {
+            method: 'DELETE',
+            quiet: true,
+        }),
     listMapLibrary: async (id) => {
-        const result = await api(`/api/games/${encodeURIComponent(id)}/map/library`);
+        const result = await api(`/api/games/${encodeURIComponent(id)}/map/library`, { quiet: true });
         return Array.isArray(result?.maps) ? result.maps : [];
     },
     saveMapLibrary: (id, name) =>
-        api(`/api/games/${encodeURIComponent(id)}/map/library`, { method: 'POST', body: { name } }),
+        api(`/api/games/${encodeURIComponent(id)}/map/library`, {
+            method: 'POST',
+            body: { name },
+            quiet: true,
+        }),
     deleteMapLibrary: (id, entryId) =>
-        api(`/api/games/${encodeURIComponent(id)}/map/library/${encodeURIComponent(entryId)}`, { method: 'DELETE' }),
+        api(`/api/games/${encodeURIComponent(id)}/map/library/${encodeURIComponent(entryId)}`, {
+            method: 'DELETE',
+            quiet: true,
+        }),
     loadMapLibrary: (id, entryId) =>
-        api(`/api/games/${encodeURIComponent(id)}/map/library/${encodeURIComponent(entryId)}/load`, { method: 'POST' }),
+        api(`/api/games/${encodeURIComponent(id)}/map/library/${encodeURIComponent(entryId)}/load`, {
+            method: 'POST',
+            quiet: true,
+        }),
 
     // Optional: full pagination helper example if the backend supports it
     listAll: (query) => apiClient.getAllPages('/api/games', { query }),
