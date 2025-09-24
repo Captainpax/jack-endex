@@ -17,7 +17,9 @@ import { loadEnv, envString, envNumber } from './config/env.js';
 import User from './models/User.js';
 import Game from './models/Game.js';
 import Demon from './models/Demon.js';
+import Item from './models/Item.js';
 import { loadDemonEntries } from './lib/demonImport.js';
+import { loadItemEntries, parseHealingEffect } from './lib/itemImport.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const storyWatchers = new Map();
@@ -1077,6 +1079,46 @@ function presentGame(game, { includeSecrets = false } = {}) {
     };
 }
 
+function presentLibraryItem(doc) {
+    const raw = stripMongoMetadata(doc);
+    if (!raw) return null;
+    const {
+        slug,
+        name,
+        type = '',
+        desc = '',
+        category = '',
+        subcategory = '',
+        slot = '',
+        tags = [],
+        order = 0,
+        healing = null,
+    } = raw;
+    if (!slug || !name) return null;
+    const normalizedHealing = healing && typeof healing === 'object' && Object.keys(healing).length > 0
+        ? {
+              ...(typeof healing.hp === 'number' ? { hp: healing.hp } : {}),
+              ...(typeof healing.hpPercent === 'number' ? { hpPercent: healing.hpPercent } : {}),
+              ...(typeof healing.mp === 'number' ? { mp: healing.mp } : {}),
+              ...(typeof healing.mpPercent === 'number' ? { mpPercent: healing.mpPercent } : {}),
+              ...(healing.revive ? { revive: healing.revive } : {}),
+          }
+        : null;
+    return {
+        id: slug,
+        slug,
+        name,
+        type,
+        desc,
+        category,
+        subcategory,
+        slot,
+        tags: Array.isArray(tags) ? tags : [],
+        order,
+        ...(normalizedHealing ? { healing: normalizedHealing } : {}),
+    };
+}
+
 function ensureInventoryItem(item) {
     if (!item || typeof item !== 'object') return null;
     const normalized = {
@@ -1086,6 +1128,10 @@ function ensureInventoryItem(item) {
         desc: sanitizeText(item.desc),
         amount: normalizeCount(item.amount, 0),
     };
+    const { provided, value } = readLibraryItemId(item);
+    if (provided) {
+        normalized.libraryItemId = value;
+    }
     return normalized;
 }
 
@@ -2900,6 +2946,155 @@ function sanitizeText(value) {
     return String(value).slice(0, 500);
 }
 
+function normalizeLibraryItemId(value) {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim().toLowerCase();
+    if (!trimmed) return '';
+    return trimmed.replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
+function readLibraryItemId(source) {
+    if (!source || typeof source !== 'object') {
+        return { provided: false, value: null };
+    }
+    const keys = ['libraryItemId', 'libraryId'];
+    for (const key of keys) {
+        if (Object.prototype.hasOwnProperty.call(source, key)) {
+            const normalized = normalizeLibraryItemId(source[key]);
+            return { provided: true, value: normalized || null };
+        }
+    }
+    return { provided: false, value: null };
+}
+
+async function findLibraryItemById(libraryItemId) {
+    const slug = normalizeLibraryItemId(libraryItemId);
+    if (!slug) return null;
+    return Item.findOne({ slug }).lean();
+}
+
+async function syncInventoryEntryWithLibrary(entry, libraryItemId, { overwrite = false } = {}) {
+    if (!entry || typeof entry !== 'object') return null;
+    const libraryItem = await findLibraryItemById(libraryItemId);
+    if (!libraryItem) {
+        if (Object.prototype.hasOwnProperty.call(entry, 'libraryItemId')) {
+            entry.libraryItemId = null;
+        }
+        return null;
+    }
+    entry.libraryItemId = libraryItem.slug;
+    if (overwrite || !entry.type) {
+        entry.type = sanitizeText(libraryItem.type);
+    }
+    if (overwrite || !entry.desc) {
+        entry.desc = sanitizeText(libraryItem.desc);
+    }
+    if (overwrite || !entry.name) {
+        entry.name = sanitizeText(libraryItem.name);
+    }
+    return libraryItem;
+}
+
+function applyHealingEffect(resources, healing) {
+    if (!resources || typeof resources !== 'object' || !healing || typeof healing !== 'object') {
+        return { changed: false, revived: false, hpBefore: 0, hpAfter: 0, mpBefore: 0, mpAfter: 0 };
+    }
+    const hpBeforeRaw = Number(resources.hp);
+    const mpBeforeRaw = Number(resources.mp);
+    let hp = Number.isFinite(hpBeforeRaw) ? hpBeforeRaw : 0;
+    let mp = Number.isFinite(mpBeforeRaw) ? mpBeforeRaw : 0;
+    const maxHpRaw = Number(resources.maxHP);
+    const maxMpRaw = Number(resources.maxMP);
+    const maxHP = Number.isFinite(maxHpRaw) ? maxHpRaw : null;
+    const maxMP = Number.isFinite(maxMpRaw) ? maxMpRaw : null;
+    let changed = false;
+    let revived = false;
+    let usedPercentForRevive = false;
+    let usedFlatForRevive = false;
+
+    if (healing.revive) {
+        if (hp <= 0) {
+            if (typeof healing.hpPercent === 'number' && healing.hpPercent > 0 && maxHP && maxHP > 0) {
+                hp = Math.min(maxHP, Math.max(1, Math.ceil((maxHP * healing.hpPercent) / 100)));
+                usedPercentForRevive = true;
+            } else if (typeof healing.hp === 'number' && healing.hp > 0) {
+                hp = maxHP && maxHP > 0 ? Math.min(maxHP, Math.max(1, healing.hp)) : Math.max(1, healing.hp);
+                usedFlatForRevive = true;
+            } else if (healing.revive === 'full' && maxHP && maxHP > 0) {
+                hp = maxHP;
+            } else if (maxHP && maxHP > 0) {
+                hp = Math.max(1, Math.ceil(maxHP * 0.25));
+            } else {
+                hp = 1;
+            }
+            revived = true;
+            changed = true;
+        } else if (healing.revive === 'full' && maxHP && maxHP > 0 && hp < maxHP) {
+            hp = maxHP;
+            changed = true;
+        }
+    }
+
+    if (typeof healing.hpPercent === 'number' && healing.hpPercent > 0 && maxHP && maxHP > 0 && !usedPercentForRevive) {
+        const amount = Math.max(0, Math.ceil((maxHP * healing.hpPercent) / 100));
+        if (amount > 0) {
+            const next = Math.min(maxHP, hp + amount);
+            if (next !== hp) {
+                hp = next;
+                changed = true;
+            }
+        }
+    }
+
+    if (typeof healing.hp === 'number' && healing.hp > 0 && !usedFlatForRevive) {
+        const cap = maxHP && maxHP > 0 ? maxHP : null;
+        const next = cap ? Math.min(cap, hp + healing.hp) : hp + healing.hp;
+        if (next !== hp) {
+            hp = next;
+            changed = true;
+        }
+    }
+
+    if (typeof healing.mpPercent === 'number' && healing.mpPercent > 0 && maxMP && maxMP > 0) {
+        const amount = Math.max(0, Math.ceil((maxMP * healing.mpPercent) / 100));
+        if (amount > 0) {
+            const next = Math.min(maxMP, mp + amount);
+            if (next !== mp) {
+                mp = next;
+                changed = true;
+            }
+        }
+    }
+
+    if (typeof healing.mp === 'number' && healing.mp > 0) {
+        const cap = maxMP && maxMP > 0 ? maxMP : null;
+        const next = cap ? Math.min(cap, mp + healing.mp) : mp + healing.mp;
+        if (next !== mp) {
+            mp = next;
+            changed = true;
+        }
+    }
+
+    if (hp < 0) hp = 0;
+    if (mp < 0) mp = 0;
+
+    if (changed) {
+        resources.hp = hp;
+        if (resources.mp !== undefined || typeof healing.mp === 'number' || typeof healing.mpPercent === 'number') {
+            resources.mp = mp;
+        }
+    }
+
+    return {
+        changed,
+        revived,
+        hpBefore: Number.isFinite(hpBeforeRaw) ? hpBeforeRaw : 0,
+        hpAfter: hp,
+        mpBefore: Number.isFinite(mpBeforeRaw) ? mpBeforeRaw : 0,
+        mpAfter: mp,
+    };
+}
+
 function readImageUrl(value) {
     if (typeof value !== 'string') return '';
     const trimmed = value.trim();
@@ -3088,6 +3283,37 @@ async function loadSeedDatabase() {
             console.warn('Failed to read default database seed', err);
         }
         return null;
+    }
+}
+
+async function ensureInitialItemDocs() {
+    try {
+        const entries = await loadItemEntries({ file: ITEMS_PATH });
+        if (!Array.isArray(entries) || entries.length === 0) {
+            console.warn('[db] No premade items found; skipping library sync.');
+            return 0;
+        }
+        const now = new Date();
+        const bulkOps = entries.map((entry) => ({
+            updateOne: {
+                filter: { slug: entry.slug },
+                update: {
+                    $set: { ...entry, updatedAt: now },
+                    $setOnInsert: { createdAt: now },
+                },
+                upsert: true,
+            },
+        }));
+        if (bulkOps.length > 0) {
+            await Item.bulkWrite(bulkOps, { ordered: false });
+            const keepSlugs = entries.map((entry) => entry.slug);
+            await Item.deleteMany({ slug: { $nin: keepSlugs } });
+        }
+        console.log(`[db] Synchronized ${entries.length} items into the library.`);
+        return entries.length;
+    } catch (err) {
+        console.warn('[db] Failed to synchronize item library', err);
+        return 0;
     }
 }
 
@@ -4322,11 +4548,16 @@ app.delete('/api/games/:id', requireAuth, async (req, res) => {
 });
 
 function validateCustomItem(item) {
-    return {
+    const payload = {
         name: sanitizeText(item?.name),
         type: sanitizeText(item?.type),
         desc: sanitizeText(item?.desc),
     };
+    const { provided, value } = readLibraryItemId(item);
+    if (provided) {
+        payload.libraryItemId = value;
+    }
+    return payload;
 }
 
 app.post('/api/games/:id/items/custom', requireAuth, async (req, res) => {
@@ -4415,6 +4646,7 @@ app.post('/api/games/:id/players/:playerId/items', requireAuth, async (req, res)
     const desc = sanitizeText(payload.desc);
     const amountRaw = normalizeCount(payload.amount ?? payload.qty, 1);
     const amount = amountRaw <= 0 ? 1 : amountRaw;
+    const { provided: libraryProvided, value: libraryId } = readLibraryItemId(payload);
 
     const entry = {
         id: uuid(),
@@ -4423,6 +4655,14 @@ app.post('/api/games/:id/players/:playerId/items', requireAuth, async (req, res)
         desc,
         amount,
     };
+
+    if (libraryProvided) {
+        if (libraryId) {
+            await syncInventoryEntryWithLibrary(entry, libraryId);
+        } else {
+            entry.libraryItemId = null;
+        }
+    }
 
     const list = ensureInventoryList(target);
     list.push(entry);
@@ -4468,6 +4708,14 @@ app.put('/api/games/:id/players/:playerId/items/:itemId', requireAuth, async (re
     if (Object.prototype.hasOwnProperty.call(payload, 'amount') || Object.prototype.hasOwnProperty.call(payload, 'qty')) {
         entry.amount = normalizeCount(payload.amount ?? payload.qty, entry.amount);
     }
+    const { provided: updateLibrary, value: nextLibraryId } = readLibraryItemId(payload);
+    if (updateLibrary) {
+        if (nextLibraryId) {
+            await syncInventoryEntryWithLibrary(entry, nextLibraryId);
+        } else {
+            entry.libraryItemId = null;
+        }
+    }
 
     await persistGame(db, game);
     res.json(entry);
@@ -4500,6 +4748,77 @@ app.delete('/api/games/:id/players/:playerId/items/:itemId', requireAuth, async 
     target.inventory = next;
     await persistGame(db, game);
     res.json({ ok: true });
+});
+
+app.post('/api/games/:id/players/:playerId/items/:itemId/use', requireAuth, async (req, res) => {
+    const { id, playerId, itemId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
+    const target = findPlayer(game, playerId);
+    if (!target) return res.status(404).json({ error: 'player_not_found' });
+    if ((target.role || '').toLowerCase() === 'dm') {
+        return res.status(400).json({ error: 'dm_has_no_inventory' });
+    }
+
+    const actorId = req.session.userId;
+    const isActorDM = isDM(game, actorId);
+    if (!isActorDM && actorId !== playerId) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const list = ensureInventoryList(target);
+    const entry = list.find((it) => it && it.id === itemId);
+    if (!entry) return res.status(404).json({ error: 'item_not_found' });
+
+    const currentAmount = normalizeCount(entry.amount, 1);
+    if (currentAmount <= 0) {
+        return res.status(400).json({ error: 'item_depleted' });
+    }
+
+    const character = target.character && typeof target.character === 'object' ? target.character : null;
+    if (!character) {
+        return res.status(400).json({ error: 'no_character' });
+    }
+    character.resources = character.resources && typeof character.resources === 'object' ? character.resources : {};
+
+    let healing = null;
+    if (entry.libraryItemId) {
+        const libraryItem = await findLibraryItemById(entry.libraryItemId);
+        if (libraryItem?.healing) {
+            healing = libraryItem.healing;
+        }
+    }
+    if (!healing) {
+        const parsed = parseHealingEffect(entry.desc);
+        if (parsed) healing = parsed;
+    }
+    if (!healing) {
+        return res.status(400).json({ error: 'item_not_usable' });
+    }
+
+    const result = applyHealingEffect(character.resources, healing);
+    if (!result.changed) {
+        return res.status(400).json({ error: 'no_effect' });
+    }
+
+    const remaining = Math.max(0, currentAmount - 1);
+    if (remaining <= 0) {
+        target.inventory = list.filter((it) => it && it.id !== itemId);
+    } else {
+        entry.amount = remaining;
+    }
+
+    await persistGame(db, game, { reason: 'inventory:use', actorId: actorId });
+    res.json({
+        ok: true,
+        itemId,
+        remaining,
+        applied: result,
+    });
 });
 
 app.post('/api/games/:id/players/:playerId/gear/bag', requireAuth, async (req, res) => {
@@ -5077,9 +5396,11 @@ app.delete('/api/games/:id/story-log/messages/:messageId', requireAuth, async (r
 // --- Items ---
 app.get('/api/items/premade', async (_req, res) => {
     try {
-        const items = JSON.parse(await fs.readFile(ITEMS_PATH, 'utf8'));
+        const docs = await Item.find().sort({ order: 1, name: 1 }).lean();
+        const items = docs.map((doc) => presentLibraryItem(doc)).filter(Boolean);
         res.json(items);
-    } catch {
+    } catch (err) {
+        console.warn('[api] Failed to load premade items', err);
         res.json([]);
     }
 });
@@ -5206,6 +5527,7 @@ async function startServer() {
     try {
         await connectToDatabaseWithRetry(MONGODB_URI, { dbName: MONGODB_DB_NAME || undefined });
 
+        await ensureInitialItemDocs();
         await ensureInitialDemonDocs();
 
         await ensureDiscordBotOnline();

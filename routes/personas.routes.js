@@ -206,44 +206,68 @@ r.get('/:slug', async (req, res) => {
     }
 });
 
-// GET /api/personas/:slug/image  -> streams the image bytes
+// GET /api/personas/:slug/image  -> streams the image bytes for a stored persona entry
 r.get('/:slug/image', async (req, res) => {
     try {
         const slug = req.params.slug;
-        const r2 = await fetch(`${BASE}/personas/${encodeURIComponent(slug)}/`);
-        if (!r2.ok) return res.status(r2.status).json({ error: 'persona not found' });
-        const json = await r2.json();
-
-        const imageUrl = json?.image || json?.img || json?.picture;
-        if (!imageUrl) return res.status(404).json({ error: 'image not found in persona' });
-
-        // Fetch image server-side with reasonable headers
-        const img = await fetch(imageUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
-                'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
-                'Cache-Control': 'no-cache',
-                'Referer': BASE + '/', // benign referer
-            }
-        });
-
-        if (!img.ok) return res.status(img.status).json({ error: 'upstream image fetch failed' });
-
-        // Stream through content-type and length
-        const ct = img.headers.get('content-type') || 'application/octet-stream';
-        const cl = img.headers.get('content-length');
-        res.setHeader('Content-Type', ct);
-        if (cl) res.setHeader('Content-Length', cl);
-
-        const reader = img.body.getReader();
-        res.status(200);
-        while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            res.write(Buffer.from(value));
+        const demon = await findDemonBySlug(slug);
+        if (!demon) {
+            return res.status(404).json({ error: 'persona not found' });
         }
-        res.end();
-    } catch (e) {
+
+        const imageUrl = demon?.image || demon?.img || demon?.picture;
+        if (!imageUrl) {
+            return res.status(404).json({ error: 'image not found in persona' });
+        }
+
+        const parsed = resolveAllowedImageUrl(imageUrl);
+        if (!parsed) {
+            return res.status(400).json({ error: 'unsupported image host' });
+        }
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), IMAGE_PROXY_TIMEOUT_MS);
+        try {
+            const response = await fetch(parsed.toString(), {
+                method: 'GET',
+                redirect: 'follow',
+                signal: controller.signal,
+                headers: {
+                    'User-Agent': 'jack-endex/persona-image (+https://jack-endex.app)',
+                    Referer: `${parsed.origin}/`,
+                    Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+                    'Cache-Control': 'no-cache',
+                },
+            });
+            clearTimeout(timeout);
+
+            if (!response.ok) {
+                const status = response.status || 502;
+                return res.status(status).json({ error: 'image fetch failed' });
+            }
+
+            const contentType = response.headers.get('content-type') || 'application/octet-stream';
+            res.type(contentType);
+
+            const cacheControl = response.headers.get('cache-control');
+            if (cacheControl) {
+                res.set('Cache-Control', cacheControl);
+            } else {
+                res.set('Cache-Control', 'public, max-age=3600');
+            }
+
+            const buffer = Buffer.from(await response.arrayBuffer());
+            res.send(buffer);
+        } catch (error) {
+            clearTimeout(timeout);
+            if (error?.name === 'AbortError') {
+                return res.status(504).json({ error: 'image fetch timeout' });
+            }
+            console.error('persona image proxy failed', error);
+            res.status(502).json({ error: 'image proxy failed' });
+        }
+    } catch (error) {
+        console.error('persona image route failed', error);
         res.status(500).json({ error: 'image proxy failed' });
     }
 });

@@ -407,6 +407,42 @@ function isGearCategory(type) {
     return GEAR_TYPE_PATTERNS.some((pattern) => pattern.test(type));
 }
 
+function formatHealingEffect(healing) {
+    if (!healing || typeof healing !== "object") return "";
+    const parts = [];
+    const hasHpPercent = typeof healing.hpPercent === "number" && healing.hpPercent > 0;
+    const hasHpFlat = typeof healing.hp === "number" && healing.hp > 0;
+    const hasMpPercent = typeof healing.mpPercent === "number" && healing.mpPercent > 0;
+    const hasMpFlat = typeof healing.mp === "number" && healing.mp > 0;
+
+    if (healing.revive === "full") {
+        parts.push("Revives to full HP");
+    } else if (healing.revive === "partial") {
+        if (hasHpPercent) {
+            parts.push(`Revives with ${healing.hpPercent}% HP`);
+        } else if (hasHpFlat) {
+            parts.push(`Revives with ${healing.hp} HP`);
+        } else {
+            parts.push("Revives");
+        }
+    }
+
+    if (hasHpPercent && (!healing.revive || healing.revive === "full")) {
+        parts.push(`Restores ${healing.hpPercent}% HP`);
+    }
+    if (hasHpFlat && (!healing.revive || healing.revive === "full")) {
+        parts.push(`Restores ${healing.hp} HP`);
+    }
+    if (hasMpPercent) {
+        parts.push(`Restores ${healing.mpPercent}% MP`);
+    }
+    if (hasMpFlat) {
+        parts.push(`Restores ${healing.mp} MP`);
+    }
+
+    return parts.join(" · ");
+}
+
 function parseAppLocation(loc) {
     if (!loc) {
         return { joinCode: null, game: null };
@@ -2312,6 +2348,9 @@ function GameView({
         const maxHP = Number.isFinite(maxRaw) ? maxRaw : 0;
         const lvlRaw = Number(myEntry.character?.resources?.level);
         const level = Number.isFinite(lvlRaw) ? lvlRaw : null;
+        const maccaRaw = Number(myEntry.character?.resources?.macca);
+        const macca = Number.isFinite(maccaRaw) ? maccaRaw : 0;
+        const maccaLabel = Number.isFinite(maccaRaw) ? macca.toLocaleString() : "0";
         const tone =
             maxHP > 0
                 ? hp <= 0
@@ -2329,6 +2368,7 @@ function GameView({
             label: `HP ${hpLabel}`,
             tone,
         });
+        pills.push({ label: `Macca ${maccaLabel}`, tone: 'light' });
         return pills;
     }, [campaignPlayers.length, demonCount, isDM, myEntry]);
 
@@ -5939,6 +5979,13 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                                 disabled={disableInputs}
                             />
                             <MathField
+                                label="Macca"
+                                value={get(ch, "resources.macca")}
+                                onCommit={(val) => set("resources.macca", clampNonNegative(val))}
+                                className="math-inline"
+                                disabled={disableInputs}
+                            />
+                            <MathField
                                 label="Initiative bonus"
                                 value={get(ch, "resources.initiative")}
                                 onCommit={(val) => set("resources.initiative", Number(val))}
@@ -6784,6 +6831,7 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName, 
                     </>
                 )}
                 {resourceField("SP (earned)", "sp")}
+                {resourceField("Macca", "macca")}
                 {resourceField("Initiative bonus", "initiative", { allowNegative: true })}
             </div>
             <div className="wizard-hints">
@@ -6934,14 +6982,15 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName, 
                         <ul>
                             <li>Level {level} · EXP {resources.exp}</li>
                             <li>HP {resources.hp}/{resources.maxHP}</li>
-                            {resources.mode === "TP" ? (
-                                <li>TP {resources.tp}</li>
-                            ) : (
-                                <li>MP {resources.mp}/{resources.maxMP}</li>
-                            )}
-                            <li>SP {resources.sp}</li>
-                        </ul>
-                    </div>
+                        {resources.mode === "TP" ? (
+                            <li>TP {resources.tp}</li>
+                        ) : (
+                            <li>MP {resources.mp}/{resources.maxMP}</li>
+                        )}
+                        <li>SP {resources.sp}</li>
+                        <li>Macca {resources.macca}</li>
+                    </ul>
+                </div>
                     <div className="wizard-summary__section">
                         <h4>World skills</h4>
                         {summarySkills.length === 0 ? (
@@ -7066,6 +7115,7 @@ function buildInitialWizardState(character, playerName, worldSkills = DEFAULT_WO
         maxMP: clampNonNegative(normalized.resources?.maxMP),
         tp: clampNonNegative(normalized.resources?.tp),
         sp: clampNonNegative(normalized.resources?.sp),
+        macca: clampNonNegative(normalized.resources?.macca),
         initiative: Number(normalized.resources?.initiative) || 0,
         mode: normalized.resources?.useTP ? "TP" : "MP",
         notes: normalized.resources?.notes || "",
@@ -7130,6 +7180,7 @@ function buildCharacterFromWizard(state, base, worldSkills = DEFAULT_WORLD_SKILL
         maxMP: useTP ? 0 : clampNonNegative(state.resources.maxMP),
         tp: useTP ? clampNonNegative(state.resources.tp) : 0,
         sp: clampNonNegative(state.resources.sp),
+        macca: clampNonNegative(state.resources.macca),
         initiative: Number(state.resources.initiative) || 0,
         notes: state.resources.notes || normalized.resources?.notes || "",
         useTP,
@@ -10858,80 +10909,171 @@ function WorldSkillsTab({ game, me, onUpdate }) {
 
 function ItemsTab({ game, me, onUpdate }) {
     const [premade, setPremade] = useState([]);
-    const [form, setForm] = useState({ name: "", type: "", desc: "" });
+    const [form, setForm] = useState({ name: "", type: "", desc: "", libraryItemId: "" });
     const [editing, setEditing] = useState(null);
     const [busySave, setBusySave] = useState(false);
     const [busyRow, setBusyRow] = useState(null);
+    const [busyRowAction, setBusyRowAction] = useState(null);
     const [selectedPlayerId, setSelectedPlayerId] = useState("");
     const [giveBusyId, setGiveBusyId] = useState(null);
 
     const isDM = game.dmId === me.id;
     const canEdit = isDM || game.permissions?.canEditItems;
 
+    const libraryCatalog = useMemo(() => {
+        const map = new Map();
+        for (const item of premade) {
+            if (item?.id) map.set(item.id, item);
+        }
+        return map;
+    }, [premade]);
+
     const resetForm = useCallback(() => {
         setEditing(null);
-        setForm({ name: "", type: "", desc: "" });
+        setForm({ name: "", type: "", desc: "", libraryItemId: "" });
     }, []);
+
+    const applyLibraryToForm = useCallback(
+        (libraryId) => {
+            setForm((prev) => {
+                if (!libraryId) {
+                    return { ...prev, libraryItemId: "" };
+                }
+                const linked = libraryCatalog.get(libraryId);
+                const next = { ...prev, libraryItemId: libraryId };
+                if (linked && prev.libraryItemId !== libraryId) {
+                    next.name = linked.name || "";
+                    next.type = linked.type || "";
+                    next.desc = linked.desc || "";
+                }
+                return next;
+            });
+        },
+        [libraryCatalog],
+    );
 
     useEffect(() => {
         let mounted = true;
         (async () => {
             try {
                 const data = await Items.premade();
-                if (mounted) setPremade(Array.isArray(data) ? data : []);
+                if (mounted) {
+                    setPremade(Array.isArray(data) ? data : []);
+                }
             } catch (e) {
                 console.error(e);
             }
         })();
-        return () => { mounted = false; };
+        return () => {
+            mounted = false;
+        };
     }, []);
 
     useEffect(() => {
         resetForm();
     }, [game.id, resetForm]);
 
-    const save = async (item) => {
-        if (!item?.name) return alert("Item needs a name");
-        try {
-            setBusySave(true);
-            if (editing) {
-                await Games.updateCustomItem(game.id, editing.id, item);
-            } else {
-                await Games.addCustomItem(game.id, item);
+    const formLinked = form.libraryItemId ? libraryCatalog.get(form.libraryItemId) : null;
+    const formLinkedEffect = formLinked ? formatHealingEffect(formLinked.healing) : "";
+
+    const save = useCallback(
+        async (itemOverride) => {
+            const source = itemOverride || form;
+            const payload = {
+                name: (source.name || "").trim(),
+                type: (source.type || "").trim(),
+                desc: (source.desc || "").trim(),
+            };
+            if (!payload.name) {
+                alert("Item needs a name");
+                return;
             }
-            await onUpdate();
-            resetForm();
-        } catch (e) {
-            alert(e.message);
-        } finally {
-            setBusySave(false);
-        }
-    };
+            const rawIdSource =
+                itemOverride && Object.prototype.hasOwnProperty.call(itemOverride, "libraryItemId")
+                    ? itemOverride.libraryItemId
+                    : form.libraryItemId;
+            const normalizedId = typeof rawIdSource === "string" ? rawIdSource.trim() : "";
+            payload.libraryItemId = normalizedId;
+            try {
+                setBusySave(true);
+                if (editing) {
+                    await Games.updateCustomItem(game.id, editing.id, payload);
+                } else {
+                    await Games.addCustomItem(game.id, payload);
+                }
+                await onUpdate?.();
+                resetForm();
+            } catch (e) {
+                alert(e.message);
+            } finally {
+                setBusySave(false);
+            }
+        },
+        [editing, form, game.id, onUpdate, resetForm],
+    );
 
-    const remove = async (itemId) => {
-        if (!confirm("Remove this item?")) return;
-        try {
-            setBusyRow(itemId);
-            await Games.deleteCustomItem(game.id, itemId);
-            if (editing?.id === itemId) resetForm();
-            await onUpdate();
-        } catch (e) {
-            alert(e.message);
-        } finally {
-            setBusyRow(null);
-        }
-    };
+    const remove = useCallback(
+        async (itemId) => {
+            if (!confirm("Remove this item?")) return;
+            try {
+                setBusyRow(itemId);
+                setBusyRowAction("remove");
+                await Games.deleteCustomItem(game.id, itemId);
+                if (editing?.id === itemId) {
+                    resetForm();
+                }
+                await onUpdate?.();
+            } catch (e) {
+                alert(e.message);
+            } finally {
+                setBusyRow(null);
+                setBusyRowAction(null);
+            }
+        },
+        [editing?.id, game.id, onUpdate, resetForm],
+    );
 
-    const itemList = premade.filter((it) => !isGearCategory(it.type));
-    const gearList = premade.filter((it) => isGearCategory(it.type));
+    const handleUnlinkCustom = useCallback(
+        async (item) => {
+            if (!canEdit || !item?.id) return;
+            try {
+                setBusyRow(item.id);
+                setBusyRowAction("unlink");
+                await Games.updateCustomItem(game.id, item.id, { libraryItemId: "" });
+                if (editing?.id === item.id) {
+                    setForm((prev) => ({ ...prev, libraryItemId: "" }));
+                }
+                await onUpdate?.();
+            } catch (e) {
+                alert(e.message);
+            } finally {
+                setBusyRow(null);
+                setBusyRowAction(null);
+            }
+        },
+        [canEdit, editing?.id, game.id, onUpdate],
+    );
+
+    const itemList = useMemo(
+        () =>
+            premade.filter((it) => {
+                if (!it || isGearCategory(it.type)) return false;
+                const slug = (it.slug || it.id || "").toLowerCase();
+                const name = (it.name || "").toLowerCase();
+                return slug !== "tools-macca" && name !== "macca";
+            }),
+        [premade],
+    );
+    const gearList = useMemo(() => premade.filter((it) => it && isGearCategory(it.type)), [premade]);
+
     const customItems = Array.isArray(game.items?.custom) ? game.items.custom : [];
     const customGear = Array.isArray(game.gear?.custom) ? game.gear.custom : [];
-    const libraryItems = [...customItems, ...itemList];
+
+    const libraryItems = itemList;
     const libraryGear = [...customGear, ...gearList];
+
     const canManageGear = isDM || game.permissions?.canEditGear;
-    const players = (game.players || []).filter(
-        (p) => (p?.role || "").toLowerCase() !== "dm"
-    );
+    const players = (game.players || []).filter((p) => (p?.role || "").toLowerCase() !== "dm");
 
     const playerOptions = useMemo(
         () =>
@@ -10943,7 +11085,7 @@ function ItemsTab({ game, me, onUpdate }) {
                     `Player ${p.userId?.slice?.(0, 6) || ""}` ||
                     "Unnamed Player",
             })),
-        [players]
+        [players],
     );
 
     useEffect(() => {
@@ -10989,6 +11131,7 @@ function ItemsTab({ game, me, onUpdate }) {
                     type: item.type,
                     desc: item.desc,
                     amount: 1,
+                    libraryItemId: item.libraryItemId || "",
                 });
                 await onUpdate?.();
             } catch (e) {
@@ -10997,16 +11140,16 @@ function ItemsTab({ game, me, onUpdate }) {
                 setGiveBusyId(null);
             }
         },
-        [game.id, isDM, onUpdate, selectedPlayer?.userId]
+        [game.id, isDM, onUpdate, selectedPlayer?.userId],
     );
 
     return (
         <div className="col" style={{ display: "grid", gap: 16 }}>
-      <div className="row" style={{ gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
-          <div className="card" style={{ flex: 1, minWidth: 320 }}>
-              <h3>{editing ? "Edit Item" : "Custom Item"}</h3>
-              <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-                  <input
+            <div className="row" style={{ gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
+                <div className="card" style={{ flex: 1, minWidth: 320 }}>
+                    <h3>{editing ? "Edit Item" : "Custom Item"}</h3>
+                    <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                        <input
                             placeholder="Name"
                             value={form.name}
                             onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -11024,114 +11167,207 @@ function ItemsTab({ game, me, onUpdate }) {
                             onChange={(e) => setForm({ ...form, desc: e.target.value })}
                             style={{ flex: 2, minWidth: 220 }}
                         />
-                        <div className="row" style={{ gap: 8 }}>
+                    </div>
+                    <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
+                        <select
+                            value={form.libraryItemId}
+                            onChange={(e) => applyLibraryToForm(e.target.value)}
+                            disabled={!canEdit || busySave}
+                            style={{ flex: 1, minWidth: 240 }}
+                        >
+                            <option value="">No premade link</option>
+                            {premade.map((it) => (
+                                <option key={it.id} value={it.id}>
+                                    {it.name}
+                                    {it.type ? ` · ${it.type}` : ""}
+                                </option>
+                            ))}
+                        </select>
+                        {form.libraryItemId && (
                             <button
-                                className="btn"
-                                disabled={!form.name || busySave || !canEdit}
-                                onClick={() => save(form)}
+                                className="btn ghost"
+                                onClick={() => applyLibraryToForm("")}
+                                disabled={busySave}
                             >
-                                {busySave ? "…" : editing ? "Save" : "Add"}
+                                Unlink
                             </button>
-                            {editing && (
-                                <button className="btn" onClick={resetForm} disabled={busySave}>
-                                    Cancel
-                                </button>
-                            )}
+                        )}
+                    </div>
+                    {formLinked ? (
+                        <div className="text-muted text-small" style={{ marginTop: -4 }}>
+                            Linked to <b>{formLinked.name}</b>
+                            {formLinked.type ? ` · ${formLinked.type}` : ""}
+                            {formLinkedEffect && <div>Effect: {formLinkedEffect}</div>}
                         </div>
-              </div>
+                    ) : form.libraryItemId ? (
+                        <div className="text-small warn" style={{ marginTop: -4 }}>
+                            Linked premade item not found.
+                        </div>
+                    ) : null}
+                    <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                        <button className="btn" disabled={!canEdit || busySave} onClick={() => save()}>
+                            {busySave ? "…" : editing ? "Save" : "Add"}
+                        </button>
+                        {editing && (
+                            <button className="btn" onClick={resetForm} disabled={busySave}>
+                                Cancel
+                            </button>
+                        )}
+                    </div>
 
-              <h4 style={{ marginTop: 16 }}>Game Custom Items</h4>
-              {isDM && (
-                  <p className="text-muted text-small" style={{ marginTop: -4 }}>
-                      {canGiveToSelected
-                          ? `Give buttons target ${selectedPlayerLabel}.`
-                          : "Select a claimed player below to enable the Give button."}
-                  </p>
-              )}
-              <div className="list">
-                  {customItems.map((it) => (
-                      <div
-                          key={it.id}
-                          className="row"
-                          style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}
-                      >
-                          <div>
-                              <b>{it.name}</b> — {it.type || "—"}
-                              <div style={{ opacity: 0.85, fontSize: 12 }}>{it.desc}</div>
-                          </div>
-                          {(isDM || canEdit) && (
-                              <div className="row" style={{ gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                                  {isDM && (
-                                      <button
-                                          className="btn"
-                                          onClick={() => handleGiveCustom(it)}
-                                          disabled={!canGiveToSelected || giveBusyId === it.id}
-                                          title={
-                                              !selectedPlayer?.userId
-                                                  ? "Select a player slot linked to a user to give this item."
-                                                  : undefined
-                                          }
-                                      >
-                                          {giveBusyId === it.id
-                                              ? "Giving…"
-                                              : canGiveToSelected
-                                              ? `Give to ${selectedPlayerLabel}`
-                                              : "Give"}
-                                      </button>
-                                  )}
-                                  {canEdit && (
-                                      <>
-                                          <button
-                                              className="btn"
-                                              onClick={() => {
-                                                  setEditing(it);
-                                                  setForm({ name: it.name || "", type: it.type || "", desc: it.desc || "" });
-                                              }}
-                                              disabled={busySave}
-                                          >
-                                              Edit
-                                          </button>
-                                          <button
-                                              className="btn"
-                                              onClick={() => remove(it.id)}
-                                              disabled={busyRow === it.id}
-                                          >
-                                              {busyRow === it.id ? "…" : "Remove"}
-                                          </button>
-                                      </>
-                                  )}
-                              </div>
-                          )}
-                      </div>
-                  ))}
-                  {customItems.length === 0 && (
-                      <div style={{ opacity: 0.7 }}>No custom items yet.</div>
-                  )}
+                    <h4 style={{ marginTop: 16 }}>Game Custom Items</h4>
+                    {isDM && (
+                        <p className="text-muted text-small" style={{ marginTop: -4 }}>
+                            {canGiveToSelected
+                                ? `Give buttons target ${selectedPlayerLabel}.`
+                                : "Select a claimed player below to enable the Give button."}
+                        </p>
+                    )}
+                    <div className="list">
+                        {customItems.map((it) => {
+                            const linked = it.libraryItemId ? libraryCatalog.get(it.libraryItemId) : null;
+                            const effectLabel = linked ? formatHealingEffect(linked.healing) : "";
+                            const rowBusy = busyRow === it.id;
+                            const unlinking = rowBusy && busyRowAction === "unlink";
+                            const removing = rowBusy && busyRowAction === "remove";
+                            return (
+                                <div
+                                    key={it.id}
+                                    className="row"
+                                    style={{
+                                        gap: 12,
+                                        flexWrap: "wrap",
+                                        alignItems: "flex-start",
+                                        justifyContent: "space-between",
+                                    }}
+                                >
+                                    <div style={{ flex: 1, minWidth: 220 }}>
+                                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                                            <b>{it.name || "Unnamed item"}</b>
+                                            {it.type && <span className="pill">{it.type}</span>}
+                                        </div>
+                                        {it.desc && (
+                                            <div style={{ opacity: 0.8, fontSize: 12, marginTop: 4 }}>{it.desc}</div>
+                                        )}
+                                        {linked ? (
+                                            <div className="text-muted text-small" style={{ marginTop: 4 }}>
+                                                Linked to <b>{linked.name}</b>
+                                                {linked.type ? ` · ${linked.type}` : ""}
+                                                {effectLabel && <div>Effect: {effectLabel}</div>}
+                                            </div>
+                                        ) : it.libraryItemId ? (
+                                            <div className="text-small warn" style={{ marginTop: 4 }}>
+                                                Linked premade item not found.
+                                            </div>
+                                        ) : null}
+                                    </div>
+                                    <div
+                                        className="row"
+                                        style={{ gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}
+                                    >
+                                        {isDM && (
+                                            <button
+                                                className="btn"
+                                                onClick={() => handleGiveCustom(it)}
+                                                disabled={!canGiveToSelected || giveBusyId === it.id}
+                                                title={
+                                                    !selectedPlayer?.userId
+                                                        ? "Select a player slot linked to a user to give this item."
+                                                        : undefined
+                                                }
+                                            >
+                                                {giveBusyId === it.id
+                                                    ? "Giving…"
+                                                    : canGiveToSelected
+                                                    ? `Give to ${selectedPlayerLabel}`
+                                                    : "Give"}
+                                            </button>
+                                        )}
+                                        {canEdit && it.libraryItemId && (
+                                            <button
+                                                className="btn ghost"
+                                                onClick={() => handleUnlinkCustom(it)}
+                                                disabled={unlinking}
+                                            >
+                                                {unlinking ? "…" : "Unlink"}
+                                            </button>
+                                        )}
+                                        {canEdit && (
+                                            <>
+                                                <button
+                                                    className="btn"
+                                                    onClick={() => {
+                                                        setEditing(it);
+                                                        setForm({
+                                                            name: it.name || "",
+                                                            type: it.type || "",
+                                                            desc: it.desc || "",
+                                                            libraryItemId: it.libraryItemId || "",
+                                                        });
+                                                    }}
+                                                    disabled={busySave}
+                                                >
+                                                    Edit
+                                                </button>
+                                                <button
+                                                    className="btn"
+                                                    onClick={() => remove(it.id)}
+                                                    disabled={removing}
+                                                >
+                                                    {removing ? "…" : "Remove"}
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                        {customItems.length === 0 && <div style={{ opacity: 0.7 }}>No custom items yet.</div>}
                     </div>
                 </div>
 
                 <div className="card" style={{ width: 380 }}>
                     <h3>Premade Items</h3>
                     <div className="list" style={{ maxHeight: 420, overflow: "auto" }}>
-                        {itemList.map((it, idx) => (
-                            <div
-                                key={idx}
-                                className="row"
-                                style={{ justifyContent: "space-between", alignItems: "center" }}
-                            >
-                                <div>
-                                    <b>{it.name}</b> <span className="pill">{it.type || "—"}</span>
-                                    <div style={{ opacity: 0.8, fontSize: 12 }}>{it.desc}</div>
-                                </div>
-                                <button
-                                    className="btn"
-                                    disabled={!canEdit || busySave}
-                                    onClick={() => save({ name: it.name, type: it.type, desc: it.desc })}
+                        {itemList.map((it) => {
+                            const effectLabel = formatHealingEffect(it.healing);
+                            return (
+                                <div
+                                    key={it.id}
+                                    className="row"
+                                    style={{ justifyContent: "space-between", alignItems: "center", gap: 12 }}
                                 >
-                                    Add
-                                </button>
-                            </div>
-                        ))}
+                                    <div style={{ flex: 1, minWidth: 220 }}>
+                                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                                            <b>{it.name}</b>
+                                            {it.type && <span className="pill">{it.type}</span>}
+                                        </div>
+                                        {it.desc && (
+                                            <div style={{ opacity: 0.8, fontSize: 12 }}>{it.desc}</div>
+                                        )}
+                                        {effectLabel && (
+                                            <div className="text-muted text-small" style={{ marginTop: 2 }}>
+                                                {effectLabel}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <button
+                                        className="btn"
+                                        disabled={!canEdit || busySave}
+                                        onClick={() =>
+                                            save({
+                                                name: it.name,
+                                                type: it.type,
+                                                desc: it.desc,
+                                                libraryItemId: it.id,
+                                            })
+                                        }
+                                    >
+                                        Add
+                                    </button>
+                                </div>
+                            );
+                        })}
                         {itemList.length === 0 && <div style={{ opacity: 0.7 }}>No premade items.</div>}
                     </div>
                 </div>
@@ -11182,6 +11418,9 @@ function ItemsTab({ game, me, onUpdate }) {
                                         gameId={game.id}
                                         onUpdate={onUpdate}
                                         libraryItems={libraryItems}
+                                        libraryCatalog={libraryCatalog}
+                                        currentUserId={me.id}
+                                        isDM={isDM}
                                     />
                                     <PlayerGearStashCard
                                         player={p}
@@ -11200,25 +11439,31 @@ function ItemsTab({ game, me, onUpdate }) {
     );
 }
 
-function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems }) {
-    const [form, setForm] = useState({ name: "", type: "", desc: "", amount: "1" });
+function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems, libraryCatalog, isDM, currentUserId }) {
+    const [form, setForm] = useState({ name: "", type: "", desc: "", amount: "1", libraryItemId: "" });
     const [editing, setEditing] = useState(null);
     const [busySave, setBusySave] = useState(false);
     const [busyRow, setBusyRow] = useState(null);
-    const [picker, setPicker] = useState("");
+    const [busyRowAction, setBusyRowAction] = useState(null);
+    const [busyUse, setBusyUse] = useState(null);
+
+    const inventory = Array.isArray(player.inventory) ? player.inventory : [];
+    const available = Array.isArray(libraryItems) ? libraryItems : [];
+    const libraryMap = useMemo(() => {
+        if (libraryCatalog instanceof Map) {
+            return libraryCatalog;
+        }
+        return new Map();
+    }, [libraryCatalog]);
 
     const resetForm = useCallback(() => {
         setEditing(null);
-        setForm({ name: "", type: "", desc: "", amount: "1" });
-        setPicker("");
+        setForm({ name: "", type: "", desc: "", amount: "1", libraryItemId: "" });
     }, []);
 
     useEffect(() => {
         resetForm();
     }, [player.userId, resetForm]);
-
-    const inventory = Array.isArray(player.inventory) ? player.inventory : [];
-    const available = Array.isArray(libraryItems) ? libraryItems : [];
 
     const parseAmount = useCallback((value, fallback) => {
         if (value === undefined || value === null || value === "") return fallback;
@@ -11228,16 +11473,42 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems }
         return rounded < 0 ? 0 : rounded;
     }, []);
 
+    const formLinked = form.libraryItemId ? libraryMap.get(form.libraryItemId) : null;
+    const formLinkedEffect = formLinked ? formatHealingEffect(formLinked.healing) : "";
+
+    const handleLibrarySelect = useCallback(
+        (value) => {
+            setForm((prev) => {
+                if (!value) {
+                    return { ...prev, libraryItemId: "" };
+                }
+                const linked = libraryMap.get(value);
+                const next = { ...prev, libraryItemId: value };
+                if (linked && prev.libraryItemId !== value) {
+                    next.name = linked.name || "";
+                    next.type = linked.type || "";
+                    next.desc = linked.desc || "";
+                }
+                return next;
+            });
+        },
+        [libraryMap],
+    );
+
     const save = useCallback(async () => {
         if (!canEdit) return;
         const name = form.name.trim();
-        if (!name) return alert("Item needs a name");
+        if (!name) {
+            alert("Item needs a name");
+            return;
+        }
         const amount = parseAmount(form.amount, editing ? editing.amount ?? 0 : 1);
         const payload = {
             name,
             type: form.type.trim(),
             desc: form.desc.trim(),
-            amount: editing ? amount : (amount <= 0 ? 1 : amount),
+            amount: editing ? amount : amount <= 0 ? 1 : amount,
+            libraryItemId: typeof form.libraryItemId === "string" ? form.libraryItemId.trim() : "",
         };
         try {
             setBusySave(true);
@@ -11246,14 +11517,14 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems }
             } else {
                 await Games.addPlayerItem(gameId, player.userId, payload);
             }
-            await onUpdate();
+            await onUpdate?.();
             resetForm();
         } catch (e) {
             alert(e.message);
         } finally {
             setBusySave(false);
         }
-    }, [canEdit, editing, form.amount, form.desc, form.name, form.type, gameId, onUpdate, parseAmount, player.userId, resetForm]);
+    }, [canEdit, editing, form, gameId, onUpdate, parseAmount, player.userId, resetForm]);
 
     const startEdit = useCallback((item) => {
         setEditing(item);
@@ -11262,150 +11533,263 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems }
             type: item.type || "",
             desc: item.desc || "",
             amount: String(item.amount ?? 1),
+            libraryItemId: item.libraryItemId || "",
         });
-        setPicker("");
     }, []);
 
-    const remove = useCallback(async (itemId) => {
-        if (!canEdit) return;
-        if (!confirm("Remove this item from the inventory?")) return;
-        try {
-            setBusyRow(itemId);
-            await Games.deletePlayerItem(gameId, player.userId, itemId);
-            if (editing?.id === itemId) resetForm();
-            await onUpdate();
-        } catch (e) {
-            alert(e.message);
-        } finally {
-            setBusyRow(null);
-        }
-    }, [canEdit, editing?.id, gameId, onUpdate, player.userId, resetForm]);
+    const remove = useCallback(
+        async (itemId) => {
+            if (!canEdit) return;
+            if (!confirm("Remove this item from the inventory?")) return;
+            try {
+                setBusyRow(itemId);
+                setBusyRowAction("remove");
+                await Games.deletePlayerItem(gameId, player.userId, itemId);
+                if (editing?.id === itemId) resetForm();
+                await onUpdate?.();
+            } catch (e) {
+                alert(e.message);
+            } finally {
+                setBusyRow(null);
+                setBusyRowAction(null);
+            }
+        },
+        [canEdit, editing?.id, gameId, onUpdate, player.userId, resetForm],
+    );
+
+    const unlink = useCallback(
+        async (itemId) => {
+            if (!canEdit) return;
+            try {
+                setBusyRow(itemId);
+                setBusyRowAction("unlink");
+                await Games.updatePlayerItem(gameId, player.userId, itemId, { libraryItemId: "" });
+                await onUpdate?.();
+            } catch (e) {
+                alert(e.message);
+            } finally {
+                setBusyRow(null);
+                setBusyRowAction(null);
+            }
+        },
+        [canEdit, gameId, onUpdate, player.userId],
+    );
+
+    const canUseItems = isDM || currentUserId === player.userId;
+
+    const handleUse = useCallback(
+        async (item) => {
+            if (!canUseItems || !item?.id) return;
+            try {
+                setBusyUse(item.id);
+                const result = await Games.consumePlayerItem(gameId, player.userId, item.id);
+                if (result?.applied) {
+                    const { applied, remaining } = result;
+                    const parts = [];
+                    if (applied.revived) parts.push("Revived");
+                    if (
+                        typeof applied.hpBefore === "number" &&
+                        typeof applied.hpAfter === "number" &&
+                        applied.hpAfter !== applied.hpBefore
+                    ) {
+                        parts.push(`HP ${applied.hpBefore} → ${applied.hpAfter}`);
+                    }
+                    if (
+                        typeof applied.mpBefore === "number" &&
+                        typeof applied.mpAfter === "number" &&
+                        applied.mpAfter !== applied.mpBefore
+                    ) {
+                        parts.push(`MP ${applied.mpBefore} → ${applied.mpAfter}`);
+                    }
+                    if (typeof remaining === "number") {
+                        parts.push(`Remaining: ${remaining}`);
+                    }
+                    if (parts.length > 0) {
+                        alert(`Used ${item.name || "item"}. ${parts.join(", ")}`);
+                    } else {
+                        alert(`Used ${item.name || "item"}.`);
+                    }
+                }
+                await onUpdate?.();
+            } catch (e) {
+                alert(e.message);
+            } finally {
+                setBusyUse(null);
+            }
+        },
+        [canUseItems, gameId, onUpdate, player.userId],
+    );
 
     const playerLabel = player.character?.name || `Player ${player.userId?.slice?.(0, 6) || ""}`;
     const subtitleParts = [];
     if (player.character?.profile?.class) subtitleParts.push(player.character.profile.class);
     if (player.character?.resources?.level) subtitleParts.push(`LV ${player.character.resources.level}`);
     const subtitle = subtitleParts.join(" · ");
+    const maccaRaw = Number(player.character?.resources?.macca);
+    const macca = Number.isFinite(maccaRaw) ? maccaRaw : 0;
+    const maccaLabel = Number.isFinite(maccaRaw) ? macca.toLocaleString() : "0";
 
     return (
         <div className="card" style={{ padding: 12 }}>
             <div className="row" style={{ justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
                 <div>
-                    <div><b>{playerLabel || "Unnamed Player"}</b></div>
+                    <div>
+                        <b>{playerLabel || "Unnamed Player"}</b>
+                    </div>
                     {subtitle && <div style={{ opacity: 0.75, fontSize: 12 }}>{subtitle}</div>}
                 </div>
-                <span className="pill">Items: {inventory.length}</span>
+                <div className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                    <span className="pill">Items: {inventory.length}</span>
+                    <span className="pill light">Macca {maccaLabel}</span>
+                </div>
             </div>
 
-            {canEdit && available.length > 0 && (
-                <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                    <select
-                        value={picker}
-                        onChange={(e) => {
-                            const value = e.target.value;
-                            if (!value) {
-                                setPicker("");
-                                return;
-                            }
-                            const idx = Number(value);
-                            if (!Number.isNaN(idx) && available[idx]) {
-                                const chosen = available[idx];
-                                setForm((prev) => ({
-                                    ...prev,
-                                    name: chosen.name || "",
-                                    type: chosen.type || "",
-                                    desc: chosen.desc || "",
-                                }));
-                            }
-                            setPicker("");
-                        }}
-                    >
-                        <option value="">Copy from library…</option>
-                        {available.map((it, idx) => (
-                            <option key={`${it.id ?? it.name ?? idx}-${idx}`} value={String(idx)}>
-                                {(it.name || "Untitled").slice(0, 40)}
-                                {it.type ? ` · ${it.type}` : ""}
-                            </option>
-                        ))}
-                    </select>
+            {canEdit && (
+                <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    {available.length > 0 && (
+                        <select
+                            value={form.libraryItemId}
+                            onChange={(e) => handleLibrarySelect(e.target.value)}
+                            disabled={busySave}
+                            style={{ flex: 1, minWidth: 220 }}
+                        >
+                            <option value="">No premade link</option>
+                            {available.map((item) => (
+                                <option key={item.id} value={item.id}>
+                                    {item.name}
+                                    {item.type ? ` · ${item.type}` : ""}
+                                </option>
+                            ))}
+                        </select>
+                    )}
+                    {form.libraryItemId && (
+                        <button className="btn ghost" onClick={() => handleLibrarySelect("")} disabled={busySave}>
+                            Clear link
+                        </button>
+                    )}
                 </div>
             )}
+            {formLinked ? (
+                <div className="text-muted text-small" style={{ marginTop: canEdit ? -4 : 8 }}>
+                    Linked to <b>{formLinked.name}</b>
+                    {formLinked.type ? ` · ${formLinked.type}` : ""}
+                    {formLinkedEffect && <div>Effect: {formLinkedEffect}</div>}
+                </div>
+            ) : form.libraryItemId ? (
+                <div className="text-small warn" style={{ marginTop: canEdit ? -4 : 8 }}>
+                    Linked premade item not found.
+                </div>
+            ) : null}
 
-            <div className="row" style={{ gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+            <div className="row" style={{ gap: 8, marginTop: 12, flexWrap: "wrap" }}>
                 <input
-                    placeholder="Item name"
+                    placeholder="Name"
                     value={form.name}
-                    onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
+                    onChange={(e) => setForm({ ...form, name: e.target.value })}
+                    style={{ flex: 1, minWidth: 160 }}
                     disabled={!canEdit}
-                    style={{ flex: 2, minWidth: 180 }}
                 />
                 <input
                     placeholder="Type"
                     value={form.type}
-                    onChange={(e) => setForm((prev) => ({ ...prev, type: e.target.value }))}
-                    disabled={!canEdit}
+                    onChange={(e) => setForm({ ...form, type: e.target.value })}
                     style={{ flex: 1, minWidth: 140 }}
+                    disabled={!canEdit}
                 />
                 <input
                     placeholder="Description"
                     value={form.desc}
-                    onChange={(e) => setForm((prev) => ({ ...prev, desc: e.target.value }))}
+                    onChange={(e) => setForm({ ...form, desc: e.target.value })}
+                    style={{ flex: 2, minWidth: 220 }}
                     disabled={!canEdit}
-                    style={{ flex: 3, minWidth: 200 }}
                 />
                 <input
                     type="number"
-                    placeholder="Qty"
                     min={0}
+                    placeholder="Qty"
                     value={form.amount}
-                    onChange={(e) => setForm((prev) => ({ ...prev, amount: e.target.value }))}
-                    disabled={!canEdit}
+                    onChange={(e) => setForm({ ...form, amount: e.target.value })}
                     style={{ width: 80 }}
+                    disabled={!canEdit}
                 />
-                <div className="row" style={{ gap: 8 }}>
-                    <button className="btn" onClick={save} disabled={!canEdit || busySave || !form.name.trim()}>
-                        {busySave ? "…" : editing ? "Save" : "Give"}
+            </div>
+            <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                <button className="btn" onClick={save} disabled={!canEdit || busySave}>
+                    {busySave ? "…" : editing ? "Save" : "Add"}
+                </button>
+                {editing && (
+                    <button className="btn" onClick={resetForm} disabled={busySave}>
+                        Cancel
                     </button>
-                    {editing && (
-                        <button className="btn" onClick={resetForm} disabled={busySave}>
-                            Cancel
-                        </button>
-                    )}
-                </div>
+                )}
             </div>
 
-            <div className="list" style={{ marginTop: 12 }}>
-                {inventory.map((it) => (
-                    <div key={it.id} className="row" style={{ justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                        <div style={{ flex: 1 }}>
-                            <div className="row" style={{ gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                                <b>{it.name}</b>
-                                {it.type && <span className="pill">{it.type}</span>}
-                                <span className="pill">x{it.amount ?? 0}</span>
+            <div className="list" style={{ marginTop: 16 }}>
+                {inventory.map((item) => {
+                    const linked = item.libraryItemId ? libraryMap.get(item.libraryItemId) : null;
+                    const effectLabel = linked ? formatHealingEffect(linked.healing) : "";
+                    const missingLink = item.libraryItemId && !linked;
+                    const amount = parseAmount(item.amount, 0);
+                    const rowBusy = busyRow === item.id;
+                    const unlinking = rowBusy && busyRowAction === "unlink";
+                    const removing = rowBusy && busyRowAction === "remove";
+                    const canUse = canUseItems && linked?.healing && amount > 0;
+                    return (
+                        <div
+                            key={item.id}
+                            className="row"
+                            style={{ gap: 12, flexWrap: "wrap", alignItems: "flex-start", justifyContent: "space-between" }}
+                        >
+                            <div style={{ flex: 1, minWidth: 220 }}>
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                                    <b>{item.name || "Unnamed item"}</b>
+                                    {item.type && <span className="pill">{item.type}</span>}
+                                    <span className="pill light">x{amount}</span>
+                                </div>
+                                {item.desc && <div style={{ opacity: 0.8, fontSize: 12 }}>{item.desc}</div>}
+                                {linked ? (
+                                    <div className="text-muted text-small" style={{ marginTop: 4 }}>
+                                        Linked to <b>{linked.name}</b>
+                                        {linked.type ? ` · ${linked.type}` : ""}
+                                        {effectLabel && <div>Effect: {effectLabel}</div>}
+                                    </div>
+                                ) : missingLink ? (
+                                    <div className="text-small warn" style={{ marginTop: 4 }}>
+                                        Linked premade item not found.
+                                    </div>
+                                ) : null}
                             </div>
-                            {it.desc && (
-                                <div style={{ opacity: 0.75, fontSize: 12, marginTop: 4 }}>{it.desc}</div>
-                            )}
+                            <div className="row" style={{ gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                                {canUse && (
+                                    <button
+                                        className="btn secondary"
+                                        onClick={() => handleUse(item)}
+                                        disabled={busyUse === item.id}
+                                        title={effectLabel || "Use item"}
+                                    >
+                                        {busyUse === item.id ? "…" : "Use"}
+                                    </button>
+                                )}
+                                {canEdit && item.libraryItemId && (
+                                    <button className="btn ghost" onClick={() => unlink(item.id)} disabled={unlinking}>
+                                        {unlinking ? "…" : "Unlink"}
+                                    </button>
+                                )}
+                                {canEdit && (
+                                    <>
+                                        <button className="btn" onClick={() => startEdit(item)} disabled={busySave}>
+                                            Edit
+                                        </button>
+                                        <button className="btn" onClick={() => remove(item.id)} disabled={removing}>
+                                            {removing ? "…" : "Remove"}
+                                        </button>
+                                    </>
+                                )}
+                            </div>
                         </div>
-                        {canEdit && (
-                            <div className="row" style={{ gap: 6 }}>
-                                <button className="btn" onClick={() => startEdit(it)} disabled={busySave}>
-                                    Edit
-                                </button>
-                                <button
-                                    className="btn"
-                                    onClick={() => remove(it.id)}
-                                    disabled={busyRow === it.id}
-                                >
-                                    {busyRow === it.id ? "…" : "Remove"}
-                                </button>
-                            </div>
-                        )}
-                    </div>
-                ))}
-                {inventory.length === 0 && (
-                    <div style={{ opacity: 0.7 }}>No items assigned.</div>
-                )}
+                    );
+                })}
+                {inventory.length === 0 && <div style={{ opacity: 0.7 }}>No items in inventory.</div>}
             </div>
         </div>
     );
@@ -11543,7 +11927,6 @@ function parseAssignmentKey(key, options) {
     }
     return baseline;
 }
-
 
 function PlayerGearCard({ player, canEdit, gameId, onUpdate }) {
     const slotOptions = useMemo(() => buildGearSlotOptions(player), [player]);

@@ -427,6 +427,11 @@ export const Games = {
     addPlayerItem: (id, playerId, item) => api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/items`, { method: 'POST', body: { item } }),
     updatePlayerItem: (id, playerId, itemId, item) => api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/items/${encodeURIComponent(itemId)}`, { method: 'PUT', body: { item } }),
     deletePlayerItem: (id, playerId, itemId) => api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/items/${encodeURIComponent(itemId)}`, { method: 'DELETE' }),
+    consumePlayerItem: (id, playerId, itemId) =>
+        api(
+            `/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/items/${encodeURIComponent(itemId)}/use`,
+            { method: 'POST' },
+        ),
     removePlayer: (id, playerId) => api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}`, { method: 'DELETE' }),
     addPlayerGearBag: (id, playerId, item) =>
         api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/gear/bag`, {
