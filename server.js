@@ -5230,5 +5230,6 @@ async function startServer() {
         process.exit(1);
     }
 }
-
+import imageProxy from "./routes/image-proxy.routes.js";
+app.use("/api/personas", imageProxy);
 await startServer();
