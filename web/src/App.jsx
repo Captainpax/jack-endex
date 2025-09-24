@@ -26,6 +26,7 @@ function shouldProxyDemonImage(url) {
     if (typeof url !== "string") return false;
     const trimmed = url.trim();
     if (!trimmed || /^data:/i.test(trimmed) || /^blob:/i.test(trimmed)) return false;
+    if (!/^https?:/i.test(trimmed) && !trimmed.startsWith("//")) return false;
     let parsed;
     try {
         parsed = new URL(trimmed, "https://megatenwiki.com/");
@@ -42,9 +43,33 @@ function createProxiedImageSource(url) {
     return `/api/personas/image-proxy?src=${encodeURIComponent(url)}`;
 }
 
-function computeDemonImageSources(imageUrl) {
+function finalizeDemonImageSources(sources) {
+    if (!Array.isArray(sources) || sources.length === 0) {
+        return EMPTY_ARRAY;
+    }
+
+    const finalSources = [];
+    const pushSource = (value) => {
+        if (!value) return;
+        const normalized = value.trim();
+        if (!normalized) return;
+        if (finalSources.includes(normalized)) return;
+        finalSources.push(normalized);
+    };
+
+    for (const source of sources) {
+        if (shouldProxyDemonImage(source)) {
+            pushSource(createProxiedImageSource(source));
+        }
+        pushSource(source);
+    }
+
+    return finalSources;
+}
+
+function computeDemonImageSources(imageUrl, { personaSlug } = {}) {
     const trimmed = typeof imageUrl === "string" ? imageUrl.trim() : "";
-    if (!trimmed) return EMPTY_ARRAY;
+    const slug = typeof personaSlug === "string" ? personaSlug.trim() : "";
 
     const sources = [];
     const seen = new Set();
@@ -55,6 +80,14 @@ function computeDemonImageSources(imageUrl) {
         seen.add(normalized);
         sources.push(normalized);
     };
+
+    if (slug) {
+        addSource(`/api/personas/${encodeURIComponent(slug)}/image`);
+    }
+
+    if (!trimmed) {
+        return finalizeDemonImageSources(sources);
+    }
 
     addSource(trimmed);
 
@@ -129,7 +162,7 @@ function computeDemonImageSources(imageUrl) {
 
     if (!parsed) {
         addSpecialFallback();
-        return sources;
+        return finalizeDemonImageSources(sources);
     }
 
     const { protocol, host, pathname, search, hash } = parsed;
@@ -169,31 +202,19 @@ function computeDemonImageSources(imageUrl) {
         addSpecialFallback();
     }
 
-    if (sources.length === 0) {
-        return sources;
-    }
-
-    const finalSources = [];
-    const pushSource = (value) => {
-        if (!value) return;
-        const normalized = value.trim();
-        if (!normalized) return;
-        if (finalSources.includes(normalized)) return;
-        finalSources.push(normalized);
-    };
-
-    for (const source of sources) {
-        if (shouldProxyDemonImage(source)) {
-            pushSource(createProxiedImageSource(source));
-        }
-        pushSource(source);
-    }
-
-    return finalSources;
+    return finalizeDemonImageSources(sources);
 }
 
-function DemonImage({ src, alt, onError, crossOrigin: crossOriginProp, referrerPolicy: referrerPolicyProp, ...imgProps }) {
-    const sources = useMemo(() => computeDemonImageSources(src), [src]);
+function DemonImage({
+    src,
+    alt,
+    personaSlug,
+    onError,
+    crossOrigin: crossOriginProp,
+    referrerPolicy: referrerPolicyProp,
+    ...imgProps
+}) {
+    const sources = useMemo(() => computeDemonImageSources(src, { personaSlug }), [src, personaSlug]);
     const [index, setIndex] = useState(0);
 
     useEffect(() => {
@@ -13149,6 +13170,21 @@ function DemonTab({ game, me, onUpdate }) {
 
     const isDM = game.dmId === me.id;
     const canEdit = isDM || game.permissions?.canEditDemons;
+    const [activeSubTab, setActiveSubTab] = useState("shared");
+
+    const availableSubTabs = useMemo(() => {
+        const tabs = [{ key: "shared", label: "Shared demons" }];
+        if (isDM) {
+            tabs.push({ key: "lookup", label: "Lookup" }, { key: "fusion", label: "Demon fusion" });
+        }
+        return tabs;
+    }, [isDM]);
+
+    useEffect(() => {
+        if (!availableSubTabs.some((tab) => tab.key === activeSubTab)) {
+            setActiveSubTab(availableSubTabs[0]?.key || "shared");
+        }
+    }, [activeSubTab, availableSubTabs]);
 
     const resetForm = useCallback(() => {
         setName("");
@@ -13433,238 +13469,11 @@ function DemonTab({ game, me, onUpdate }) {
         setSelected(null);
     };
 
-    return (
-        <div className="card">
-            <h3>Shared Demon Pool</h3>
-
-            <div className="row" style={{ marginBottom: 10 }}>
-                <span className="pill">
-                    {game.demonPool?.used ?? 0}/{game.demonPool?.max ?? 0} used
-                </span>
-            </div>
-
-            <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-                <input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} style={{ flex: 2, minWidth: 160 }} />
-                <input placeholder="Arcana" value={arcana} onChange={(e) => setArc(e.target.value)} style={{ flex: 1, minWidth: 140 }} />
-                <input placeholder="Alignment" value={align} onChange={(e) => setAlign(e.target.value)} style={{ flex: 1, minWidth: 140 }} />
-                <input
-                    type="number"
-                    placeholder="Level"
-                    value={level}
-                    onChange={(e) => setLevel(Number(e.target.value || 0))}
-                    style={{ width: 100 }}
-                />
-                <div className="row" style={{ gap: 8 }}>
-                    <button
-                        className="btn"
-                        onClick={save}
-                        disabled={!canEdit || busySave || (!editing && !isDM)}
-                    >
-                        {busySave ? "…" : editing || !isDM ? "Save Demon" : "Add Demon"}
-                    </button>
-                    {editing && (
-                        <button className="btn" onClick={resetForm} disabled={busySave}>
-                            Cancel
-                        </button>
-                    )}
-                </div>
-            </div>
-
-            <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                <label className="col" style={{ flex: 1, minWidth: 220 }}>
-                    <span>Image URL (optional)</span>
-                    <input
-                        type="url"
-                        placeholder="https://example.com/artwork.png"
-                        value={image}
-                        onChange={(e) => setImage(e.target.value)}
-                        style={{ width: '100%' }}
-                    />
-                </label>
-            </div>
-
-            <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                {ABILITY_DEFS.map((ability) => {
-                    const value = Number(stats[ability.key]) || 0;
-                    const mod = abilityModifier(value);
-                    return (
-                        <label key={ability.key} className="col" style={{ minWidth: 110 }}>
-                            <span>{ability.key}</span>
-                            <input
-                                type="number"
-                                value={value}
-                                onChange={(e) =>
-                                    setStats((prev) => ({
-                                        ...prev,
-                                        [ability.key]: Number(e.target.value || 0),
-                                    }))
-                                }
-                            />
-                            <span className="text-small" style={{ color: 'var(--muted)' }}>
-                                Mod {formatModifier(mod)}
-                            </span>
-                        </label>
-                    );
-                })}
-            </div>
-
-            <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                {[
-                    ["weak", "Weak"],
-                    ["resist", "Resist"],
-                    ["null", "Null"],
-                    ["absorb", "Absorb"],
-                    ["reflect", "Reflect"],
-                ].map(([key, label]) => (
-                    <label key={key} className="col" style={{ minWidth: 150, flex: 1 }}>
-                        <span>{label}</span>
-                        <textarea
-                            rows={2}
-                            value={resist[key]}
-                            placeholder="Comma or newline separated"
-                            onChange={(e) => setResist((prev) => ({ ...prev, [key]: e.target.value }))}
-                            style={{ width: '100%' }}
-                        />
-                    </label>
-                ))}
-            </div>
-
-            <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                <label className="col" style={{ flex: 1, minWidth: 220 }}>
-                    <span>Skills (one per line)</span>
-                    <textarea rows={3} value={skills} onChange={(e) => setSkills(e.target.value)} style={{ width: '100%' }} />
-                </label>
-                <label className="col" style={{ flex: 1, minWidth: 220 }}>
-                    <span>Notes</span>
-                    <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} style={{ width: '100%' }} />
-                </label>
-            </div>
-
-            <div className="row" style={{ marginTop: 16, gap: 16, alignItems: "flex-start" }}>
-                <div className="col" style={{ flex: 1 }}>
-                    <h4>Lookup Persona (Persona Compendium)</h4>
-                    {isDM ? (
-                        <>
-                            <div className="row" style={{ gap: 8 }}>
-                                <input
-                                    placeholder="Search name, e.g., jack frost"
-                                    value={q}
-                                    onChange={(e) => setQ(e.target.value)}
-                                    onKeyDown={(e) => e.key === "Enter" && runSearch()}
-                                />
-                                <button className="btn" onClick={runSearch} disabled={busySearch}>
-                                    {busySearch ? "…" : "Search"}
-                                </button>
-                            </div>
-
-                            <div className="list" style={{ maxHeight: 240, overflow: "auto", marginTop: 8 }}>
-                                {results.map((r) => (
-                                    <div
-                                        key={r.slug}
-                                        className="row"
-                                        style={{ justifyContent: "space-between", alignItems: "center" }}
-                                    >
-                                        <div>{r.name}</div>
-                                        <button className="btn" onClick={() => pick(r.slug)}>Use</button>
-                                    </div>
-                                ))}
-                                {results.length === 0 && (
-                                    <div style={{ opacity: 0.7 }}>{busySearch ? "Searching…" : "No results yet."}</div>
-                                )}
-                            </div>
-                        </>
-                    ) : (
-                        <p className="text-muted text-small" style={{ marginTop: 4 }}>
-                            Only the DM can search the compendium to add new demons.
-                        </p>
-                    )}
-                </div>
-
-                <div className="col" style={{ width: 360 }}>
-                    <h4>Preview</h4>
-                    {(() => {
-                        const trimmedImage = image.trim();
-                        const previewImage = trimmedImage || selected?.image || "";
-                        const previewName = name || selected?.name || "";
-                        const previewArcana = arcana || selected?.arcana || "—";
-                        const previewAlignment = align || selected?.alignment || "—";
-                        const previewLevel = Number.isFinite(level) ? level : selected?.level ?? 0;
-                        const previewDescription = notes || selected?.description || "";
-                        const weakText = formatResistanceList(
-                            resist.weak,
-                            selected?.resistances?.weak ?? selected?.weak,
-                        );
-                        const resistText = formatResistanceList(
-                            resist.resist,
-                            selected?.resistances?.resist ?? selected?.resists,
-                        );
-                        const nullText = formatResistanceList(
-                            resist.null,
-                            selected?.resistances?.null ?? selected?.nullifies,
-                        );
-                        const absorbText = formatResistanceList(
-                            resist.absorb,
-                            selected?.resistances?.absorb ?? selected?.absorbs,
-                        );
-                        const reflectText = formatResistanceList(
-                            resist.reflect,
-                            selected?.resistances?.reflect ?? selected?.reflects,
-                        );
-                        const hasPreview = Boolean(previewImage || previewName || previewDescription || selected);
-                        if (!hasPreview) {
-                            return <div style={{ opacity: 0.7 }}>Fill in details or pick a persona to preview.</div>;
-                        }
-                        return (
-                            <div>
-                                {previewImage && (
-                                    <DemonImage
-                                        src={previewImage}
-                                        alt={previewName || "Demon artwork"}
-                                        loading="lazy"
-                                        decoding="async"
-                                        style={{
-                                            maxWidth: "100%",
-                                            background: "#0b0c10",
-                                            borderRadius: 12,
-                                            border: "1px solid #1f2937",
-                                        }}
-                                    />
-                                )}
-                                <div style={{ marginTop: 8 }}>
-                                    <b>{previewName || "Unnamed demon"}</b> · {previewArcana || "—"} · {previewAlignment || "—"} · LV {previewLevel}
-                                </div>
-                                {previewDescription && (
-                                    <div style={{ opacity: 0.85, fontSize: 13, marginTop: 6 }}>
-                                        {previewDescription}
-                                    </div>
-                                )}
-                                <div
-                                    style={{
-                                        display: "grid",
-                                        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                                        gap: 6,
-                                        marginTop: 8,
-                                    }}
-                                >
-                                    {ABILITY_DEFS.map((ability) => (
-                                        <span key={ability.key} className="pill">
-                                            {ability.key} {previewStats[ability.key]} ({formatModifier(previewMods[ability.key] ?? abilityModifier(previewStats[ability.key]))})
-                                        </span>
-                                    ))}
-                                </div>
-                                <div style={{ marginTop: 8, fontSize: 12 }}>
-                                    <div><b>Weak:</b> {weakText}</div>
-                                    <div><b>Resist:</b> {resistText}</div>
-                                    <div><b>Null:</b> {nullText}</div>
-                                    <div><b>Absorb:</b> {absorbText}</div>
-                                    <div><b>Reflect:</b> {reflectText}</div>
-                                </div>
-                            </div>
-                        );
-                    })()}
-                </div>
-            </div>
-
+    const sharedContent = (
+        <>
+            <p className="text-muted text-small">
+                Browse the shared demon roster. Edit a card to update stats, resistances, or notes.
+            </p>
             <div className="demon-codex__filters">
                 <label className="field demon-codex__filter">
                     <span className="field__label">Search demons</span>
@@ -13705,9 +13514,20 @@ function DemonTab({ game, me, onUpdate }) {
                 <label className="field demon-codex__filter">
                     <span className="field__label">Sort demons</span>
                     <select value={demonSortMode} onChange={(event) => setDemonSortMode(event.target.value)}>
-                        {DEMON_SORT_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                                {option.label}
+                        <option value="name">Name (A to Z)</option>
+                        <option value="nameDesc">Name (Z to A)</option>
+                        <option value="arcana">Arcana</option>
+                        <option value="levelHigh">Level (high to low)</option>
+                        <option value="levelLow">Level (low to high)</option>
+                        <option value="skillCount">Skill count</option>
+                        <option value="resist:weak">Weak resist count</option>
+                        <option value="resist:resist">Resist count</option>
+                        <option value="resist:null">Null resist count</option>
+                        <option value="resist:absorb">Absorb resist count</option>
+                        <option value="resist:reflect">Reflect resist count</option>
+                        {ABILITY_DEFS.map((ability) => (
+                            <option key={ability.key} value={`stat:${ability.key}`}>
+                                {ability.key} score
                             </option>
                         ))}
                     </select>
@@ -13717,6 +13537,7 @@ function DemonTab({ game, me, onUpdate }) {
                         type="button"
                         className="btn ghost btn-small demon-codex__clear"
                         onClick={() => {
+                            setDemonSortMode("name");
                             setDemonSearch("");
                             setArcanaFilter("");
                             setSkillFilter("");
@@ -13740,7 +13561,7 @@ function DemonTab({ game, me, onUpdate }) {
                         const skillList = getDemonSkillList(d);
                         const canShowSkillModal = skillList.length > 0 && combatSkills.length > 0;
                         return (
-                                                        <article key={d.id || d.name} className="card demon-card">
+                            <article key={d.id || d.name} className="card demon-card">
                                 <header className="demon-card__top">
                                     <div className="demon-card__identity">
                                         <h4 className="demon-card__name">{d.name}</h4>
@@ -13780,6 +13601,7 @@ function DemonTab({ game, me, onUpdate }) {
                                     {d.image && (
                                         <DemonImage
                                             src={d.image}
+                                            personaSlug={d.slug || d.query}
                                             alt={`${d.name} artwork`}
                                             loading="lazy"
                                             decoding="async"
@@ -13821,17 +13643,15 @@ function DemonTab({ game, me, onUpdate }) {
                                                 <span className="demon-card__resist-values">{formatResistanceList(d.resistances?.reflect, d.reflects)}</span>
                                             </div>
                                         </div>
-                                        {skillList.length > 0 && (
-                                            <div className="demon-card__skills">
-                                                <span className="demon-card__section-label">Skills</span>
-                                                <div className="demon-card__skill-list">
-                                                    {skillList.slice(0, 5).map((skill) => (
-                                                        <span key={skill} className="demon-card__skill-chip">{skill}</span>
-                                                    ))}
-                                                    {skillList.length > 5 && (
-                                                        <span className="demon-card__skill-chip">+{skillList.length - 5} more</span>
-                                                    )}
-                                                </div>
+                                        <div className="demon-card__skills">
+                                            <span className="demon-card__section-label">Skills</span>
+                                            <div className="demon-card__skill-list">
+                                                {skillList.slice(0, 5).map((skill) => (
+                                                    <span key={skill} className="demon-card__skill-chip">{skill}</span>
+                                                ))}
+                                                {skillList.length > 5 && (
+                                                    <span className="demon-card__skill-chip">+{skillList.length - 5} more</span>
+                                                )}
                                                 {canShowSkillModal && (
                                                     <button
                                                         type="button"
@@ -13842,17 +13662,302 @@ function DemonTab({ game, me, onUpdate }) {
                                                     </button>
                                                 )}
                                             </div>
-                                        )}
+                                        </div>
                                     </div>
                                 </div>
                                 {d.notes && <div className="demon-card__notes text-small">{d.notes}</div>}
                             </article>
-
                         );
                     })}
                 </div>
             )}
+        </>
+    );
 
+    const lookupContent = (
+        <div className="demon-lookup">
+            <p className="text-muted text-small">
+                Search the compendium to pre-fill the editor with persona stats, resistances, and skills.
+            </p>
+            <div className="demon-lookup__controls">
+                <label className="field demon-lookup__field">
+                    <span className="field__label">Compendium search</span>
+                    <input
+                        type="search"
+                        placeholder="Search name, e.g., jack frost"
+                        value={q}
+                        onChange={(event) => setQ(event.target.value)}
+                        onKeyDown={(event) => event.key === "Enter" && runSearch()}
+                    />
+                </label>
+                <button className="btn" onClick={runSearch} disabled={busySearch}>
+                    {busySearch ? "…" : "Search"}
+                </button>
+            </div>
+            <div className="demon-lookup__results">
+                {results.length === 0 ? (
+                    <div className="demon-lookup__empty text-muted">
+                        {busySearch ? "Searching…" : "No results yet. Try a demon name to load stats."}
+                    </div>
+                ) : (
+                    results.map((r) => (
+                        <div key={r.slug} className="demon-lookup__result">
+                            <div>
+                                <div className="demon-lookup__name">{r.name}</div>
+                                {r.arcana && <div className="text-small text-muted">{r.arcana}</div>}
+                            </div>
+                            <button className="btn ghost btn-small" onClick={() => pick(r.slug)}>
+                                Use
+                            </button>
+                        </div>
+                    ))
+                )}
+            </div>
+        </div>
+    );
+
+    const fusionContent = (
+        <div className="demon-fusion">
+            <h4>Demon fusion planning</h4>
+            <p className="text-muted text-small">
+                Map out fusion recipes and track ingredient costs. This workspace is a placeholder for future tools.
+            </p>
+        </div>
+    );
+
+    const previewImage = image.trim() || selected?.image || "";
+    const previewName = name || selected?.name || "";
+    const previewArcana = arcana || selected?.arcana || "—";
+    const previewAlignment = align || selected?.alignment || "—";
+    const previewLevel = Number.isFinite(level) ? level : selected?.level ?? 0;
+    const previewDescription = notes || selected?.description || "";
+    const previewSlug = selected?.slug || selected?.query || "";
+    const weakText = formatResistanceList(resist.weak, selected?.resistances?.weak ?? selected?.weak);
+    const resistText = formatResistanceList(resist.resist, selected?.resistances?.resist ?? selected?.resists);
+    const nullText = formatResistanceList(resist.null, selected?.resistances?.null ?? selected?.nullifies);
+    const absorbText = formatResistanceList(resist.absorb, selected?.resistances?.absorb ?? selected?.absorbs);
+    const reflectText = formatResistanceList(resist.reflect, selected?.resistances?.reflect ?? selected?.reflects);
+    const hasPreview = Boolean(previewImage || previewName || previewDescription || selected);
+
+    const editorContent = (
+        <div className="demon-editor__content">
+            <header className="demon-editor__header">
+                <div>
+                    <h3 className="demon-editor__title">{editing ? `Edit ${editing.name || "demon"}` : "Demon editor"}</h3>
+                    <p className="text-muted text-small">
+                        {isDM
+                            ? "Add new summons or update allies in the shared pool."
+                            : "Update demons you've been allowed to manage."}
+                    </p>
+                </div>
+            </header>
+            <div className="demon-editor__actions">
+                <button
+                    type="button"
+                    className="btn"
+                    onClick={save}
+                    disabled={!canEdit || busySave || (!editing && !isDM)}
+                >
+                    {busySave ? "…" : editing || !isDM ? "Save Demon" : "Add Demon"}
+                </button>
+                {editing && (
+                    <button type="button" className="btn ghost" onClick={resetForm} disabled={busySave}>
+                        Cancel
+                    </button>
+                )}
+            </div>
+            <div className="demon-editor__section">
+                <div className="demon-editor__row">
+                    <label className="field demon-editor__field">
+                        <span className="field__label">Name</span>
+                        <input placeholder="Name" value={name} onChange={(event) => setName(event.target.value)} />
+                    </label>
+                    <label className="field demon-editor__field">
+                        <span className="field__label">Arcana</span>
+                        <input placeholder="Arcana" value={arcana} onChange={(event) => setArc(event.target.value)} />
+                    </label>
+                    <label className="field demon-editor__field">
+                        <span className="field__label">Alignment</span>
+                        <input placeholder="Alignment" value={align} onChange={(event) => setAlign(event.target.value)} />
+                    </label>
+                </div>
+                <div className="demon-editor__row">
+                    <label className="field demon-editor__field demon-editor__field--compact">
+                        <span className="field__label">Level</span>
+                        <input
+                            type="number"
+                            inputMode="numeric"
+                            value={level}
+                            onChange={(event) => setLevel(Number(event.target.value || 0))}
+                        />
+                    </label>
+                    <label className="field demon-editor__field demon-editor__field--wide">
+                        <span className="field__label">Image URL</span>
+                        <input
+                            type="url"
+                            placeholder="https://example.com/artwork.png"
+                            value={image}
+                            onChange={(event) => setImage(event.target.value)}
+                        />
+                    </label>
+                </div>
+            </div>
+            <div className="demon-editor__section">
+                <span className="field__label">Ability scores</span>
+                <div className="demon-editor__stats-grid">
+                    {ABILITY_DEFS.map((ability) => {
+                        const value = Number(stats[ability.key]) || 0;
+                        const mod = abilityModifier(value);
+                        return (
+                            <label key={ability.key} className="field demon-editor__stat-field">
+                                <span className="field__label">{ability.key}</span>
+                                <input
+                                    type="number"
+                                    inputMode="numeric"
+                                    value={value}
+                                    onChange={(event) =>
+                                        setStats((prev) => ({
+                                            ...prev,
+                                            [ability.key]: Number(event.target.value || 0),
+                                        }))
+                                    }
+                                />
+                                <span className="text-small text-muted">Mod {formatModifier(mod)}</span>
+                            </label>
+                        );
+                    })}
+                </div>
+            </div>
+            <div className="demon-editor__section">
+                <span className="field__label">Resistances</span>
+                <div className="demon-editor__resist-grid">
+                    {[
+                        ["weak", "Weak"],
+                        ["resist", "Resist"],
+                        ["null", "Null"],
+                        ["absorb", "Absorb"],
+                        ["reflect", "Reflect"],
+                    ].map(([key, label]) => (
+                        <label key={key} className="field demon-editor__resist-field">
+                            <span className="field__label">{label}</span>
+                            <textarea
+                                rows={2}
+                                value={resist[key]}
+                                placeholder="Comma or newline separated"
+                                onChange={(event) => setResist((prev) => ({ ...prev, [key]: event.target.value }))}
+                            />
+                        </label>
+                    ))}
+                </div>
+            </div>
+            <div className="demon-editor__section">
+                <div className="demon-editor__row">
+                    <label className="field demon-editor__field">
+                        <span className="field__label">Skills (one per line)</span>
+                        <textarea
+                            rows={3}
+                            value={skills}
+                            onChange={(event) => setSkills(event.target.value)}
+                        />
+                    </label>
+                    <label className="field demon-editor__field">
+                        <span className="field__label">Notes</span>
+                        <textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} />
+                    </label>
+                </div>
+            </div>
+            <div className="demon-editor__preview">
+                <h4>Preview</h4>
+                {!hasPreview ? (
+                    <div className="text-muted text-small">Fill in details or pick a persona to preview.</div>
+                ) : (
+                    <div className="demon-editor__preview-body">
+                        {(previewImage || previewSlug) && (
+                            <DemonImage
+                                src={previewImage}
+                                personaSlug={previewSlug}
+                                alt={previewName || "Demon artwork"}
+                                loading="lazy"
+                                decoding="async"
+                                className="demon-editor__preview-image"
+                            />
+                        )}
+                        <div className="demon-editor__preview-meta">
+                            <div>
+                                <strong>{previewName || "Unnamed demon"}</strong> · {previewArcana || "—"} · {previewAlignment || "—"} ·
+                                LV {previewLevel}
+                            </div>
+                            {previewDescription && <div className="text-small">{previewDescription}</div>}
+                            <div className="demon-editor__preview-stats">
+                                {ABILITY_DEFS.map((ability) => (
+                                    <span key={ability.key} className="pill">
+                                        {ability.key} {previewStats[ability.key]} ({formatModifier(previewMods[ability.key] ?? abilityModifier(previewStats[ability.key]))})
+                                    </span>
+                                ))}
+                            </div>
+                            <div className="demon-editor__preview-resists text-small">
+                                <div><b>Weak:</b> {weakText}</div>
+                                <div><b>Resist:</b> {resistText}</div>
+                                <div><b>Null:</b> {nullText}</div>
+                                <div><b>Absorb:</b> {absorbText}</div>
+                                <div><b>Reflect:</b> {reflectText}</div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+
+    return (
+        <div className="demon-codex">
+            <div className="demon-codex__layout">
+                <section className="demon-codex__main">
+                    <div className="card demon-codex__panel">
+                        <header className="demon-codex__panel-header">
+                            <div>
+                                <h3>Shared Demon Pool</h3>
+                                <p className="text-muted text-small">
+                                    Summoned allies, compendium tools, and future fusion planning.
+                                </p>
+                            </div>
+                            <span className="pill demon-codex__pool-usage">
+                                {game.demonPool?.used ?? 0}/{game.demonPool?.max ?? 0} used
+                            </span>
+                        </header>
+                        {availableSubTabs.length > 1 && (
+                            <nav className="demon-codex__tabs" aria-label="Demon codex subtabs">
+                                {availableSubTabs.map((tab) => {
+                                    const isActive = tab.key === activeSubTab;
+                                    return (
+                                        <button
+                                            key={tab.key}
+                                            type="button"
+                                            className={`demon-codex__tab-btn${isActive ? " is-active" : ""}`}
+                                            onClick={() => setActiveSubTab(tab.key)}
+                                        >
+                                            {tab.label}
+                                        </button>
+                                    );
+                                })}
+                            </nav>
+                        )}
+                        <div className="demon-codex__content">
+                            {activeSubTab === "shared" && sharedContent}
+                            {activeSubTab === "lookup" && isDM && lookupContent}
+                            {activeSubTab === "fusion" && isDM && fusionContent}
+                        </div>
+                    </div>
+                </section>
+                <aside className="demon-codex__aside">
+                    <div className="card demon-editor">
+                        <div className="demon-codex__pool-mobile pill">
+                            {game.demonPool?.used ?? 0}/{game.demonPool?.max ?? 0} used
+                        </div>
+                        {editorContent}
+                    </div>
+                </aside>
+            </div>
             {skillModalDemon && (
                 <DemonCombatSkillDialog demon={skillModalDemon} skills={combatSkills} onClose={closeSkillModal} />
             )}
