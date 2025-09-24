@@ -1,11 +1,18 @@
 // --- FILE: routes/personas.routes.js ---
 import { Router } from 'express';
+import fs from 'fs/promises';
+import { createReadStream } from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import {
     searchDemons,
     findDemonBySlug,
     findClosestDemon,
     summarizeDemon,
 } from '../services/demons.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(__dirname, '..');
 
 const r = Router();
 const SEARCH_QUERY_REGEX = /^[\p{L}\p{N}\s'-]+$/u;
@@ -20,6 +27,15 @@ const DEMON_IMAGE_ALLOWED_HOSTS = new Set([
     'static.wikia.nocookie.net',
 ]);
 const DEMON_IMAGE_ALLOWED_SUFFIXES = ['megatenwiki.com', 'miraheze.org', 'nocookie.net'];
+
+const IMAGE_MIME_TYPES = new Map([
+    ['.png', 'image/png'],
+    ['.jpg', 'image/jpeg'],
+    ['.jpeg', 'image/jpeg'],
+    ['.webp', 'image/webp'],
+    ['.gif', 'image/gif'],
+    ['.avif', 'image/avif'],
+]);
 
 function normalizeImageUrl(value) {
     const raw = typeof value === 'string' ? value.trim() : '';
@@ -76,6 +92,130 @@ function normalizeLookupTerm(value) {
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '') || null;
+}
+
+function resolveLocalImagePath(imageRef) {
+    if (!imageRef) return null;
+    const trimmed = safeTrim(imageRef).replace(/^\/+/, '');
+    if (!trimmed) return null;
+    return path.resolve(repoRoot, trimmed);
+}
+
+async function findImageFile(targetPath) {
+    try {
+        const stat = await fs.stat(targetPath);
+        if (stat.isDirectory()) {
+            const entries = await fs.readdir(targetPath);
+            const files = entries
+                .filter((entry) => !entry.startsWith('.'))
+                .sort((a, b) => a.localeCompare(b));
+            if (files.length === 0) {
+                return null;
+            }
+            return path.join(targetPath, files[0]);
+        }
+        if (stat.isFile()) {
+            return targetPath;
+        }
+        return null;
+    } catch (err) {
+        if (err?.code !== 'ENOENT') {
+            console.warn('failed to read persona image path', err);
+        }
+        return null;
+    }
+}
+
+function getMimeType(filePath) {
+    const ext = path.extname(filePath || '').toLowerCase();
+    return IMAGE_MIME_TYPES.get(ext) || 'application/octet-stream';
+}
+
+async function streamLocalImage(res, imagePath) {
+    const resolved = resolveLocalImagePath(imagePath);
+    if (!resolved) {
+        return res.status(404).json({ error: 'image not found in persona' });
+    }
+
+    const file = await findImageFile(resolved);
+    if (!file) {
+        return res.status(404).json({ error: 'persona image unavailable' });
+    }
+
+    try {
+        const stream = createReadStream(file);
+        res.setHeader('Content-Type', getMimeType(file));
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        stream.on('error', (err) => {
+            console.error('failed to stream persona image', err);
+            if (!res.headersSent) {
+                res.status(500).json({ error: 'failed to stream persona image' });
+            } else {
+                res.end();
+            }
+        });
+        stream.pipe(res);
+    } catch (err) {
+        console.error('persona image stream error', err);
+        res.status(500).json({ error: 'failed to read persona image' });
+    }
+}
+
+async function streamRemoteImage(res, url) {
+    const parsed = resolveAllowedImageUrl(url);
+    if (!parsed) {
+        return res.status(400).json({ error: 'unsupported image host' });
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), IMAGE_PROXY_TIMEOUT_MS);
+    try {
+        const response = await fetch(parsed.toString(), {
+            method: 'GET',
+            redirect: 'follow',
+            signal: controller.signal,
+            headers: {
+                'User-Agent': 'jack-endex/image-proxy (+https://jack-endex.app)',
+                Referer: 'https://megatenwiki.com/wiki/Main_Page',
+                Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+            },
+        });
+        clearTimeout(timeout);
+
+        if (!response.ok) {
+            const status = response.status || 502;
+            return res.status(status).json({ error: 'image fetch failed' });
+        }
+
+        const contentType = response.headers.get('content-type');
+        if (contentType) {
+            res.type(contentType);
+        }
+        const cacheControl = response.headers.get('cache-control');
+        if (cacheControl) {
+            res.set('Cache-Control', cacheControl);
+        } else {
+            res.set('Cache-Control', 'public, max-age=86400');
+        }
+        const etag = response.headers.get('etag');
+        if (etag) {
+            res.set('ETag', etag);
+        }
+        const lastModified = response.headers.get('last-modified');
+        if (lastModified) {
+            res.set('Last-Modified', lastModified);
+        }
+
+        const buffer = Buffer.from(await response.arrayBuffer());
+        res.send(buffer);
+    } catch (error) {
+        clearTimeout(timeout);
+        if (error?.name === 'AbortError') {
+            return res.status(504).json({ error: 'image fetch timeout' });
+        }
+        console.error('persona image proxy failed', error);
+        res.status(502).json({ error: 'image proxy failed' });
+    }
 }
 
 function buildSearchResult(demon) {
@@ -209,41 +349,30 @@ r.get('/:slug', async (req, res) => {
 // GET /api/personas/:slug/image  -> streams the image bytes
 r.get('/:slug/image', async (req, res) => {
     try {
-        const slug = req.params.slug;
-        const r2 = await fetch(`${BASE}/personas/${encodeURIComponent(slug)}/`);
-        if (!r2.ok) return res.status(r2.status).json({ error: 'persona not found' });
-        const json = await r2.json();
-
-        const imageUrl = json?.image || json?.img || json?.picture;
-        if (!imageUrl) return res.status(404).json({ error: 'image not found in persona' });
-
-        // Fetch image server-side with reasonable headers
-        const img = await fetch(imageUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
-                'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
-                'Cache-Control': 'no-cache',
-                'Referer': BASE + '/', // benign referer
-            }
-        });
-
-        if (!img.ok) return res.status(img.status).json({ error: 'upstream image fetch failed' });
-
-        // Stream through content-type and length
-        const ct = img.headers.get('content-type') || 'application/octet-stream';
-        const cl = img.headers.get('content-length');
-        res.setHeader('Content-Type', ct);
-        if (cl) res.setHeader('Content-Length', cl);
-
-        const reader = img.body.getReader();
-        res.status(200);
-        while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            res.write(Buffer.from(value));
+        const rawSlug = safeTrim(req.params.slug);
+        if (!rawSlug) {
+            return res.status(400).json({ error: 'invalid persona identifier' });
         }
-        res.end();
+
+        const normalized = normalizeLookupTerm(rawSlug);
+        const demon = normalized ? await findDemonBySlug(normalized) : null;
+        if (!demon) {
+            return res.status(404).json({ error: 'persona not found' });
+        }
+
+        const imageRef = safeTrim(demon.image);
+        if (!imageRef) {
+            return res.status(404).json({ error: 'image not found in persona' });
+        }
+
+        if (/^https?:/i.test(imageRef)) {
+            await streamRemoteImage(res, imageRef);
+            return;
+        }
+
+        await streamLocalImage(res, imageRef);
     } catch (e) {
+        console.error('persona image request failed', e);
         res.status(500).json({ error: 'image proxy failed' });
     }
 });
