@@ -13,7 +13,7 @@ import cors from 'cors';
 
 import personas from './routes/personas.routes.js';
 import { createDiscordWatcher } from './discordWatcher.js';
-import { loadEnv, envString, envNumber } from './config/env.js';
+import { loadEnv, envString, envNumber, envBoolean } from './config/env.js';
 import User from './models/User.js';
 import Game from './models/Game.js';
 import Demon from './models/Demon.js';
@@ -85,6 +85,35 @@ const DB_CONNECT_MAX_ATTEMPTS = Math.max(1, envNumber('MONGODB_CONNECT_MAX_ATTEM
 const DB_CONNECT_RETRY_DELAY_MS = Math.max(500, envNumber('MONGODB_CONNECT_RETRY_MS', 2000) || 2000);
 
 const SESSION_SECRET = envString('SESSION_SECRET', 'dev-secret');
+const RAW_CORS_ORIGINS = envString('CORS_ORIGINS', 'http://localhost:5173');
+const ALLOWED_ORIGINS = RAW_CORS_ORIGINS
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+    .map((origin) => origin.replace(/\/$/, ''));
+const ALLOW_ALL_ORIGINS = ALLOWED_ORIGINS.includes('*');
+
+function isOriginAllowed(origin) {
+    if (!origin) return true;
+    if (ALLOW_ALL_ORIGINS) return true;
+    const normalized = origin.replace(/\/$/, '');
+    return ALLOWED_ORIGINS.includes(normalized);
+}
+
+const TRUST_PROXY = envString('TRUST_PROXY', '').trim();
+const SESSION_COOKIE_SECURE = envBoolean(
+    'SESSION_COOKIE_SECURE',
+    process.env.NODE_ENV === 'production',
+);
+const SESSION_COOKIE_DOMAIN = envString('SESSION_COOKIE_DOMAIN', '').trim();
+const SESSION_COOKIE_SAME_SITE = (() => {
+    const raw = envString(
+        'SESSION_COOKIE_SAME_SITE',
+        SESSION_COOKIE_SECURE ? 'none' : 'lax',
+    ).toLowerCase();
+    if (['lax', 'strict', 'none'].includes(raw)) return raw;
+    return SESSION_COOKIE_SECURE ? 'none' : 'lax';
+})();
 const DEFAULT_DISCORD_BOT_TOKEN = readBotToken(
     envString('DISCORD_PRIMARY_BOT_TOKEN') ||
     envString('DISCORD_DEFAULT_BOT_TOKEN') ||
@@ -3421,9 +3450,19 @@ function hash(pw, salt) {
 
 const app = express();
 
-// CORS for Vite dev server
+if (TRUST_PROXY) {
+    const numeric = Number(TRUST_PROXY);
+    app.set('trust proxy', Number.isNaN(numeric) ? TRUST_PROXY : numeric);
+}
+
 app.use(cors({
-    origin: 'http://localhost:5173',
+    origin(origin, callback) {
+        if (isOriginAllowed(origin)) {
+            callback(null, true);
+            return;
+        }
+        callback(null, false);
+    },
     credentials: true,
 }));
 
@@ -3432,14 +3471,20 @@ app.use(express.json());
 // if you ever run behind a proxy/https later
 // app.set('trust proxy', 1);
 
+const sessionCookie = {
+    sameSite: SESSION_COOKIE_SAME_SITE,
+    secure: SESSION_COOKIE_SECURE,
+};
+
+if (SESSION_COOKIE_DOMAIN) {
+    sessionCookie.domain = SESSION_COOKIE_DOMAIN;
+}
+
 const sessionParser = session({
     secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
-    cookie: {
-        sameSite: 'lax', // 'lax' works for http://localhost:5173 -> http://localhost:3000
-        secure: false, // set true only behind https
-    },
+    cookie: sessionCookie,
 });
 
 app.use(sessionParser);
