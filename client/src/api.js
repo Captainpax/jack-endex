@@ -414,10 +414,10 @@ export function createApi({
 // ---- Default API instance ----
 // Adjust baseURL if your frontend is not served behind the same origin.
 // Example: baseURL: import.meta.env.VITE_API_BASE || '/api'
-const DEFAULT_API_BASE = 'https://jack-api.darkmatterservers.com';
+const DEFAULT_API_BASE = '';
 const envBaseURLRaw = (import.meta.env?.VITE_API_BASE ?? '').trim();
 const normalizedBaseURL = (envBaseURLRaw || DEFAULT_API_BASE).replace(/\/$/, '');
-const DEFAULT_REALTIME_BASE = 'https://jack-api.darkmatterservers.com';
+const DEFAULT_REALTIME_BASE = '';
 const envRealtimeBaseRaw = (
     import.meta.env?.VITE_REALTIME_URL ??
     import.meta.env?.VITE_REALTIME_BASE ??
