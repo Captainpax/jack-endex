@@ -361,8 +361,11 @@ export function createApi({
 // ---- Default API instance ----
 // Adjust baseURL if your frontend is not served behind the same origin.
 // Example: baseURL: import.meta.env.VITE_API_BASE || '/api'
+const envBaseURL = (import.meta.env?.VITE_API_BASE ?? '').trim();
+const normalizedBaseURL = envBaseURL ? envBaseURL.replace(/\/$/, '') : '';
+
 export const apiClient = createApi({
-    baseURL: '',
+    baseURL: normalizedBaseURL,
     timeoutMs: 12_000,
     // Optional: wire a bearer token provider if you also support header-based auth
     getBearer: () => {
