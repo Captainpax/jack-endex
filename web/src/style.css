@@ -1568,8 +1568,50 @@ p  { margin: 0 0 .75rem; color: var(--text); }
 }
 
 .sidebar__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.sidebar__header-main {
     display: grid;
     gap: 6px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.sidebar__close {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--muted);
+    font-size: 1.2rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: background var(--trans-fast), border-color var(--trans-fast), color var(--trans-fast);
+}
+
+.sidebar__close:hover {
+    background: color-mix(in oklab, var(--surface-2) 70%, var(--brand) 15%);
+    border-color: color-mix(in oklab, var(--border) 55%, var(--brand) 25%);
+    color: var(--text);
+}
+
+.sidebar__close:focus-visible {
+    outline: none;
+    box-shadow: var(--focus);
+}
+
+@media (max-width: 960px) {
+    .sidebar__close {
+        display: inline-flex;
+    }
 }
 
 .sidebar__mode {
@@ -1671,11 +1713,16 @@ p  { margin: 0 0 .75rem; color: var(--text); }
 .app-sidebar .invite-button {
     width: 100%;
     align-items: stretch;
+    text-align: left;
 }
 
 .app-sidebar .invite-button > .btn {
     width: 100%;
     justify-content: center;
+}
+
+.app-sidebar .invite-feedback {
+    width: 100%;
 }
 
 .app-main {
@@ -1694,6 +1741,8 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     justify-content: space-between;
     gap: 24px;
     align-items: flex-start;
+    position: relative;
+    z-index: 350;
 }
 
 .header-leading {
