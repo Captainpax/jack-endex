@@ -2317,6 +2317,10 @@ function GameView({
         setSidebarOpen((prev) => !prev);
     }, []);
 
+    const closeSidebar = useCallback(() => {
+        setSidebarOpen(false);
+    }, []);
+
     useEffect(() => {
         if (navItems.length === 0) return;
         if (!navItems.some((item) => item.key === tab)) {
@@ -2538,15 +2542,27 @@ function GameView({
                         aria-hidden={!sidebarOpen}
                     >
                         <div className="sidebar__header">
-                            <span className="sidebar__mode">
-                                {isDM ? "Dungeon Master Mode" : "Player Mode"}
-                            </span>
-                            <h2 className="sidebar__title">{game.name}</h2>
-                            <p className="sidebar__summary">
-                                {isDM
-                                    ? "Share quick links, manage characters, and keep your table organized."
-                                    : "Track your hero, review the party, and stay aligned with your DM."}
-                            </p>
+                            <div className="sidebar__header-main">
+                                <span className="sidebar__mode">
+                                    {isDM ? "Dungeon Master Mode" : "Player Mode"}
+                                </span>
+                                <h2 className="sidebar__title">{game.name}</h2>
+                                <p className="sidebar__summary">
+                                    {isDM
+                                        ? "Share quick links, manage characters, and keep your table organized."
+                                        : "Track your hero, review the party, and stay aligned with your DM."}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                className="sidebar__close"
+                                onClick={closeSidebar}
+                                aria-label="Close menu"
+                                title="Close menu"
+                                hidden={!sidebarOpen}
+                            >
+                                <span aria-hidden>×</span>
+                            </button>
                         </div>
                         <nav className="sidebar__nav">
                             {navItems.map((item) => (
