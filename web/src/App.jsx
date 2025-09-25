@@ -2118,6 +2118,14 @@ function AuthView({ onAuthed }) {
 function Home({ me, games, onOpen, onCreate, onDelete }) {
     const [name, setName] = useState("My Campaign");
     const [busy, setBusy] = useState(false);
+    const gameList = useMemo(() => {
+        if (Array.isArray(games)) return games;
+        if (games && Array.isArray(games.items)) return games.items;
+        if (games && typeof games === "object") {
+            console.warn("Unexpected games payload", games);
+        }
+        return [];
+    }, [games]);
 
     return (
         <div style={{ padding: 20, display: "grid", gap: 16 }}>
@@ -2141,8 +2149,8 @@ function Home({ me, games, onOpen, onCreate, onDelete }) {
             <div className="card">
                 <h3>Your Games</h3>
                 <div className="list">
-                    {games.length === 0 && <div>No games yet.</div>}
-                    {games.map((g) => {
+                    {gameList.length === 0 && <div>No games yet.</div>}
+                    {gameList.map((g) => {
                         const isOwner = g.dmId === me.id;
                         return (
                             <div
