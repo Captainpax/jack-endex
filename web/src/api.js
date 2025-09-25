@@ -416,6 +416,76 @@ export function createApi({
 // Example: baseURL: import.meta.env.VITE_API_BASE || '/api'
 const envBaseURL = (import.meta.env?.VITE_API_BASE ?? '').trim();
 const normalizedBaseURL = envBaseURL ? envBaseURL.replace(/\/$/, '') : '';
+const envRealtimeBase = (
+    import.meta.env?.VITE_REALTIME_URL ??
+    import.meta.env?.VITE_REALTIME_BASE ??
+    ''
+).trim();
+const normalizedRealtimeBase = envRealtimeBase ? envRealtimeBase.replace(/\/$/, '') : '';
+
+function normalizeRealtimeBase(raw) {
+    const value = typeof raw === 'string' ? raw.trim() : '';
+    if (!value) return '';
+
+    if (/^wss?:\/\//i.test(value)) {
+        try {
+            return new URL(value).toString().replace(/\/+$/, '');
+        } catch {
+            return value.replace(/\/+$/, '');
+        }
+    }
+
+    if (/^https?:\/\//i.test(value)) {
+        try {
+            const url = new URL(value);
+            url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+            url.search = '';
+            url.hash = '';
+            url.pathname = url.pathname.replace(/\/+$/, '') || '/';
+            return url.toString().replace(/\/+$/, '');
+        } catch {
+            return '';
+        }
+    }
+
+    if (/^\/\//.test(value)) {
+        const protocol = typeof window !== 'undefined' && window.location?.protocol === 'https:'
+            ? 'wss:'
+            : 'ws:';
+        return `${protocol}${value.replace(/\/+$/, '')}`;
+    }
+
+    if (/^[A-Za-z0-9.-]+(?::\d+)?(?:\/.*)?$/.test(value)) {
+        const protocol = typeof window !== 'undefined' && window.location?.protocol === 'https:'
+            ? 'wss:'
+            : 'ws:';
+        return `${protocol}//${value.replace(/\/+$/, '')}`;
+    }
+
+    return '';
+}
+
+export function resolveRealtimeUrl(path = '/ws') {
+    const normalizedPath = typeof path === 'string' && path.startsWith('/') ? path : `/${path ?? ''}`;
+    const candidates = [normalizedRealtimeBase, normalizedBaseURL];
+
+    for (const candidate of candidates) {
+        const base = normalizeRealtimeBase(candidate);
+        if (!base) continue;
+        try {
+            return new URL(normalizedPath, base).toString();
+        } catch {
+            return `${base}${normalizedPath}`;
+        }
+    }
+
+    if (typeof window !== 'undefined' && window.location) {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        return `${protocol}//${window.location.host}${normalizedPath}`;
+    }
+
+    return normalizedPath;
+}
 
 export const apiClient = createApi({
     baseURL: normalizedBaseURL,
