@@ -11,7 +11,7 @@ export default defineConfig({
         proxy: {
             // Frontend calls `/api/...` and Vite forwards to your Node API
             '/api': {
-                target: 'jack-api.darkmatterservers.com', // <- your API port
+                target: 'https://jack-api.darkmatterservers.com', // <- your API port
                 changeOrigin: true,
                 secure: false,
                 ws: true,
@@ -20,7 +20,7 @@ export default defineConfig({
             },
             // Proxy websocket connections used for real-time features in dev mode
             '/ws': {
-                target: 'ws://jack-api.darkmatterservers.com',
+                target: 'wss://jack-api.darkmatterservers.com',
                 changeOrigin: true,
                 secure: false,
                 ws: true,
