@@ -69,6 +69,7 @@ const DEFAULT_BACKGROUND_OPACITY = 1;
 const MAP_SHAPE_TYPES = new Set(['rectangle', 'circle', 'line', 'diamond', 'triangle', 'cone', 'image']);
 const MIN_SHAPE_SIZE = 0.02;
 const DEFAULT_DB_PATH = path.join(__dirname, 'data', 'db.json');
+let legacySeedPromise = null;
 
 await loadEnv({ root: __dirname });
 
@@ -3320,16 +3321,26 @@ function stripMongoMetadata(doc) {
 }
 
 async function loadSeedDatabase() {
-    try {
-        const raw = await fs.readFile(DEFAULT_DB_PATH, 'utf8');
-        const parsed = JSON.parse(raw);
-        return normalizeDB(parsed);
-    } catch (err) {
-        if (err && err.code !== 'ENOENT') {
-            console.warn('Failed to read default database seed', err);
-        }
-        return null;
+    if (!legacySeedPromise) {
+        legacySeedPromise = (async () => {
+            try {
+                const raw = await fs.readFile(DEFAULT_DB_PATH, 'utf8');
+                const parsed = JSON.parse(raw);
+                return normalizeDB(parsed);
+            } catch (err) {
+                if (err && err.code === 'ENOENT') {
+                    console.log(
+                        `[db] No legacy seed database found at ${DEFAULT_DB_PATH}; skipping import.`,
+                    );
+                } else {
+                    console.warn('Failed to read default database seed', err);
+                }
+                return null;
+            }
+        })();
     }
+
+    return legacySeedPromise;
 }
 
 async function ensureInitialItemDocs() {
