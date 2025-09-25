@@ -67,6 +67,73 @@ After rebuilding the frontend (`npm run build`) and restarting the API server,
 the hosted client will authenticate against the remote API using secure
 cookies.
 
+### Issuing an HTTPS certificate with Let's Encrypt
+
+The Node API does not terminate TLS directly; instead, place it behind a
+reverse proxy (for example, Nginx or Caddy) that can obtain and renew HTTPS
+certificates automatically. The example below uses Nginx together with
+[Certbot](https://certbot.eff.org/) to secure `https://jack-api.darkmatterservers.com`.
+
+1. **Install Nginx and Certbot** on the server that will host the API. The
+   Certbot site provides OS-specific instructions. Make sure ports 80 and 443
+   are reachable from the internet.
+
+2. **Stop anything that might be listening on port 80**, then request a
+   certificate:
+
+   ```bash
+   sudo certbot certonly --standalone -d jack-api.darkmatterservers.com
+   ```
+
+   Certbot stores the certificate and private key in `/etc/letsencrypt/live/…`.
+   Renewal is automatic; Certbot installs a systemd timer/cron job that runs
+   `certbot renew`. You can dry-run the renewal with `sudo certbot renew --dry-run`.
+
+3. **Create an Nginx site** that forwards HTTPS traffic to the Node process.
+   Replace the `proxy_pass` target if your API runs on a non-default port.
+
+   ```nginx
+   server {
+       listen 80;
+       server_name jack-api.darkmatterservers.com;
+       return 301 https://$host$request_uri;
+   }
+
+   server {
+       listen 443 ssl http2;
+       server_name jack-api.darkmatterservers.com;
+
+       ssl_certificate /etc/letsencrypt/live/jack-api.darkmatterservers.com/fullchain.pem;
+       ssl_certificate_key /etc/letsencrypt/live/jack-api.darkmatterservers.com/privkey.pem;
+       include /etc/letsencrypt/options-ssl-nginx.conf;
+       ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+       location / {
+           proxy_pass http://127.0.0.1:3000;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto https;
+       }
+   }
+   ```
+
+4. **Enable the site and reload Nginx**. On Debian/Ubuntu this is:
+
+   ```bash
+   sudo ln -s /etc/nginx/sites-available/jack-endex.conf /etc/nginx/sites-enabled/
+   sudo nginx -t
+   sudo systemctl reload nginx
+   ```
+
+5. **Restart the API server** so it reads the production `.env` values shown
+   above (`CORS_ORIGINS`, `TRUST_PROXY`, `SESSION_COOKIE_SECURE`, etc.). The
+   proxy sets `X-Forwarded-Proto: https`, letting Express know that requests are
+   already encrypted.
+
+With this setup the frontend continues to load over HTTPS, and all API calls
+to `https://jack-api.darkmatterservers.com` stay encrypted end-to-end.
+
 ## Discord integration
 
 ### Story synchronization
