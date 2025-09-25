@@ -86,7 +86,7 @@ const DB_CONNECT_MAX_ATTEMPTS = Math.max(1, envNumber('MONGODB_CONNECT_MAX_ATTEM
 const DB_CONNECT_RETRY_DELAY_MS = Math.max(500, envNumber('MONGODB_CONNECT_RETRY_MS', 2000) || 2000);
 
 const SESSION_SECRET = envString('SESSION_SECRET', 'dev-secret');
-const RAW_CORS_ORIGINS = envString('CORS_ORIGINS', 'http://localhost:5173');
+const RAW_CORS_ORIGINS = envString('CORS_ORIGINS', 'https://jack-endex.darkmatterservers.com');
 const ALLOWED_ORIGINS = RAW_CORS_ORIGINS
     .split(',')
     .map((origin) => origin.trim())
