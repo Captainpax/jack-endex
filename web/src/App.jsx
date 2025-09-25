@@ -1,6 +1,6 @@
 // --- FILE: web/src/App.jsx ---
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, Auth, Games, Help, Items, Personas, StoryLogs, onApiActivity } from "./api";
+import { ApiError, Auth, Games, Help, Items, Personas, StoryLogs, onApiActivity, resolveRealtimeUrl } from "./api";
 
 const EMPTY_ARRAY = Object.freeze([]);
 const EMPTY_OBJECT = Object.freeze({});
@@ -784,8 +784,7 @@ function useRealtimeConnection({ gameId, refreshGame, onGameDeleted }) {
         const connect = () => {
             if (cancelled) return;
             try {
-                const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-                const url = `${protocol}//${window.location.host}/ws`;
+                const url = resolveRealtimeUrl("/ws");
                 const ws = new WebSocket(url);
                 socketRef.current = ws;
                 setConnectionState("connecting");
