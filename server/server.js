@@ -8,6 +8,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import crypto from 'crypto';
 import mongoose from './lib/mongoose.js';
+import MongoSessionStore from './lib/mongoSessionStore.js';
 import { fileURLToPath } from 'url';
 import cors from 'cors';
 
@@ -110,6 +111,13 @@ const SESSION_COOKIE_SECURE = envBoolean(
     'SESSION_COOKIE_SECURE',
     process.env.NODE_ENV === 'production',
 );
+const SESSION_COLLECTION = envString('SESSION_COLLECTION', 'sessions');
+const SESSION_TTL_SECONDS = (() => {
+    const raw = envNumber('SESSION_TTL_SECONDS', 60 * 60 * 24 * 7);
+    if (!Number.isFinite(raw)) return 60 * 60 * 24 * 7;
+    if (raw <= 0) return 60 * 60 * 24 * 7;
+    return Math.floor(raw);
+})();
 const SESSION_COOKIE_DOMAIN = envString('SESSION_COOKIE_DOMAIN', '').trim();
 const SESSION_COOKIE_SAME_SITE = (() => {
     const raw = envString(
@@ -3495,10 +3503,18 @@ if (SESSION_COOKIE_DOMAIN) {
     sessionCookie.domain = SESSION_COOKIE_DOMAIN;
 }
 
+const sessionStore = new MongoSessionStore({
+    uri: MONGODB_URI,
+    dbName: MONGODB_DB_NAME || undefined,
+    collectionName: SESSION_COLLECTION,
+    ttlSeconds: SESSION_TTL_SECONDS,
+});
+
 const sessionParser = session({
     secret: SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
+    store: sessionStore,
     cookie: sessionCookie,
 });
 
@@ -5531,6 +5547,9 @@ const server = http.createServer(app);
 server.on('close', () => {
     readiness.server = false;
     updateReadiness();
+    sessionStore.close().catch((err) => {
+        console.warn('[session] Failed to close session store:', err);
+    });
 });
 const wss = new WebSocketServer({ noServer: true });
 
