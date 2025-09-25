@@ -22,6 +22,10 @@ import { loadDemonEntries } from './lib/demonImport.js';
 import { loadItemEntries, parseHealingEffect } from './lib/itemImport.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = path.resolve(__dirname, '..');
+const PUBLIC_PATH = path.join(PROJECT_ROOT, 'public');
+const DIST_PATH = path.join(PROJECT_ROOT, 'dist');
+const SHARED_PATH = path.join(PROJECT_ROOT, 'shared');
 const storyWatchers = new Map();
 const storyWatcherSkipReasons = new Map();
 const storySubscribers = new Map();
@@ -71,7 +75,7 @@ const MIN_SHAPE_SIZE = 0.02;
 const DEFAULT_DB_PATH = path.join(__dirname, 'data', 'db.json');
 let legacySeedPromise = null;
 
-await loadEnv({ root: __dirname });
+await loadEnv({ root: PROJECT_ROOT });
 
 mongoose.set('strictQuery', false);
 
@@ -1030,11 +1034,11 @@ function getDiscordBotToken(env = process.env) {
 }
 
 const ITEMS_PATH = path.join(__dirname, 'data', 'premade-items.json');
-const TXT_DOCS_PATH = path.join(__dirname, 'txtdocs');
+const TXT_DOCS_PATH = path.join(SHARED_PATH, 'txtdocs');
 const INDEX_CANDIDATES = [
-    path.join(__dirname, 'dist', 'index.html'),
-    path.join(__dirname, 'public', 'index.html'),
-    path.join(__dirname, 'index.html'),
+    path.join(DIST_PATH, 'index.html'),
+    path.join(PUBLIC_PATH, 'index.html'),
+    path.join(PROJECT_ROOT, 'client', 'index.html'),
 ];
 let SPA_INDEX = null;
 for (const candidate of INDEX_CANDIDATES) {
@@ -5505,8 +5509,8 @@ app.use('/api/personas', personas);
 
 // Static files (if built)
 app.use('/txtdocs', express.static(TXT_DOCS_PATH));
-app.use(express.static(path.join(__dirname, 'public')));
-app.use(express.static(path.join(__dirname, 'dist')));
+app.use(express.static(PUBLIC_PATH));
+app.use(express.static(DIST_PATH));
 
 if (SPA_INDEX) {
     app.get(['/join/:code', '/game/:id', '/game/:id/*'], (_req, res) => {

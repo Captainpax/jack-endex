@@ -4,11 +4,11 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n API,VITE \"node dev.js\" \"vite --host --port 5173\"",
+    "dev": "concurrently -k -n API,VITE \"node server/dev.js\" \"vite --host --port 5173\"",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview --host --port 5173",
-    "start": "node server.js",
+    "start": "node server/server.js",
     "update:demons": "node scripts/convert-demons.js"
   },
   "dependencies": {

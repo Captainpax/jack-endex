@@ -24,16 +24,9 @@ WORKDIR /app
 # Copy production node_modules and application code
 COPY --from=prune /app/node_modules ./node_modules
 COPY package*.json ./
-COPY server.js ./
-COPY discordWatcher.js ./
-COPY config ./config
-COPY routes ./routes
-COPY services ./services
-COPY models ./models
-COPY lib ./lib
-COPY data ./data
+COPY server ./server
+COPY shared ./shared
 COPY public ./public
-COPY txtdocs ./txtdocs
 COPY --from=build /app/dist ./dist
 
 # Drop privileges to a non-root user
@@ -42,4 +35,4 @@ RUN addgroup -S appgroup && adduser -S appuser -G appgroup \
 USER appuser
 
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["node", "server/server.js"]

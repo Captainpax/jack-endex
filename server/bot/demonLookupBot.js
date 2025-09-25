@@ -15,7 +15,7 @@ const API_BASE = 'https://discord.com/api/v10';
 const GATEWAY_URL = 'wss://gateway.discord.gg/?v=10&encoding=json';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-await loadEnv({ root: path.resolve(__dirname, '..') });
+await loadEnv({ root: path.resolve(__dirname, '..', '..') });
 
 const token = envString('DISCORD_PRIMARY_BOT_TOKEN')
     || envString('DISCORD_DEFAULT_BOT_TOKEN')
