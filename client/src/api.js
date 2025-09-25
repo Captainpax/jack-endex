@@ -1,4 +1,4 @@
-// --- FILE: web/src/api.js ---
+// --- FILE: client/src/api.js ---
 /**
  * AntiMatter Zone • Web API Utilities
  * - Safe JSON parsing (falls back to text/blob)

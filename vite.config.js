@@ -1,7 +1,13 @@
-import {defineConfig} from 'vite'
+import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react' // remove if not using React
 
 export default defineConfig({
+    root: 'client',
+    publicDir: '../public',
+    build: {
+        outDir: '../dist',
+        emptyOutDir: true,
+    },
     plugins: [react()],
     server: {
         host: true,

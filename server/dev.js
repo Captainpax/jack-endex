@@ -2,7 +2,7 @@
 import process from 'process';
 import { spawn } from 'child_process';
 
-const server = spawn('node', ['server.js'], { stdio: 'inherit' });
+const server = spawn('node', ['server/server.js'], { stdio: 'inherit' });
 
 let exiting = false;
 function close(code = 0) {

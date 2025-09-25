@@ -2,6 +2,17 @@
 
 Jack Endex is a full-stack toolkit for running tabletop campaigns with a digital codex, combat tracker, and Discord integration. The backend is powered by Express and MongoDB, while the client is a React + Vite single-page app.
 
+## Project structure
+
+The repository is split into three top-level workspaces plus static assets:
+
+- `client/` – the Vite + React single-page application source.
+- `server/` – the Express API, data models, utilities, and Discord integrations.
+- `shared/` – assets that are consumed by both the server and client (for example the `txtdocs/` reference library).
+- `public/` – static files copied verbatim into the Vite build.
+
+Running `npm run build` outputs the compiled client bundle to `dist/`, which the server serves in production.
+
 ## Prerequisites
 
 - [Node.js 18+](https://nodejs.org/)
@@ -171,7 +182,7 @@ The bot listens for slash-command interactions and responds with a formatted cod
 
 | Command | Description |
 | --- | --- |
-| `npm run import:demons` | Convert `data/demons.json` into MongoDB documents (use `--dry-run` to preview). |
+| `npm run import:demons` | Convert `server/data/demons.json` into MongoDB documents (use `--dry-run` to preview). |
 | `npm run test:import` | Runs the demon import in dry-run mode to confirm the mapping step. |
 | `npm run register:discord` | Registers or updates the `/lookup demon` slash command. |
 | `npm run bot:demon` | Starts the Discord gateway bot that powers the slash command. |
