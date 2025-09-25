@@ -3,7 +3,6 @@
 # Base image with Node.js available for all stages
 FROM node:20-slim AS base
 WORKDIR /app
-ENV NODE_ENV=production
 
 # Install all dependencies (including dev deps required for the build)
 FROM base AS deps
