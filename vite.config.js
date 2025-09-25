@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import {defineConfig} from 'vite'
 import react from '@vitejs/plugin-react'
 
 const devApiTarget = process.env.VITE_DEV_API_TARGET || 'http://localhost:3000'
@@ -42,7 +42,8 @@ export default defineConfig({
                 changeOrigin: true,
                 secure: false,
                 ws: true,
-            },
-        },
-    },
+            }
+        }
+    }
 })
+
