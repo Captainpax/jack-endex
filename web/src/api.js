@@ -128,6 +128,58 @@ function buildQuery(q) {
  * Create a configured API client.
  * Credentials are included by default for cookie-based auth.
  */
+function resolveUrl(baseURL, path) {
+    const normalizedPath = typeof path === 'string' ? path : '';
+    const base = (typeof baseURL === 'string' ? baseURL : '').trim();
+
+    if (!base) {
+        return normalizedPath;
+    }
+
+    if (!normalizedPath) {
+        return base;
+    }
+
+    if (/^(?:[a-z]+:)?\/\//i.test(normalizedPath)) {
+        return normalizedPath;
+    }
+
+    if (/^(?:[a-z]+:)?\/\//i.test(base)) {
+        try {
+            return new URL(normalizedPath, base).toString();
+        } catch {
+            const baseTrimmed = base.replace(/\/+$|^\/+/g, '');
+            const pathTrimmed = normalizedPath.replace(/^\/+/g, '');
+            const joiner = baseTrimmed.endsWith('/') ? '' : '/';
+            return `${baseTrimmed}${joiner}${pathTrimmed}`;
+        }
+    }
+
+    const fakeOrigin = 'http://__jack_endex_internal__';
+    try {
+        const baseUrl = new URL(base.startsWith('/') ? base : `/${base}`, fakeOrigin);
+        const resolved = new URL(normalizedPath, baseUrl);
+        return resolved.pathname + resolved.search + resolved.hash;
+    } catch {
+        const basePrefix = base.startsWith('/') ? base : `/${base}`;
+        const cleanedBase = basePrefix.replace(/\/+$|^\/+/g, '/');
+        const cleanedPath = normalizedPath.startsWith('/') ? normalizedPath : `/${normalizedPath}`;
+        return `${cleanedBase.replace(/\/$/, '')}${cleanedPath}`;
+    }
+}
+
+function appendQueryString(url, queryString) {
+    if (!queryString) return url;
+    if (queryString.startsWith('?')) {
+        if (url.includes('?')) {
+            const separator = url.endsWith('?') || url.endsWith('&') ? '' : '&';
+            return `${url}${separator}${queryString.slice(1)}`;
+        }
+        return `${url}${queryString}`;
+    }
+    return `${url}${url.includes('?') ? '&' : '?'}${queryString}`;
+}
+
 export function createApi({
                               baseURL = '',
                               timeoutMs = 12_000,
@@ -176,7 +228,8 @@ export function createApi({
                 credentials = 'include',
             } = rest;
 
-            const url = `${baseURL}${path}${buildQuery(query)}`;
+            const queryString = buildQuery(query);
+            const url = appendQueryString(resolveUrl(baseURL, path), queryString);
 
             // Cache key only for GET + no body + expect auto/json/text
             const cacheKey = method === 'GET' && !body ? `GET:${url}` : null;
