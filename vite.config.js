@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import {defineConfig} from 'vite'
 import react from '@vitejs/plugin-react' // remove if not using React
 
 export default defineConfig({
@@ -7,10 +7,11 @@ export default defineConfig({
         host: true,
         port: 5173,
         strictPort: true,
+        allowedHosts: ['jack-endex.darkmatterservers.com'],
         proxy: {
             // Frontend calls `/api/...` and Vite forwards to your Node API
             '/api': {
-                target: 'http://127.0.0.1:3000', // <- your API port
+                target: 'jack-api.darkmatterservers.com', // <- your API port
                 changeOrigin: true,
                 secure: false,
                 ws: true,
@@ -19,7 +20,7 @@ export default defineConfig({
             },
             // Proxy websocket connections used for real-time features in dev mode
             '/ws': {
-                target: 'ws://127.0.0.1:3000',
+                target: 'ws://jack-api.darkmatterservers.com',
                 changeOrigin: true,
                 secure: false,
                 ws: true,
