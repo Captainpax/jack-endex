@@ -3473,9 +3473,22 @@ function hash(pw, salt) {
 
 const app = express();
 
-if (TRUST_PROXY) {
-    const numeric = Number(TRUST_PROXY);
-    app.set('trust proxy', Number.isNaN(numeric) ? TRUST_PROXY : numeric);
+const resolvedTrustProxy = (() => {
+    if (TRUST_PROXY) {
+        const numeric = Number(TRUST_PROXY);
+        return Number.isNaN(numeric) ? TRUST_PROXY : numeric;
+    }
+
+    if (SESSION_COOKIE_SECURE) {
+        console.log('[session] TRUST_PROXY not set; defaulting to 1 because SESSION_COOKIE_SECURE=true.');
+        return 1;
+    }
+
+    return null;
+})();
+
+if (resolvedTrustProxy !== null && resolvedTrustProxy !== undefined) {
+    app.set('trust proxy', resolvedTrustProxy);
 }
 
 app.use(cors({
