@@ -39,6 +39,34 @@ Jack Endex is a full-stack toolkit for running tabletop campaigns with a digital
 
    The API listens on `http://localhost:3000` and the React client on `http://localhost:5173`.
 
+## Deploying behind custom domains
+
+When hosting the API and frontend on different domains (for example,
+`https://jack-api.darkmatterservers.com` and
+`https://jack-endex.darkmatterservers.com`) update your `.env` file with the
+additional settings introduced in `.env.example`:
+
+```ini
+# Allow the production SPA to call the API with cookies
+CORS_ORIGINS=https://jack-endex.darkmatterservers.com
+
+# Required when the API sits behind a TLS-terminating proxy
+TRUST_PROXY=1
+
+# Cookies must be secure + SameSite "none" for cross-origin XHR/fetch
+SESSION_COOKIE_SECURE=true
+SESSION_COOKIE_SAME_SITE=none
+# Optional: share cookies across subdomains
+SESSION_COOKIE_DOMAIN=.darkmatterservers.com
+
+# Tell the Vite build where to find the API in production
+VITE_API_BASE=https://jack-api.darkmatterservers.com
+```
+
+After rebuilding the frontend (`npm run build`) and restarting the API server,
+the hosted client will authenticate against the remote API using secure
+cookies.
+
 ## Discord integration
 
 ### Story synchronization
