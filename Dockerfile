@@ -1,37 +1,45 @@
-# Multi-stage build for Jack Endex
-FROM node:20-alpine AS base
-WORKDIR /app
+# syntax=docker/dockerfile:1
 
-# Install dependencies (including dev deps for build)
+# Base image with Node.js available for all stages
+FROM node:20-slim AS base
+WORKDIR /app
+ENV NODE_ENV=production
+
+# Install all dependencies (including dev deps required for the build)
 FROM base AS deps
-COPY package*.json ./
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+COPY package.json package-lock.json ./
 RUN npm ci
 
 # Build the client bundle
 FROM deps AS build
-COPY . .
+COPY client ./client
+COPY shared ./shared
+COPY public ./public
+COPY server ./server
+COPY vite.config.js ./
 RUN npm run build
 
-# Prune dev dependencies for production
+# Remove dev dependencies for the runtime image
 FROM deps AS prune
 RUN npm prune --omit=dev
 
-# Final runtime image
-FROM node:20-alpine AS production
+# Final production image
+FROM node:20-slim AS production
 ENV NODE_ENV=production
 WORKDIR /app
 
-# Copy production node_modules and application code
+# Copy production dependencies and application code
 COPY --from=prune /app/node_modules ./node_modules
-COPY package*.json ./
+COPY package.json package-lock.json ./
 COPY server ./server
 COPY shared ./shared
 COPY public ./public
 COPY --from=build /app/dist ./dist
 
-# Drop privileges to a non-root user
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup \
-    && chown -R appuser:appgroup /app
+# Create and switch to an unprivileged user
+RUN useradd --system --uid 1001 appuser \
+    && chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 3000

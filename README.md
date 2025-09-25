@@ -48,7 +48,24 @@ Running `npm run build` outputs the compiled client bundle to `dist/`, which the
    npm run dev
    ```
 
-   The API listens on `http://localhost:3000` and the React client on `http://localhost:5173`.
+The API listens on `http://localhost:3000` and the React client on `http://localhost:5173`.
+
+## Docker
+
+To build and run the production image without installing Node.js locally:
+
+```bash
+docker build -t jack-endex .
+docker run --rm \
+  --env-file .env \
+  -p 3000:3000 \
+  jack-endex
+```
+
+The container expects the same environment variables as the Node.js process,
+including `MONGODB_URI` and `SESSION_SECRET`. Use an `.env` file or individual
+`-e` flags when launching the container so the server can connect to MongoDB and
+securely sign sessions.
 
 ## Deploying behind custom domains
 
