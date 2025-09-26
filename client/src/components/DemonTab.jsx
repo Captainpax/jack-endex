@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { Games, Personas } from "../api";
+import { ApiError, Games, Personas } from "../api";
 import {
     ABILITY_DEFS,
     COMBAT_CATEGORY_LABELS,
