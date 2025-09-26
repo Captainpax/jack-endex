@@ -44,6 +44,7 @@ import {
 import { EMPTY_ARRAY, EMPTY_OBJECT } from "./utils/constants";
 import { deepClone, normalizeCharacter, normalizeSkills } from "./utils/character";
 import { get } from "./utils/object";
+import { getAvailableTracks, getMainMenuTrack, getTrackById } from "./utils/music";
 
 const DEMON_IMAGE_FALLBACK_BASES = [
     "https://static.megatenwiki.com",
@@ -322,6 +323,200 @@ function normalizePrimaryBot(primaryBot) {
 
 const RealtimeContext = createContext(null);
 
+const MusicContext = createContext({
+    currentTrack: null,
+    playTrack: () => {},
+    stopTrack: () => {},
+    volume: 1,
+    setVolume: () => {},
+    muted: false,
+    setMuted: () => {},
+    toggleMute: () => {},
+    playbackBlocked: false,
+    resume: () => {},
+});
+
+const MUSIC_VOLUME_KEY = "amz:musicVolume";
+const MUSIC_MUTED_KEY = "amz:musicMuted";
+
+function clampVolume(value, fallback = 0.6) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return fallback;
+    if (num <= 0) return 0;
+    if (num >= 1) return 1;
+    return num;
+}
+
+function MusicProvider({ children }) {
+    const audioRef = useRef(null);
+    const [currentTrack, setCurrentTrack] = useState(null);
+    const [volume, setVolumeState] = useState(() => {
+        if (typeof window === "undefined") return 0.6;
+        const stored = window.localStorage.getItem(MUSIC_VOLUME_KEY);
+        return clampVolume(stored, 0.6);
+    });
+    const [muted, setMutedState] = useState(() => {
+        if (typeof window === "undefined") return false;
+        return window.localStorage.getItem(MUSIC_MUTED_KEY) === "1";
+    });
+    const [playbackBlocked, setPlaybackBlocked] = useState(false);
+
+    useEffect(() => {
+        const audio = audioRef.current;
+        if (!audio) return;
+        audio.volume = clampVolume(volume, volume);
+    }, [volume]);
+
+    useEffect(() => {
+        const audio = audioRef.current;
+        if (!audio) return;
+        audio.muted = !!muted;
+    }, [muted]);
+
+    useEffect(() => {
+        const audio = audioRef.current;
+        if (!audio) return undefined;
+        if (currentTrack && currentTrack.src) {
+            const loop = currentTrack.loop !== false;
+            if (audio.src !== currentTrack.src) {
+                audio.src = currentTrack.src;
+                audio.load();
+            }
+            audio.loop = loop;
+            audio.currentTime = 0;
+            const attemptPlay = () => {
+                try {
+                    const maybePromise = audio.play();
+                    if (maybePromise && typeof maybePromise.then === "function") {
+                        maybePromise
+                            .then(() => setPlaybackBlocked(false))
+                            .catch((err) => {
+                                console.warn("Music playback blocked", err);
+                                setPlaybackBlocked(true);
+                            });
+                    } else {
+                        setPlaybackBlocked(false);
+                    }
+                } catch (err) {
+                    console.warn("Music playback failed", err);
+                    setPlaybackBlocked(true);
+                }
+            };
+            if (audio.readyState >= 2) {
+                attemptPlay();
+            } else {
+                const onCanPlay = () => {
+                    audio.removeEventListener("canplay", onCanPlay);
+                    attemptPlay();
+                };
+                audio.addEventListener("canplay", onCanPlay);
+                return () => audio.removeEventListener("canplay", onCanPlay);
+            }
+        } else {
+            audio.pause();
+            audio.removeAttribute("src");
+            audio.load();
+            setPlaybackBlocked(false);
+        }
+        return undefined;
+    }, [currentTrack]);
+
+    const playTrack = useCallback((track) => {
+        if (!track || !track.src) {
+            setCurrentTrack(null);
+            return;
+        }
+        setCurrentTrack((prev) => {
+            if (
+                prev &&
+                prev.id === track.id &&
+                prev.src === track.src &&
+                prev.updatedAt === track.updatedAt
+            ) {
+                return prev;
+            }
+            return {
+                id: track.id,
+                title: track.title,
+                subtitle: track.subtitle,
+                src: track.src,
+                loop: track.loop !== false,
+                updatedAt: track.updatedAt || null,
+            };
+        });
+    }, []);
+
+    const stopTrack = useCallback(() => {
+        setCurrentTrack(null);
+    }, []);
+
+    const updateVolume = useCallback((value) => {
+        setVolumeState((prev) => {
+            const sanitized = clampVolume(value, prev);
+            if (typeof window !== "undefined") {
+                window.localStorage.setItem(MUSIC_VOLUME_KEY, String(sanitized));
+            }
+            return sanitized;
+        });
+    }, []);
+
+    const updateMuted = useCallback((value) => {
+        const next = !!value;
+        setMutedState(next);
+        if (typeof window !== "undefined") {
+            window.localStorage.setItem(MUSIC_MUTED_KEY, next ? "1" : "0");
+        }
+    }, []);
+
+    const toggleMute = useCallback(() => {
+        updateMuted(!muted);
+    }, [muted, updateMuted]);
+
+    const resumePlayback = useCallback(() => {
+        const audio = audioRef.current;
+        if (!audio || !currentTrack?.src) return;
+        try {
+            const maybePromise = audio.play();
+            if (maybePromise && typeof maybePromise.then === "function") {
+                maybePromise
+                    .then(() => setPlaybackBlocked(false))
+                    .catch((err) => {
+                        console.warn("Music resume failed", err);
+                        setPlaybackBlocked(true);
+                    });
+            } else {
+                setPlaybackBlocked(false);
+            }
+        } catch (err) {
+            console.warn("Music resume failed", err);
+            setPlaybackBlocked(true);
+        }
+    }, [currentTrack]);
+
+    const contextValue = useMemo(
+        () => ({
+            currentTrack,
+            playTrack,
+            stopTrack,
+            volume,
+            setVolume: updateVolume,
+            muted,
+            setMuted: updateMuted,
+            toggleMute,
+            playbackBlocked,
+            resume: resumePlayback,
+        }),
+        [currentTrack, playTrack, stopTrack, volume, updateVolume, muted, updateMuted, toggleMute, playbackBlocked, resumePlayback]
+    );
+
+    return (
+        <MusicContext.Provider value={contextValue}>
+            {children}
+            <audio ref={audioRef} preload="auto" style={{ display: "none" }} />
+        </MusicContext.Provider>
+    );
+}
+
 // formatting helpers moved to utils/items
 
 function parseAppLocation(loc) {
@@ -554,25 +749,21 @@ export default function App() {
         }
     }, [active, pendingGameLink, pendingJoinCode]);
 
-    if (loading) return <Center>Loading…</Center>;
+    const authContent = (
+        <AuthView
+            onAuthed={async () => {
+                try {
+                    const m = await Auth.me();
+                    setMe(m);
+                    setGames(await Games.list());
+                } catch (e) {
+                    alert(e.message);
+                }
+            }}
+        />
+    );
 
-    if (!me) {
-        return (
-            <AuthView
-                onAuthed={async () => {
-                    try {
-                        const m = await Auth.me();
-                        setMe(m);
-                        setGames(await Games.list());
-                    } catch (e) {
-                        alert(e.message);
-                    }
-                }}
-            />
-        );
-    }
-
-    return (
+    const appContent = (
         <AuthenticatedApp
             me={me}
             games={games}
@@ -585,6 +776,10 @@ export default function App() {
             setDmSheetPlayerId={setDmSheetPlayerId}
         />
     );
+
+    const body = loading ? <Center>Loading…</Center> : me ? appContent : authContent;
+
+    return <MusicProvider>{body}</MusicProvider>;
 }
 
 // ---------- Small bits ----------
@@ -757,6 +952,26 @@ function Home({ me, games, onOpen, onCreate, onDelete }) {
         }
         return [];
     }, [games]);
+
+    const musicControls = useContext(MusicContext);
+    const playTrack = musicControls?.playTrack;
+    const stopTrack = musicControls?.stopTrack;
+
+    useEffect(() => {
+        const track = getMainMenuTrack();
+        if (typeof playTrack === "function") {
+            if (track) {
+                playTrack(track);
+            } else if (typeof stopTrack === "function") {
+                stopTrack();
+            }
+        }
+        return () => {
+            if (typeof stopTrack === "function") {
+                stopTrack();
+            }
+        };
+    }, [playTrack, stopTrack]);
 
     return (
         <div style={{ padding: 20, display: "grid", gap: 16 }}>
@@ -1168,13 +1383,48 @@ function GameView({
         onGameDeleted: handleGameDeleted,
     });
 
-    const syncMedia = realtime.syncMedia;
+    const syncMusic = realtime.syncMusic;
+    const musicControls = useContext(MusicContext);
+    const playTrack = musicControls?.playTrack;
+    const stopTrack = musicControls?.stopTrack;
+    const realtimeTrackId = realtime.musicState?.trackId || null;
+    const realtimeTrackUpdatedAt = realtime.musicState?.updatedAt || null;
+    const volumeValue = typeof musicControls?.volume === "number" ? musicControls.volume : 1;
+    const muted = !!musicControls?.muted;
+    const setVolume = musicControls?.setVolume;
+    const toggleMuteControl = musicControls?.toggleMute;
+    const resumePlayback = musicControls?.resume;
+    const playbackBlocked = !!musicControls?.playbackBlocked;
+    const currentMusicTrack = musicControls?.currentTrack || null;
+    const canSetVolume = typeof setVolume === "function";
+    const canToggleMute = typeof toggleMuteControl === "function";
+    const canResumePlayback = typeof resumePlayback === "function";
 
     useEffect(() => {
-        if (typeof syncMedia === "function") {
-            syncMedia(game.media);
+        if (typeof syncMusic === "function") {
+            syncMusic(game.music);
         }
-    }, [game.media, syncMedia]);
+    }, [game.music, syncMusic]);
+
+    useEffect(() => {
+        const track = realtimeTrackId ? getTrackById(realtimeTrackId) : null;
+        if (track) {
+            if (typeof playTrack === "function") {
+                playTrack({ ...track, updatedAt: realtimeTrackUpdatedAt });
+            }
+        } else if (typeof stopTrack === "function") {
+            stopTrack();
+        }
+    }, [playTrack, stopTrack, realtimeTrackId, realtimeTrackUpdatedAt]);
+
+    useEffect(
+        () => () => {
+            if (typeof stopTrack === "function") {
+                stopTrack();
+            }
+        },
+        [stopTrack]
+    );
 
     const sidebarVisible = sidebarOpen;
     const shellClassName = `app-shell ${sidebarVisible ? "is-sidebar-open" : "is-sidebar-collapsed"}`;
@@ -1233,6 +1483,66 @@ function GameView({
                                 </button>
                             ))}
                         </nav>
+                        <div className="sidebar__audio-panel">
+                            <div className="sidebar__audio-header">
+                                <span className="sidebar__audio-title">Session music</span>
+                                {playbackBlocked && (
+                                    <button
+                                        type="button"
+                                        className="btn ghost btn-small"
+                                        onClick={() => {
+                                            if (canResumePlayback) {
+                                                resumePlayback();
+                                            }
+                                        }}
+                                        disabled={!canResumePlayback}
+                                    >
+                                        Resume
+                                    </button>
+                                )}
+                            </div>
+                            <div className="sidebar__audio-controls">
+                                <button
+                                    type="button"
+                                    className="btn ghost btn-small"
+                                    onClick={() => {
+                                        if (canToggleMute) {
+                                            toggleMuteControl();
+                                        }
+                                    }}
+                                    disabled={!canToggleMute}
+                                >
+                                    {muted ? "Unmute" : "Mute"}
+                                </button>
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max="100"
+                                    value={Math.round(volumeValue * 100)}
+                                    onChange={(event) => {
+                                        if (canSetVolume) {
+                                            const next = Number(event.target.value) / 100;
+                                            setVolume(next);
+                                        }
+                                    }}
+                                    disabled={!canSetVolume}
+                                    aria-label="Music volume"
+                                />
+                                <span className="sidebar__audio-volume">{Math.round(volumeValue * 100)}%</span>
+                            </div>
+                            <div className="sidebar__audio-track">
+                                {currentMusicTrack ? (
+                                    <>
+                                        <strong>{currentMusicTrack.title}</strong>
+                                        {currentMusicTrack.subtitle && (
+                                            <span className="text-muted"> · {currentMusicTrack.subtitle}</span>
+                                        )}
+                                    </>
+                                ) : (
+                                    <span className="text-muted">No track selected</span>
+                                )}
+                            </div>
+                        </div>
                         <div className="sidebar__footer">
                             {isDM && <InviteButton gameId={game.id} />}
                             <button
@@ -4710,28 +5020,45 @@ function MapTab({ game, me }) {
 // ---------- DM Overview ----------
 function DMOverview({ game, onInspectPlayer }) {
     const realtime = useContext(RealtimeContext);
-    const [mediaDraft, setMediaDraft] = useState("");
+    const tracks = useMemo(() => getAvailableTracks(), []);
+    const [selectedTrackId, setSelectedTrackId] = useState(() => {
+        const initial = realtime?.musicState?.trackId;
+        if (initial) return initial;
+        return tracks[0]?.id || "";
+    });
     const [alertDraft, setAlertDraft] = useState("");
-    const [mediaFormError, setMediaFormError] = useState(null);
+    const [musicFormError, setMusicFormError] = useState(null);
     const [alertFormError, setAlertFormError] = useState(null);
-    const currentMedia = realtime?.mediaState || null;
-    const serverMediaError = realtime?.mediaError || null;
-    const friendlyMediaError = useMemo(() => {
-        if (!serverMediaError) return null;
-        switch (serverMediaError) {
-            case "invalid_url":
-                return "Unable to parse that YouTube link. Try a different URL.";
+    const isRealtimeConnected = !!realtime?.connected;
+    const currentTrackId = realtime?.musicState?.trackId || "";
+    const currentMusic = currentTrackId ? getTrackById(currentTrackId) : null;
+    const serverMusicError = realtime?.musicError || null;
+    const friendlyMusicError = useMemo(() => {
+        if (!serverMusicError) return null;
+        switch (serverMusicError) {
+            case "invalid_track":
+                return "That track isn’t available.";
             case "invalid_request":
-                return "Provide a YouTube link before pressing play.";
+                return "Select a track before pressing play.";
             case "forbidden":
                 return "Only the DM can control playback.";
             case "not_found":
                 return "Campaign not found. Refresh and try again.";
             default:
-                return serverMediaError;
+                return serverMusicError;
         }
-    }, [serverMediaError]);
-    const displayMediaError = mediaFormError || friendlyMediaError;
+    }, [serverMusicError]);
+    const displayMusicError = musicFormError || friendlyMusicError;
+    useEffect(() => {
+        if (currentTrackId) {
+            setSelectedTrackId(currentTrackId);
+        }
+    }, [currentTrackId]);
+    useEffect(() => {
+        if (musicFormError) {
+            setMusicFormError(null);
+        }
+    }, [selectedTrackId, musicFormError]);
     const serverAlertError = realtime?.alertError || null;
     const friendlyAlertError = useMemo(() => {
         if (!serverAlertError) return null;
@@ -4747,7 +5074,6 @@ function DMOverview({ game, onInspectPlayer }) {
         }
     }, [serverAlertError]);
     const displayAlertError = alertFormError || friendlyAlertError;
-    const isRealtimeConnected = !!realtime?.connected;
     const presenceMap = realtime?.onlineUsers || EMPTY_OBJECT;
 
     const players = useMemo(
@@ -4844,36 +5170,48 @@ function DMOverview({ game, onInspectPlayer }) {
 
     const canInspect = typeof onInspectPlayer === "function";
 
-    const handleMediaSubmit = (evt) => {
+    useEffect(() => {
+        if (tracks.length === 0) return;
+        if (!selectedTrackId || !tracks.some((track) => track.id === selectedTrackId)) {
+            setSelectedTrackId((prev) => (prev && tracks.some((track) => track.id === prev) ? prev : tracks[0].id));
+        }
+    }, [tracks, selectedTrackId]);
+
+    const playMusic = realtime?.playMusic;
+    const stopMusic = realtime?.stopMusic;
+    const hasTracks = tracks.length > 0;
+    const canPlayMusic = !!playMusic && isRealtimeConnected && hasTracks;
+    const canStopMusic = !!stopMusic && isRealtimeConnected && !!currentMusic;
+
+    const handleMusicSubmit = (evt) => {
         evt.preventDefault();
-        if (!realtime?.playMedia) return;
-        const trimmed = mediaDraft.trim();
+        if (!playMusic) return;
+        const trimmed = typeof selectedTrackId === "string" ? selectedTrackId.trim() : "";
         if (!trimmed) {
-            setMediaFormError("Enter a YouTube link or video ID");
+            setMusicFormError("Select a track to share");
             return;
         }
         try {
-            realtime.playMedia(trimmed);
-            setMediaDraft("");
-            setMediaFormError(null);
+            playMusic(trimmed);
+            setMusicFormError(null);
         } catch (err) {
             const message = err?.message === "not_connected"
                 ? "Waiting for the realtime connection…"
-                : err?.message || "Failed to share video";
-            setMediaFormError(message);
+                : err?.message || "Failed to start music";
+            setMusicFormError(message);
         }
     };
 
-    const handleMediaStop = () => {
-        if (!realtime?.stopMedia) return;
+    const handleMusicStop = () => {
+        if (!stopMusic) return;
         try {
-            realtime.stopMedia();
-            setMediaFormError(null);
+            stopMusic();
+            setMusicFormError(null);
         } catch (err) {
             const message = err?.message === "not_connected"
                 ? "Waiting for the realtime connection…"
-                : err?.message || "Failed to stop video";
-            setMediaFormError(message);
+                : err?.message || "Failed to stop music";
+            setMusicFormError(message);
         }
     };
 
@@ -4904,7 +5242,7 @@ function DMOverview({ game, onInspectPlayer }) {
                     <div>
                         <h3>Table broadcast</h3>
                         <p className="text-muted text-small">
-                            Share ambience videos or send urgent alerts to everyone currently online.
+                            Share ambience music or send urgent alerts to everyone currently online.
                         </p>
                     </div>
                     {!isRealtimeConnected && (
@@ -4912,48 +5250,49 @@ function DMOverview({ game, onInspectPlayer }) {
                     )}
                 </div>
                 <div className="stack">
-                    <form className="dm-broadcast__form" onSubmit={handleMediaSubmit}>
-                        <label htmlFor="dm-broadcast-url">YouTube link</label>
+                    <form className="dm-broadcast__form" onSubmit={handleMusicSubmit}>
+                        <label htmlFor="dm-broadcast-track">Campaign track</label>
                         <div className="row wrap">
-                            <input
-                                id="dm-broadcast-url"
-                                type="text"
-                                placeholder="https://youtu.be/ambient-track"
-                                value={mediaDraft}
-                                onChange={(e) => setMediaDraft(e.target.value)}
-                                disabled={!isRealtimeConnected}
-                                autoComplete="off"
-                                spellCheck={false}
-                            />
-                            <button type="submit" className="btn" disabled={!isRealtimeConnected}>
+                            <select
+                                id="dm-broadcast-track"
+                                value={selectedTrackId}
+                                onChange={(e) => setSelectedTrackId(e.target.value)}
+                                disabled={!hasTracks || !isRealtimeConnected}
+                            >
+                                {tracks.map((track) => (
+                                    <option key={track.id} value={track.id}>
+                                        {track.title}
+                                        {track.subtitle ? ` — ${track.subtitle}` : ""}
+                                    </option>
+                                ))}
+                                {!hasTracks && <option value="">No tracks available</option>}
+                            </select>
+                            <button type="submit" className="btn" disabled={!canPlayMusic}>
                                 Play for party
                             </button>
                             <button
                                 type="button"
                                 className="btn ghost"
-                                onClick={handleMediaStop}
-                                disabled={!isRealtimeConnected || !currentMedia}
+                                onClick={handleMusicStop}
+                                disabled={!canStopMusic}
                             >
                                 Stop playback
                             </button>
                         </div>
                         <p className="text-muted text-small">
-                            Players receive a floating player and can mute it locally.
+                            Players hear this track until you stop it. They can adjust volume from the sidebar.
                         </p>
-                        {currentMedia && (
+                        {currentMusic && (
                             <p className="text-small dm-broadcast__now-playing">
                                 Now playing:{" "}
-                                <a
-                                    href={currentMedia.url || `https://youtu.be/${currentMedia.videoId}`}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                >
-                                    {currentMedia.url ? currentMedia.url : `youtu.be/${currentMedia.videoId}`}
-                                </a>
+                                <strong>{currentMusic.title}</strong>
+                                {currentMusic.subtitle && (
+                                    <span className="text-muted"> · {currentMusic.subtitle}</span>
+                                )}
                             </p>
                         )}
-                        {displayMediaError && (
-                            <span className="text-error text-small">{displayMediaError}</span>
+                        {displayMusicError && (
+                            <span className="text-error text-small">{displayMusicError}</span>
                         )}
                     </form>
                     <form className="dm-broadcast__form" onSubmit={handleAlertSubmit}>
@@ -5148,87 +5487,50 @@ function JoinByCode({ onJoined }) {
 
 function SharedMediaDisplay({ isDM }) {
     const realtime = useContext(RealtimeContext);
-    const media = realtime?.mediaState;
-    const [collapsed, setCollapsed] = useState(false);
-    const [muted, setMuted] = useState(false);
-    const iframeRef = useRef(null);
+    const musicControls = useContext(MusicContext);
+    const trackId = realtime?.musicState?.trackId || null;
+    const track = trackId ? getTrackById(trackId) : null;
+    const playbackBlocked = !!musicControls?.playbackBlocked;
+    const resume = musicControls?.resume;
+    const canResume = typeof resume === "function";
+    const muted = !!musicControls?.muted;
 
-    useEffect(() => {
-        setCollapsed(false);
-        setMuted(false);
-    }, [media?.videoId, media?.updatedAt]);
+    if (!track && !playbackBlocked) return null;
 
-    if (!media) return null;
-
-    const params = new URLSearchParams({
-        autoplay: '1',
-        start: media.startSeconds ? String(media.startSeconds) : '0',
-        enablejsapi: '1',
-        controls: '1',
-        modestbranding: '1',
-        rel: '0',
-        playsinline: '1',
-    });
-    const embedSrc = `https://www.youtube.com/embed/${media.videoId}?${params.toString()}`;
-
-    const toggleMute = () => {
-        const frame = iframeRef.current;
-        if (!frame || !frame.contentWindow) return;
-        const next = !muted;
-        try {
-            frame.contentWindow.postMessage(
-                JSON.stringify({ event: 'command', func: next ? 'mute' : 'unMute', args: [] }),
-                '*'
-            );
-            setMuted(next);
-        } catch (err) {
-            console.warn('mute toggle failed', err);
-        }
-    };
-
-    const description = isDM ? 'Shared with the party' : 'Broadcast from your DM';
+    const description = isDM ? "Shared with the party" : "Broadcast from your DM";
 
     return (
-        <div className={`shared-media${collapsed ? ' is-collapsed' : ''}`}>
+        <div className="shared-media">
             <div className="shared-media__header">
-                <strong>DM Broadcast</strong>
-                <div className="shared-media__actions">
+                <strong>Session music</strong>
+                {playbackBlocked && (
                     <button
                         type="button"
                         className="btn ghost btn-small"
-                        onClick={toggleMute}
+                        onClick={() => {
+                            if (canResume) {
+                                resume();
+                            }
+                        }}
+                        disabled={!canResume}
                     >
-                        {muted ? 'Unmute' : 'Mute'}
+                        Resume audio
                     </button>
-                    <button
-                        type="button"
-                        className="btn ghost btn-small"
-                        onClick={() => setCollapsed((prev) => !prev)}
-                    >
-                        {collapsed ? 'Expand' : 'Collapse'}
-                    </button>
-                </div>
+                )}
             </div>
-            <div className="shared-media__body">
-                <div className="shared-media__player">
-                    <iframe
-                        ref={iframeRef}
-                        src={embedSrc}
-                        title="DM shared media"
-                        allow="autoplay; encrypted-media; picture-in-picture"
-                        allowFullScreen
-                    />
-                </div>
-                <div className="shared-media__footer">
-                    <span className="text-muted text-small">{description}</span>
-                    <div className="shared-media__links">
-                        {media.url && (
-                            <a href={media.url} target="_blank" rel="noreferrer">
-                                Open on YouTube
-                            </a>
-                        )}
-                    </div>
-                </div>
+            <div className="shared-media__body shared-media__body--compact">
+                {track ? (
+                    <p className="shared-media__track">
+                        Now playing: <strong>{track.title}</strong>
+                        {track.subtitle && <span className="text-muted"> · {track.subtitle}</span>}
+                    </p>
+                ) : (
+                    <p>No track is currently selected.</p>
+                )}
+                <p className="text-muted text-small">
+                    Use the sidebar controls to adjust volume{muted ? " (muted)" : ""}.
+                </p>
+                <span className="text-muted text-small">{description}</span>
             </div>
         </div>
     );
