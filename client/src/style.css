@@ -1555,15 +1555,17 @@ p  { margin: 0 0 .75rem; color: var(--text); }
         content: "";
         position: fixed;
         inset: 0;
-        background: rgba(4, 10, 16, 0.55);
+        background: rgba(4, 10, 16, 0.35);
         opacity: 0;
+        visibility: hidden;
         pointer-events: none;
-        transition: opacity var(--trans-fast);
+        transition: opacity var(--trans-fast), visibility var(--trans-fast);
         z-index: 300;
     }
 
     .app-shell.is-sidebar-open::after {
         opacity: 1;
+        visibility: visible;
     }
 
     .app-sidebar {
@@ -1572,7 +1574,7 @@ p  { margin: 0 0 .75rem; color: var(--text); }
         left: clamp(16px, 3vw, 32px);
         bottom: clamp(16px, 3vw, 32px);
         max-width: 320px;
-        width: calc(100% - clamp(16px, 3vw, 32px) * 2);
+        width: min(320px, calc(100% - clamp(16px, 3vw, 32px) * 2));
         transform: translateX(-24px);
         opacity: 0;
         pointer-events: none;
