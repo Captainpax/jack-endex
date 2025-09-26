@@ -1,7 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
-import MatrixRain from './MatrixRain';
+import LoadingBar from './components/LoadingBar';
 import './style.css';
 
 // Force dark theme
@@ -11,7 +11,7 @@ if (typeof document !== 'undefined') {
 
 ReactDOM.createRoot(document.getElementById('root')).render(
     <React.StrictMode>
-        <MatrixRain />
+        <LoadingBar />
         <App />
     </React.StrictMode>,
 );
