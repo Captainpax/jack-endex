@@ -327,7 +327,7 @@ const MusicContext = createContext({
     currentTrack: null,
     playTrack: () => {},
     stopTrack: () => {},
-    volume: 1,
+    volume: 0.2,
     setVolume: () => {},
     muted: false,
     setMuted: () => {},
@@ -339,7 +339,7 @@ const MusicContext = createContext({
 const MUSIC_VOLUME_KEY = "amz:musicVolume";
 const MUSIC_MUTED_KEY = "amz:musicMuted";
 
-function clampVolume(value, fallback = 0.6) {
+function clampVolume(value, fallback = 0.2) {
     const num = Number(value);
     if (!Number.isFinite(num)) return fallback;
     if (num <= 0) return 0;
@@ -351,9 +351,9 @@ function MusicProvider({ children }) {
     const audioRef = useRef(null);
     const [currentTrack, setCurrentTrack] = useState(null);
     const [volume, setVolumeState] = useState(() => {
-        if (typeof window === "undefined") return 0.6;
+        if (typeof window === "undefined") return 0.2;
         const stored = window.localStorage.getItem(MUSIC_VOLUME_KEY);
-        return clampVolume(stored, 0.6);
+        return clampVolume(stored, 0.2);
     });
     const [muted, setMutedState] = useState(() => {
         if (typeof window === "undefined") return false;
@@ -1389,7 +1389,7 @@ function GameView({
     const stopTrack = musicControls?.stopTrack;
     const realtimeTrackId = realtime.musicState?.trackId || null;
     const realtimeTrackUpdatedAt = realtime.musicState?.updatedAt || null;
-    const volumeValue = typeof musicControls?.volume === "number" ? musicControls.volume : 1;
+    const volumeValue = typeof musicControls?.volume === "number" ? musicControls.volume : 0.2;
     const muted = !!musicControls?.muted;
     const setVolume = musicControls?.setVolume;
     const toggleMuteControl = musicControls?.toggleMute;
