@@ -3124,7 +3124,171 @@ label {
 .demon-editor__preview-stats { display: flex; flex-wrap: wrap; gap: 6px; }
 .demon-editor__preview-resists { display: grid; gap: 4px; }
 
-.demon-fusion { display: grid; gap: 8px; padding: 16px; border: 1px dashed var(--border); border-radius: var(--radius); background: color-mix(in oklab, var(--brand) 8%, transparent); }
+.demon-fusion {
+    display: grid;
+    gap: 16px;
+    padding: 16px;
+    border-radius: var(--radius);
+    border: 1px solid color-mix(in oklab, var(--brand) 18%, var(--border));
+    background: color-mix(in oklab, var(--brand) 6%, transparent);
+}
+
+.demon-fusion__intro { display: grid; gap: 4px; }
+
+.demon-fusion__grid {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.demon-fusion__slot,
+.demon-fusion__summary {
+    display: grid;
+    gap: 12px;
+    padding: 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+}
+
+.demon-fusion__slot-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.demon-fusion__results {
+    display: grid;
+    gap: 8px;
+    max-height: 220px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.demon-fusion__result {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    cursor: pointer;
+    transition: border-color var(--trans-fast), background var(--trans-fast), box-shadow var(--trans-fast);
+}
+
+.demon-fusion__result:hover,
+.demon-fusion__result:focus-visible {
+    outline: none;
+    border-color: var(--brand);
+    background: color-mix(in oklab, var(--brand) 12%, var(--surface-2));
+    box-shadow: var(--shadow-sm);
+}
+
+.demon-fusion__result-name { font-weight: 600; }
+
+.demon-fusion__selection {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px;
+    border-radius: var(--radius);
+    border: 1px solid color-mix(in oklab, var(--brand) 30%, var(--border));
+    background: color-mix(in oklab, var(--brand) 8%, var(--surface-1));
+}
+
+.demon-fusion__selection-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.demon-fusion__empty {
+    padding: 12px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-sm);
+    text-align: center;
+    background: var(--surface-1);
+}
+
+.demon-fusion__summary-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.demon-fusion__summary-grid { display: grid; gap: 8px; }
+
+.demon-fusion__summary-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 0.9rem;
+}
+
+.demon-fusion__result-card {
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid color-mix(in oklab, var(--brand) 28%, var(--border));
+    border-radius: var(--radius);
+    background: color-mix(in oklab, var(--brand) 10%, var(--surface));
+}
+
+.demon-fusion__result-meta { display: grid; gap: 6px; }
+
+.demon-fusion__result-stats { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.demon-fusion__result-resist { display: grid; gap: 4px; }
+
+.demon-fusion__result-skills { display: grid; gap: 4px; font-size: 0.85rem; }
+
+.demon-fusion__candidate-nav { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.demon-fusion__actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.demon-fusion__candidate-list { display: grid; gap: 8px; }
+
+.demon-fusion__candidate-scroll {
+    max-height: 240px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-1);
+}
+
+.demon-fusion__candidate {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    text-align: left;
+    font-size: 0.9rem;
+}
+
+.demon-fusion__candidate:last-child { border-bottom: none; }
+
+.demon-fusion__candidate:hover,
+.demon-fusion__candidate:focus-visible {
+    outline: none;
+    background: color-mix(in oklab, var(--brand) 12%, transparent);
+}
+
+.demon-fusion__candidate.is-active {
+    background: color-mix(in oklab, var(--brand) 18%, transparent);
+    font-weight: 600;
+}
+
+@media (max-width: 720px) {
+    .demon-fusion__grid { grid-template-columns: 1fr; }
+}
 
 @media (min-width: 960px) {
     .demon-codex__layout { flex-direction: row; align-items: flex-start; }
