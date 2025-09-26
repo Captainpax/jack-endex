@@ -1050,6 +1050,59 @@ function GameView({
         };
     }, [myEntry]);
 
+    const playerProfileDetails = useMemo(() => {
+        const details = [];
+
+        const playerName =
+            myEntry?.character?.profile?.player?.trim() || me?.username?.trim() || "";
+        if (playerName) {
+            details.push({ label: "Player", value: playerName });
+        }
+
+        const classLabel = myEntry?.character?.profile?.class?.trim();
+        if (classLabel) {
+            details.push({ label: "Class", value: classLabel });
+        }
+
+        const alignment = myEntry?.character?.profile?.alignment?.trim();
+        if (alignment) {
+            details.push({ label: "Alignment", value: alignment });
+        }
+
+        const arcana = myEntry?.character?.profile?.arcana?.trim();
+        if (arcana) {
+            details.push({ label: "Arcana", value: arcana });
+        }
+
+        const resources = myEntry?.character?.resources || EMPTY_OBJECT;
+        const levelRaw = Number(resources.level);
+        if (Number.isFinite(levelRaw)) {
+            details.push({ label: "Level", value: levelRaw });
+        }
+
+        const hpRaw = Number(resources.hp);
+        const maxHpRaw = Number(resources.maxHP);
+        const hp = Number.isFinite(hpRaw) ? hpRaw : null;
+        const maxHP = Number.isFinite(maxHpRaw) ? maxHpRaw : null;
+        if (hp !== null || maxHP !== null) {
+            let hpLabel = "";
+            if (hp !== null && maxHP !== null) {
+                hpLabel = `${hp}/${maxHP}`;
+            } else if (hp !== null) {
+                hpLabel = String(hp);
+            } else {
+                hpLabel = `0/${maxHP}`;
+            }
+            details.push({ label: "HP", value: hpLabel });
+        }
+
+        if (!details.length && playerMaccaInfo.label) {
+            details.push({ label: "Player", value: playerName || me?.username || "" });
+        }
+
+        return details;
+    }, [me, myEntry, playerMaccaInfo.label]);
+
     const demonCount = Array.isArray(game.demons) ? game.demons.length : 0;
 
     const headerPills = useMemo(() => {
@@ -1085,12 +1138,6 @@ function GameView({
         });
         return pills;
     }, [campaignPlayers.length, demonCount, isDM, myEntry]);
-
-    const handleMainMenu = useCallback(() => {
-        if (typeof window !== "undefined") {
-            window.location.href = "/";
-        }
-    }, []);
 
     const handleLogout = useCallback(async () => {
         try {
@@ -1229,29 +1276,30 @@ function GameView({
                             </button>
                         </div>
                         <nav className="sidebar__nav">
-                            {navItems.map((item) => (
-                                <button
-                                    key={item.key}
-                                    type="button"
-                                    className={`sidebar__nav-button${tab === item.key ? " is-active" : ""}`}
-                                    onClick={() => handleSelectNav(item.key)}
-                                >
-                                    <span className="sidebar__nav-label">{item.label}</span>
-                                    <span className="sidebar__nav-desc">{item.description}</span>
-                                </button>
-                            ))}
+                            {navItems.map((item) => {
+                                const description =
+                                    !isDM && item.key === "profile"
+                                        ? `Macca ${playerMaccaInfo.label}`
+                                        : item.description;
+                                return (
+                                    <button
+                                        key={item.key}
+                                        type="button"
+                                        className={`sidebar__nav-button${
+                                            tab === item.key ? " is-active" : ""
+                                        }`}
+                                        onClick={() => handleSelectNav(item.key)}
+                                    >
+                                        <span className="sidebar__nav-label">{item.label}</span>
+                                        {description && (
+                                            <span className="sidebar__nav-desc">{description}</span>
+                                        )}
+                                    </button>
+                                );
+                            })}
                         </nav>
                         <div className="sidebar__footer">
-                            {!isDM && myEntry && (
-                                <div className="sidebar__player-info" aria-live="polite">
-                                    <span className="sidebar__player-label">Macca</span>
-                                    <span className="sidebar__player-value">{playerMaccaInfo.label}</span>
-                                </div>
-                            )}
                             {isDM && <InviteButton gameId={game.id} />}
-                            <button type="button" className="btn ghost" onClick={handleMainMenu}>
-                                Main menu
-                            </button>
                             <button
                                 type="button"
                                 className="btn ghost"
@@ -1345,6 +1393,44 @@ function GameView({
                                 setTab("sheet");
                             }}
                         />
+                    )}
+
+                    {tab === "profile" && !isDM && (
+                        <section className="profile-tab" aria-live="polite">
+                            <div className="card profile-tab__card">
+                                <header className="profile-tab__header">
+                                    <div>
+                                        <span className="text-muted text-small">Character</span>
+                                        <h3>
+                                            {myEntry?.character?.name?.trim() ||
+                                                me?.username?.trim() ||
+                                                "Player"}
+                                        </h3>
+                                    </div>
+                                    <div className="profile-tab__macca">
+                                        <span className="text-muted text-small">Macca</span>
+                                        <span className="profile-tab__macca-value">
+                                            {playerMaccaInfo.label}
+                                        </span>
+                                    </div>
+                                </header>
+                                {!myEntry && (
+                                    <p className="text-muted">
+                                        Join a character sheet to unlock full profile details.
+                                    </p>
+                                )}
+                                {playerProfileDetails.length > 0 && (
+                                    <dl className="profile-tab__details">
+                                        {playerProfileDetails.map(({ label, value }) => (
+                                            <div key={label} className="profile-tab__details-item">
+                                                <dt>{label}</dt>
+                                                <dd>{value || "—"}</dd>
+                                            </div>
+                                        ))}
+                                    </dl>
+                                )}
+                            </div>
+                        </section>
                     )}
 
                     {tab === "sheet" && (
