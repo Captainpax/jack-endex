@@ -21,6 +21,7 @@ import Demon from './models/Demon.js';
 import Item from './models/Item.js';
 import { loadDemonEntries } from './lib/demonImport.js';
 import { loadItemEntries, parseHealingEffect } from './lib/itemImport.js';
+import { DEFAULT_WORLD_SKILLS } from '../shared/worldSkills.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -1269,40 +1270,6 @@ function convertLegacyStats(raw) {
     return normalizeAbilityScores(mapped);
 }
 
-const DEFAULT_WORLD_SKILLS = [
-    { id: 'balance', key: 'balance', label: 'Balance', ability: 'DEX' },
-    { id: 'bluff', key: 'bluff', label: 'Bluff', ability: 'CHA' },
-    { id: 'climb', key: 'climb', label: 'Climb', ability: 'STR' },
-    { id: 'concentration', key: 'concentration', label: 'Concentration', ability: 'CON' },
-    { id: 'craftGeneral', key: 'craftGeneral', label: 'Craft (General)', ability: 'INT' },
-    { id: 'craftKnowledge', key: 'craftKnowledge', label: 'Craft (Knowledge)', ability: 'INT' },
-    { id: 'craftMagic', key: 'craftMagic', label: 'Craft (Magic)', ability: 'INT' },
-    { id: 'diplomacy', key: 'diplomacy', label: 'Diplomacy', ability: 'CHA' },
-    { id: 'disableDevice', key: 'disableDevice', label: 'Disable Device', ability: 'DEX' },
-    { id: 'disguise', key: 'disguise', label: 'Disguise', ability: 'CHA' },
-    { id: 'escapeArtist', key: 'escapeArtist', label: 'Escape Artist', ability: 'DEX' },
-    { id: 'gatherInformation', key: 'gatherInformation', label: 'Gather Information', ability: 'CHA' },
-    { id: 'handleAnimal', key: 'handleAnimal', label: 'Handle Animal', ability: 'CHA' },
-    { id: 'heal', key: 'heal', label: 'Heal', ability: 'WIS' },
-    { id: 'hide', key: 'hide', label: 'Hide', ability: 'DEX' },
-    { id: 'intimidate', key: 'intimidate', label: 'Intimidate', ability: 'CHA' },
-    { id: 'jump', key: 'jump', label: 'Jump', ability: 'STR' },
-    { id: 'knowledgeArcana', key: 'knowledgeArcana', label: 'Knowledge (Arcana)', ability: 'INT' },
-    { id: 'knowledgeReligion', key: 'knowledgeReligion', label: 'Knowledge (Religion)', ability: 'INT' },
-    { id: 'knowledgePlanes', key: 'knowledgePlanes', label: 'Knowledge (The Planes)', ability: 'INT' },
-    { id: 'listen', key: 'listen', label: 'Listen', ability: 'WIS' },
-    { id: 'moveSilently', key: 'moveSilently', label: 'Move Silently', ability: 'DEX' },
-    { id: 'negotiation', key: 'negotiation', label: 'Negotiation', ability: 'CHA' },
-    { id: 'perform', key: 'perform', label: 'Perform', ability: 'CHA' },
-    { id: 'ride', key: 'ride', label: 'Ride', ability: 'DEX' },
-    { id: 'senseMotive', key: 'senseMotive', label: 'Sense Motive', ability: 'WIS' },
-    { id: 'sleightOfHand', key: 'sleightOfHand', label: 'Sleight of Hand', ability: 'DEX' },
-    { id: 'spellcraft', key: 'spellcraft', label: 'Spellcraft', ability: 'INT' },
-    { id: 'spot', key: 'spot', label: 'Spot', ability: 'WIS' },
-    { id: 'survival', key: 'survival', label: 'Survival', ability: 'WIS' },
-    { id: 'swim', key: 'swim', label: 'Swim', ability: 'STR' },
-    { id: 'useRope', key: 'useRope', label: 'Use Rope', ability: 'DEX' },
-];
 
 function slugifyWorldSkillLabel(label) {
     const base = label

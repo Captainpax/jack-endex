@@ -2,6 +2,28 @@
 // Reference snippets adapted from the Battlemath and Character Creation txtdocs.
 // Provides quick summaries so the UI can surface the table rules without opening the raw files.
 
+import { DEFAULT_WORLD_SKILL_DEFS } from "@shared/worldSkills.js";
+import { ABILITY_DEFS } from "./gameData";
+
+const WORLD_SKILL_DISCIPLINES = Object.freeze(
+    ABILITY_DEFS.map((ability) => {
+        const skills = DEFAULT_WORLD_SKILL_DEFS.filter(
+            (skill) => skill.ability === ability.key
+        ).map((skill) => ({
+            key: skill.key,
+            label: skill.label,
+            summary: skill.summary,
+        }));
+        if (skills.length === 0) return null;
+        return Object.freeze({
+            ability: ability.key,
+            label: ability.label,
+            summary: ability.summary,
+            skills: Object.freeze(skills),
+        });
+    }).filter(Boolean)
+);
+
 export const BATTLE_MATH_REFERENCE = Object.freeze({
     overview:
         "Roll Accuracy → Roll Attack → Add weapon attack or subtract enemy armor → Multiply by affinities and buffs.",
@@ -42,7 +64,7 @@ export const BATTLE_MATH_REFERENCE = Object.freeze({
 
 export const WORLD_SKILL_REFERENCE = Object.freeze({
     summary:
-        "Skill Points (SP) fuel world skills. Spend them as soon as they are earned to train the pink-box skills on the sheet.",
+        "Skill Points (SP) fuel world skills. Spend them immediately to train the pink-box disciplines listed on the character sheet.",
     formulas: Object.freeze([
         { label: "HP", formula: "17 + CON + (STR ÷ 2)" },
         { label: "MP", formula: "17 + INT + (WIS ÷ 2)" },
@@ -59,4 +81,5 @@ export const WORLD_SKILL_REFERENCE = Object.freeze({
         "Keep an eye on ability modifiers—every skill adds its linked ability mod, trained ranks, and miscellaneous bonuses.",
         "DMs can remove ranks with the take-away action if downtime or events strip training.",
     ]),
+    disciplines: Object.freeze(WORLD_SKILL_DISCIPLINES),
 });

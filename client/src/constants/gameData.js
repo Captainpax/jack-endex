@@ -1,4 +1,8 @@
 import { EMPTY_ARRAY } from "../utils/constants";
+import {
+    DEFAULT_WORLD_SKILL_DEFS,
+    DEFAULT_WORLD_SKILLS as SHARED_WORLD_SKILLS,
+} from "@shared/worldSkills.js";
 
 export const ABILITY_DEFS = [
     {
@@ -250,40 +254,8 @@ export const CONCEPT_PROMPTS = Object.freeze([
     },
 ]);
 
-export const DEFAULT_WORLD_SKILLS = [
-    { key: "balance", label: "Balance", ability: "DEX" },
-    { key: "bluff", label: "Bluff", ability: "CHA" },
-    { key: "climb", label: "Climb", ability: "STR" },
-    { key: "concentration", label: "Concentration", ability: "CON" },
-    { key: "craftGeneral", label: "Craft (General)", ability: "INT" },
-    { key: "craftKnowledge", label: "Craft (Knowledge)", ability: "INT" },
-    { key: "craftMagic", label: "Craft (Magic)", ability: "INT" },
-    { key: "diplomacy", label: "Diplomacy", ability: "CHA" },
-    { key: "disableDevice", label: "Disable Device", ability: "DEX" },
-    { key: "disguise", label: "Disguise", ability: "CHA" },
-    { key: "escapeArtist", label: "Escape Artist", ability: "DEX" },
-    { key: "gatherInformation", label: "Gather Information", ability: "CHA" },
-    { key: "handleAnimal", label: "Handle Animal", ability: "CHA" },
-    { key: "heal", label: "Heal", ability: "WIS" },
-    { key: "hide", label: "Hide", ability: "DEX" },
-    { key: "intimidate", label: "Intimidate", ability: "CHA" },
-    { key: "jump", label: "Jump", ability: "STR" },
-    { key: "knowledgeArcana", label: "Knowledge (Arcana)", ability: "INT" },
-    { key: "knowledgeReligion", label: "Knowledge (Religion)", ability: "INT" },
-    { key: "knowledgePlanes", label: "Knowledge (The Planes)", ability: "INT" },
-    { key: "listen", label: "Listen", ability: "WIS" },
-    { key: "moveSilently", label: "Move Silently", ability: "DEX" },
-    { key: "negotiation", label: "Negotiation", ability: "CHA" },
-    { key: "perform", label: "Perform", ability: "CHA" },
-    { key: "ride", label: "Ride", ability: "DEX" },
-    { key: "senseMotive", label: "Sense Motive", ability: "WIS" },
-    { key: "sleightOfHand", label: "Sleight of Hand", ability: "DEX" },
-    { key: "spellcraft", label: "Spellcraft", ability: "INT" },
-    { key: "spot", label: "Spot", ability: "WIS" },
-    { key: "survival", label: "Survival", ability: "WIS" },
-    { key: "swim", label: "Swim", ability: "STR" },
-    { key: "useRope", label: "Use Rope", ability: "DEX" },
-];
+export const DEFAULT_WORLD_SKILLS = SHARED_WORLD_SKILLS;
+export { DEFAULT_WORLD_SKILL_DEFS };
 
 export const ABILITY_KEY_SET = new Set(ABILITY_DEFS.map((ability) => ability.key));
 export const NEW_WORLD_SKILL_ID = "__new_world_skill__";

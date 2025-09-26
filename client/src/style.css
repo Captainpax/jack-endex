@@ -3010,6 +3010,13 @@ label {
 .world-skill-reference__callouts ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; color: var(--muted); list-style-position: inside; }
 .world-skill-reference__header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
 .world-skill-reference__header h3 { margin: 0; }
+.world-skill-reference__abilities { display: grid; gap: 12px; }
+.world-skill-reference__abilities-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.world-skill-reference__ability { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+.world-skill-reference__ability-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.world-skill-reference__ability ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; list-style-position: inside; color: var(--muted); }
+.world-skill-reference__ability li { display: grid; gap: 2px; }
+.world-skill-reference__ability li strong { color: var(--text); }
 
 .combat-skill-tab .card { display: grid; gap: 16px; }
 .combat-skill-manager__header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
