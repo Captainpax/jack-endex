@@ -14,6 +14,7 @@ import {
     serializeCustomSkills,
     serializeSkills,
 } from "../constants/gameData";
+import { WORLD_SKILL_REFERENCE } from "../constants/referenceContent";
 import { get } from "../utils/object";
 
 import MathField from "./MathField";
@@ -618,6 +619,41 @@ function WorldSkillsTab({ game, me, onUpdate }) {
 
     return (
         <div className="col" style={{ display: "grid", gap: 16 }}>
+            <div className="card world-skill-reference">
+                <div className="world-skill-reference__header">
+                    <div>
+                        <h3>World skill rules</h3>
+                        <p className="text-muted text-small">
+                            Summarised from the Character Creation and Battle Math reference docs.
+                        </p>
+                    </div>
+                </div>
+                <p className="text-small">{WORLD_SKILL_REFERENCE.summary}</p>
+                <div className="world-skill-reference__grid">
+                    {WORLD_SKILL_REFERENCE.formulas.map((entry) => (
+                        <div key={entry.label} className="world-skill-reference__formula">
+                            <span className="text-small">{entry.label}</span>
+                            <code>{entry.formula}</code>
+                        </div>
+                    ))}
+                </div>
+                <div className="world-skill-reference__callouts">
+                    <h4>Guidelines</h4>
+                    <ul>
+                        {WORLD_SKILL_REFERENCE.guidelines.map((tip, index) => (
+                            <li key={index}>{tip}</li>
+                        ))}
+                    </ul>
+                </div>
+                <div className="world-skill-reference__callouts">
+                    <h4>Table tips</h4>
+                    <ul>
+                        {WORLD_SKILL_REFERENCE.tips.map((tip, index) => (
+                            <li key={index}>{tip}</li>
+                        ))}
+                    </ul>
+                </div>
+            </div>
             {isDM && (
                 <div className="card world-skill-manager">
                     <div className="world-skill-manager__header">

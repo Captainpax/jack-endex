@@ -8,6 +8,7 @@ import WorldSkillsTab from "./components/WorldSkillsTab";
 import { GearTab, ItemsTab } from "./components/ItemsGearTabs";
 import DemonTab from "./components/DemonTab";
 import { DM_NAV, PLAYER_NAV } from "./constants/navigation";
+import { BATTLE_MATH_REFERENCE } from "./constants/referenceContent";
 import {
     ABILITY_DEFS,
     ABILITY_KEY_SET,
@@ -9192,6 +9193,17 @@ function CombatSkillsTab({ game, me, onUpdate }) {
                     >
                         Demon codex
                     </button>
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activePane === "reference"}
+                        className={`combat-skill-manager__tab${
+                            activePane === "reference" ? " is-active" : ""
+                        }`}
+                        onClick={() => setActivePane("reference")}
+                    >
+                        Battle Math
+                    </button>
                 </div>
                 {activePane === "library" ? (
                     <>
@@ -9307,10 +9319,93 @@ function CombatSkillsTab({ game, me, onUpdate }) {
                             </p>
                         )}
                     </>
-                ) : (
+                ) : activePane === "codex" ? (
                     <CombatSkillCodexPanel demons={demons} skills={combatSkills} />
+                ) : (
+                    <CombatSkillReferencePanel reference={BATTLE_MATH_REFERENCE} />
                 )}
             </div>
+        </div>
+    );
+}
+
+function CombatSkillReferencePanel({ reference = BATTLE_MATH_REFERENCE }) {
+    const steps = [
+        `Roll accuracy (${reference.accuracy.formula}).`,
+        `Resolve damage (${reference.damage.formula}).`,
+        "Apply weapon bonuses, weaknesses, resistances, buffs, debuffs, and critical modifiers.",
+    ];
+
+    return (
+        <div className="combat-reference stack-lg">
+            <section className="combat-reference__section">
+                <h4>Battle flow</h4>
+                <p className="text-small">{reference.overview}</p>
+                <ol className="combat-reference__list combat-reference__list--numbered">
+                    {steps.map((step, index) => (
+                        <li key={index}>{step}</li>
+                    ))}
+                </ol>
+            </section>
+
+            <section className="combat-reference__section">
+                <h4>{reference.accuracy.title}</h4>
+                <p className="combat-reference__formula">
+                    <code>{reference.accuracy.formula}</code>
+                </p>
+                <ul className="combat-reference__list">
+                    {reference.accuracy.notes.map((note, index) => (
+                        <li key={index}>{note}</li>
+                    ))}
+                </ul>
+            </section>
+
+            <section className="combat-reference__section">
+                <h4>{reference.damage.title}</h4>
+                <p className="combat-reference__formula">
+                    <code>{reference.damage.formula}</code>
+                </p>
+                <ul className="combat-reference__list">
+                    {reference.damage.notes.map((note, index) => (
+                        <li key={index}>{note}</li>
+                    ))}
+                </ul>
+            </section>
+
+            <section className="combat-reference__section">
+                <h4>Standard tiers</h4>
+                <div className="combat-reference__table-wrapper">
+                    <table className="combat-reference__table">
+                        <thead>
+                            <tr>
+                                <th>Tier</th>
+                                <th>Example</th>
+                                <th>Dice</th>
+                                <th>Ability modifier</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {reference.tiers.map((tier) => (
+                                <tr key={tier.tier}>
+                                    <th scope="row">{tier.tier}</th>
+                                    <td>{tier.example}</td>
+                                    <td>{tier.dice}</td>
+                                    <td>{tier.modifier}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section className="combat-reference__section">
+                <h4>Table rulings</h4>
+                <ul className="combat-reference__list">
+                    {reference.skillNotes.map((note, index) => (
+                        <li key={index}>{note}</li>
+                    ))}
+                </ul>
+            </section>
         </div>
     );
 }
