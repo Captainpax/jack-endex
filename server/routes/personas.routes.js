@@ -9,6 +9,7 @@ import {
   findDemonBySlug,
   findClosestDemon,
   summarizeDemon,
+  listDemons,
 } from '../services/demons.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -67,6 +68,12 @@ function resolveAllowedImageUrl(value) {
 
 function safeTrim(value) {
   return typeof value === 'string' ? value.trim() : String(value ?? '').trim();
+}
+
+function parsePositiveInt(value, fallback) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return fallback;
+  return Math.floor(num);
 }
 
 function parseSearchQuery(value) {
@@ -228,6 +235,19 @@ function buildSearchResult(demon) {
     image: demon.image || '',
   };
 }
+
+// GET /api/personas?arcana=Fool
+r.get('/', async (req, res) => {
+  try {
+    const arcana = safeTrim(req.query.arcana);
+    const limit = Math.min(200, Math.max(1, parsePositiveInt(req.query.limit, 200)));
+    const demons = await listDemons({ arcana, limit });
+    res.json(demons.map((demon) => summarizeDemon(demon)).filter(Boolean));
+  } catch (err) {
+    console.error('persona list failed', err);
+    res.status(500).json({ error: 'list failed' });
+  }
+});
 
 // GET /api/personas/search?q=jack
 r.get('/search', async (req, res) => {

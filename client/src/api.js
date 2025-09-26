@@ -698,6 +698,7 @@ export const Help = {
 };
 
 export const Personas = {
+    list: (params) => api('/api/personas', { query: params, cache: 5000 }),
     search: (q) => api('/api/personas/search', { query: { q }, cache: 5000 }),
     get: (slug) => api(`/api/personas/${encodeURIComponent(slug)}`, { cache: 5000 }),
 };
