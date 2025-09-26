@@ -2,17 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EMPTY_ARRAY } from "../utils/constants";
 import { resolveRealtimeUrl } from "../api";
+import { getTrackById } from "../utils/music";
 
-function normalizeMediaSnapshot(snapshot) {
+function normalizeMusicSnapshot(snapshot) {
     if (!snapshot || typeof snapshot !== "object") return null;
-    const videoId = typeof snapshot.videoId === "string" ? snapshot.videoId.trim() : "";
-    const playing = !!snapshot.playing && videoId.length > 0;
-    if (!playing) return null;
-    const startRaw = Number(snapshot.startSeconds);
-    const startSeconds = Number.isFinite(startRaw) && startRaw >= 0 ? Math.floor(startRaw) : 0;
-    const url = typeof snapshot.url === "string" ? snapshot.url : "";
+    const trackId = typeof snapshot.trackId === "string" ? snapshot.trackId.trim() : "";
+    if (!trackId || !getTrackById(trackId)) return null;
     const updatedAt = typeof snapshot.updatedAt === "string" ? snapshot.updatedAt : new Date().toISOString();
-    return { videoId, startSeconds, url, updatedAt };
+    return { trackId, updatedAt };
 }
 
 function normalizeAlertEntry(entry) {
@@ -39,8 +36,8 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
     const [personaStatuses, setPersonaStatuses] = useState({});
     const [tradeSessions, setTradeSessions] = useState({});
     const [onlineUsers, setOnlineUsers] = useState(() => ({}));
-    const [mediaState, setMediaState] = useState(null);
-    const [mediaError, setMediaError] = useState(null);
+    const [musicState, setMusicState] = useState(null);
+    const [musicError, setMusicError] = useState(null);
     const [alerts, setAlerts] = useState([]);
     const [alertError, setAlertError] = useState(null);
     const refreshRef = useRef(refreshGame);
@@ -216,16 +213,16 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
                 case "trade:error":
                     console.warn("Trade error", msg.error);
                     break;
-                case "media:state": {
+                case "music:state": {
                     if (msg.gameId !== gameId) return;
-                    const snapshot = normalizeMediaSnapshot(msg.media);
-                    setMediaState(snapshot);
-                    setMediaError(null);
+                    const snapshot = normalizeMusicSnapshot(msg.music);
+                    setMusicState(snapshot);
+                    setMusicError(null);
                     break;
                 }
-                case "media:error":
+                case "music:error":
                     if (msg.gameId !== gameId) return;
-                    setMediaError(typeof msg.error === "string" ? msg.error : "Media command failed");
+                    setMusicError(typeof msg.error === "string" ? msg.error : "Music command failed");
                     break;
                 case "alert:show": {
                     if (msg.gameId !== gameId) return;
@@ -379,8 +376,8 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
             setPersonaStatuses({});
             setTradeSessions({});
             setOnlineUsers(() => ({}));
-            setMediaState(null);
-            setMediaError(null);
+            setMusicState(null);
+            setMusicError(null);
             setAlerts([]);
             setAlertError(null);
             if (typeof window !== "undefined") {
@@ -487,26 +484,26 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
 
     const tradeList = useMemo(() => Object.values(tradeSessions), [tradeSessions]);
 
-    const syncMedia = useCallback((snapshot) => {
-        setMediaState(normalizeMediaSnapshot(snapshot));
-        setMediaError(null);
+    const syncMusic = useCallback((snapshot) => {
+        setMusicState(normalizeMusicSnapshot(snapshot));
+        setMusicError(null);
     }, []);
 
-    const playMedia = useCallback(
-        (url) => {
+    const playMusic = useCallback(
+        (trackId) => {
             if (!gameId) throw new Error("missing_game");
-            const trimmed = typeof url === "string" ? url.trim() : "";
-            if (!trimmed) throw new Error("missing_url");
-            setMediaError(null);
-            sendMessage({ type: "media.play", gameId, url: trimmed });
+            const trimmed = typeof trackId === "string" ? trackId.trim() : "";
+            if (!trimmed) throw new Error("missing_track");
+            setMusicError(null);
+            sendMessage({ type: "music.play", gameId, trackId: trimmed });
         },
         [gameId, sendMessage]
     );
 
-    const stopMedia = useCallback(() => {
+    const stopMusic = useCallback(() => {
         if (!gameId) return;
-        setMediaError(null);
-        sendMessage({ type: "media.stop", gameId });
+        setMusicError(null);
+        sendMessage({ type: "music.stop", gameId });
     }, [gameId, sendMessage]);
 
     const sendAlertMessage = useCallback(
@@ -543,11 +540,11 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
         tradeSessions: tradeList,
         tradeActions,
         onlineUsers,
-        mediaState,
-        mediaError,
-        syncMedia,
-        playMedia,
-        stopMedia,
+        musicState,
+        musicError,
+        syncMusic,
+        playMusic,
+        stopMusic,
         alerts,
         alertError,
         sendAlert: sendAlertMessage,
@@ -555,4 +552,4 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
     };
 }
 
-export { normalizeMediaSnapshot, normalizeAlertEntry };
+export { normalizeMusicSnapshot, normalizeAlertEntry };

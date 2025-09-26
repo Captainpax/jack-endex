@@ -22,6 +22,7 @@ import Item from './models/Item.js';
 import { loadDemonEntries } from './lib/demonImport.js';
 import { loadItemEntries, parseHealingEffect } from './lib/itemImport.js';
 import { DEFAULT_WORLD_SKILLS } from '../shared/worldSkills.js';
+import { MUSIC_TRACKS, getMusicTrack } from '../shared/music/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -61,6 +62,7 @@ const MAX_MAP_STROKES = 800;
 const MAX_MAP_POINTS_PER_STROKE = 600;
 const MAX_MAP_LIBRARY_ENTRIES = 24;
 const MAX_MAP_SHAPES = 80;
+const MUSIC_TRACK_IDS = new Set(MUSIC_TRACKS.map((track) => track.id));
 const DEFAULT_STROKE_COLOR = '#f97316';
 const DEFAULT_PLAYER_TOKEN_COLOR = '#38bdf8';
 const DEFAULT_DEMON_TOKEN_COLOR = '#f97316';
@@ -391,6 +393,31 @@ function presentMediaState(media) {
         return { playing: false, videoId: '', url: '', startSeconds: 0, updatedAt };
     }
     return { playing, videoId, url, startSeconds, updatedAt };
+}
+
+function ensureMusicState(game) {
+    const raw = game && typeof game.music === 'object' ? game.music : {};
+    const trackId = typeof raw.trackId === 'string' ? raw.trackId.trim() : '';
+    const updatedAt = typeof raw.updatedAt === 'string' ? raw.updatedAt : new Date().toISOString();
+    const valid = trackId && MUSIC_TRACK_IDS.has(trackId);
+    const normalized = {
+        trackId: valid ? trackId : '',
+        updatedAt,
+    };
+    game.music = normalized;
+    return normalized;
+}
+
+function presentMusicState(music) {
+    if (!music || typeof music !== 'object') {
+        return { trackId: '', updatedAt: null };
+    }
+    const trackId = typeof music.trackId === 'string' ? music.trackId : '';
+    const updatedAt = typeof music.updatedAt === 'string' ? music.updatedAt : new Date().toISOString();
+    if (!trackId || !MUSIC_TRACK_IDS.has(trackId)) {
+        return { trackId: '', updatedAt };
+    }
+    return { trackId, updatedAt };
 }
 
 function sanitizeAlertMessage(value) {
@@ -1114,6 +1141,7 @@ function ensureGameShape(game) {
     game.worldSkills = ensureWorldSkills(game);
     game.combatSkills = ensureCombatSkills(game);
     game.media = ensureMediaState(game);
+    game.music = ensureMusicState(game);
     game.map = ensureMapState(game);
     game.mapLibrary = ensureMapLibrary(game);
     return game;
@@ -1147,6 +1175,7 @@ function presentGame(game, { includeSecrets = false } = {}) {
         worldSkills,
         combatSkills,
         media: presentMediaState(normalized.media),
+        music: presentMusicState(normalized.music),
         map: presentMapState(normalized.map),
         ...(includeSecrets ? { mapLibrary: presentMapLibrary(normalized.mapLibrary) } : {}),
     };
@@ -2082,6 +2111,15 @@ function broadcastMediaState(game) {
     });
 }
 
+function broadcastMusicState(game) {
+    if (!game || !game.id) return;
+    broadcastGameMessage(game.id, {
+        type: 'music:state',
+        gameId: game.id,
+        music: presentMusicState(game.music),
+    });
+}
+
 function broadcastGameDeleted(gameId) {
     if (!gameId) return;
     broadcastGameMessage(gameId, { type: 'game:deleted', gameId });
@@ -2900,6 +2938,58 @@ async function handleSocketMessage(ws, data) {
                 media.updatedAt = new Date().toISOString();
                 await persistGame(db, game, { broadcast: false });
                 broadcastMediaState(game);
+                break;
+            }
+            case 'music.play': {
+                const gameId = parseUUID(message.gameId);
+                const trackId = typeof message.trackId === 'string' ? message.trackId.trim() : '';
+                if (!gameId || !trackId) {
+                    sendJson(ws, {
+                        type: 'music:error',
+                        error: 'invalid_request',
+                        gameId: gameId || null,
+                    });
+                    break;
+                }
+                if (!MUSIC_TRACK_IDS.has(trackId) || !getMusicTrack(trackId)) {
+                    sendJson(ws, { type: 'music:error', error: 'invalid_track', gameId });
+                    break;
+                }
+                const db = await readDB();
+                const game = getGame(db, gameId);
+                if (!game || !isMember(game, ws.userId)) {
+                    sendJson(ws, { type: 'music:error', error: 'not_found', gameId });
+                    break;
+                }
+                if (!isDM(game, ws.userId)) {
+                    sendJson(ws, { type: 'music:error', error: 'forbidden', gameId });
+                    break;
+                }
+                const music = ensureMusicState(game);
+                music.trackId = trackId;
+                music.updatedAt = new Date().toISOString();
+                await persistGame(db, game, { broadcast: false });
+                broadcastMusicState(game);
+                break;
+            }
+            case 'music.stop': {
+                const gameId = parseUUID(message.gameId);
+                if (!gameId) break;
+                const db = await readDB();
+                const game = getGame(db, gameId);
+                if (!game || !isMember(game, ws.userId)) {
+                    sendJson(ws, { type: 'music:error', error: 'not_found', gameId: gameId || null });
+                    break;
+                }
+                if (!isDM(game, ws.userId)) {
+                    sendJson(ws, { type: 'music:error', error: 'forbidden', gameId });
+                    break;
+                }
+                const music = ensureMusicState(game);
+                music.trackId = '';
+                music.updatedAt = new Date().toISOString();
+                await persistGame(db, game, { broadcast: false });
+                broadcastMusicState(game);
                 break;
             }
             case 'alert.broadcast': {
