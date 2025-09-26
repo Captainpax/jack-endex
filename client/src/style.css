@@ -1905,6 +1905,83 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     gap: 20px;
 }
 
+.profile-tab {
+    display: grid;
+    gap: 20px;
+    max-width: 640px;
+}
+
+.profile-tab__card {
+    display: grid;
+    gap: 16px;
+}
+
+.profile-tab__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.profile-tab__header h3 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 700;
+}
+
+.profile-tab__macca {
+    display: grid;
+    gap: 4px;
+    text-align: right;
+}
+
+.profile-tab__macca-value {
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1.1;
+}
+
+.profile-tab__details {
+    display: grid;
+    gap: 12px;
+    margin: 0;
+}
+
+.profile-tab__details-item {
+    display: grid;
+    grid-template-columns: minmax(0, 160px) minmax(0, 1fr);
+    gap: 12px;
+    align-items: baseline;
+}
+
+.profile-tab__details-item dt {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin: 0;
+}
+
+.profile-tab__details-item dd {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text);
+}
+
+@media (max-width: 640px) {
+    .profile-tab__details-item {
+        grid-template-columns: 1fr;
+        gap: 4px;
+    }
+
+    .profile-tab__macca {
+        text-align: left;
+        justify-items: flex-start;
+    }
+}
+
 /* Story logs */
 .story-logs-card {
     display: grid;
