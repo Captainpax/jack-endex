@@ -5390,6 +5390,7 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     const mp = clampNonNegative(get(ch, "resources.mp"));
     const maxMP = clampNonNegative(get(ch, "resources.maxMP"));
     const tp = clampNonNegative(get(ch, "resources.tp"));
+    const maxTP = clampNonNegative(get(ch, "resources.maxTP"));
     const spRaw = get(ch, "resources.sp");
     const spValue = clampNonNegative(spRaw);
     const resourceMode = get(ch, "resources.useTP") ? "TP" : "MP";
@@ -5566,11 +5567,26 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     const headlineParts = [classLabel, arcanaLabel, alignmentLabel].filter(Boolean);
 
     const handleWizardApply = useCallback(
-        (payload) => {
-            setCh(normalizeCharacter(payload || {}, worldSkills));
+        async (payload) => {
+            const next = normalizeCharacter(payload || {}, worldSkills);
+            setCh(next);
             setShowWizard(false);
+            if (!onSave || !canEditSheet || !hasSelection) return;
+            try {
+                setSaving(true);
+                const request =
+                    isDM && selectedPlayerId && selectedPlayerId !== me.id
+                        ? { userId: selectedPlayerId, character: next }
+                        : next;
+                await onSave(request);
+            } catch (error) {
+                console.error(error);
+                alert(error?.message || "Failed to save character");
+            } finally {
+                setSaving(false);
+            }
         },
-        [worldSkills]
+        [canEditSheet, hasSelection, isDM, me.id, onSave, selectedPlayerId, setCh, setShowWizard, setSaving, worldSkills]
     );
 
     const textField = (label, path, props = {}) => (
@@ -5838,13 +5854,22 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                                 </select>
                             </label>
                             {resourceMode === "TP" ? (
-                                <MathField
-                                    label="TP"
-                                    value={tp}
-                                    onCommit={(val) => set("resources.tp", clampNonNegative(val))}
-                                    className="math-inline"
-                                    disabled={disableInputs}
-                                />
+                                <>
+                                    <MathField
+                                        label="TP"
+                                        value={tp}
+                                        onCommit={(val) => set("resources.tp", clampNonNegative(val))}
+                                        className="math-inline"
+                                        disabled={disableInputs}
+                                    />
+                                    <MathField
+                                        label="Max TP"
+                                        value={maxTP}
+                                        onCommit={(val) => set("resources.maxTP", clampNonNegative(val))}
+                                        className="math-inline"
+                                        disabled={disableInputs}
+                                    />
+                                </>
                             ) : (
                                 <>
                                     <MathField
@@ -6265,6 +6290,7 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName, 
     const [resources, setResources] = useState(initial.resources);
     const [skills, setSkills] = useState(initial.skills);
     const [rolled, setRolled] = useState([]);
+    const [applying, setApplying] = useState(false);
     const [conceptPromptIndex, setConceptPromptIndex] = useState(() =>
         promptCount ? Math.floor(Math.random() * promptCount) : 0
     );
@@ -6284,6 +6310,7 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName, 
         setResources(initial.resources);
         setSkills(initial.skills);
         setRolled([]);
+        setApplying(false);
         setPromptApplied(false);
         if (promptCount) {
             setConceptPromptIndex(Math.floor(Math.random() * promptCount));
@@ -6430,6 +6457,7 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName, 
                 mp: useTP ? prev.mp : suggestedMP,
                 maxMP: useTP ? prev.maxMP : suggestedMP,
                 tp: useTP ? suggestedTP : prev.tp,
+                maxTP: useTP ? suggestedTP : prev.maxTP,
                 sp: suggestedSP,
             };
         });
@@ -6484,15 +6512,23 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName, 
 
     const canApply = !overSpent && rankIssues.length === 0;
 
-    const handleApply = useCallback(() => {
-        if (!canApply) return;
+    const handleApply = useCallback(async () => {
+        if (!canApply || applying) return;
         const payload = buildCharacterFromWizard(
             { concept, abilities, resources, skills },
             baseCharacter,
             normalizedWorldSkills
         );
-        onApply?.(payload);
-    }, [abilities, baseCharacter, canApply, concept, normalizedWorldSkills, onApply, resources, skills]);
+        try {
+            setApplying(true);
+            await onApply?.(payload);
+        } catch (error) {
+            console.error(error);
+            alert(error?.message || "Failed to apply setup");
+        } finally {
+            setApplying(false);
+        }
+    }, [abilities, applying, baseCharacter, canApply, concept, normalizedWorldSkills, onApply, resources, skills]);
 
     const conceptField = (label, field, opts = {}) => (
         <label className="field">
@@ -6566,7 +6602,9 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName, 
             <div className="wizard-grid">
                 {conceptField("Character name", "name")}
                 {conceptField("Player / handler", "player", { placeholder: playerName || "" })}
-                {conceptField("Concept / class", "class")}
+                {conceptField("Concept / class", "class", {
+                    placeholder: "Click a role card below to autofill",
+                })}
                 {conceptField("Alignment", "alignment")}
                 {conceptField("Race / origin", "race")}
                 {conceptField("Age", "age")}
@@ -6577,20 +6615,34 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName, 
                 {conceptField("Hair", "hair")}
             </div>
             <div className="wizard-archetypes">
-                {ROLE_ARCHETYPES.map((role) => (
-                    <div key={role.key} className="wizard-role-card">
-                        <h5>{role.title}</h5>
-                        <div className="wizard-role-meta">{role.stats}</div>
-                        <div className="wizard-role-row">
-                            <span className="pill success">Pros</span>
-                            <span>{role.pros}</span>
-                        </div>
-                        <div className="wizard-role-row">
-                            <span className="pill warn">Cons</span>
-                            <span>{role.cons}</span>
-                        </div>
-                    </div>
-                ))}
+                {ROLE_ARCHETYPES.map((role) => {
+                    const selectedTitle = concept.class?.trim().toLowerCase();
+                    const normalizedTitle = role.title?.trim().toLowerCase();
+                    const isSelected = !!selectedTitle && selectedTitle === normalizedTitle;
+                    return (
+                        <button
+                            key={role.key}
+                            type="button"
+                            className={`wizard-role-card${isSelected ? " is-selected" : ""}`}
+                            onClick={() => setConceptField("class", role.title)}
+                            aria-pressed={isSelected}
+                        >
+                            <h5>{role.title}</h5>
+                            <div className="wizard-role-meta">{role.stats}</div>
+                            <div className="wizard-role-row">
+                                <span className="pill success">Pros</span>
+                                <span>{role.pros}</span>
+                            </div>
+                            <div className="wizard-role-row">
+                                <span className="pill warn">Cons</span>
+                                <span>{role.cons}</span>
+                            </div>
+                            <div className="wizard-role-card__cta" aria-hidden="true">
+                                {isSelected ? "Selected" : "Use this class"}
+                            </div>
+                        </button>
+                    );
+                })}
             </div>
             <div className="wizard-grid wizard-grid--stretch">
                 {conceptArea("Background & hooks", "background", { rows: 3 })}
@@ -6715,7 +6767,10 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName, 
                 {resourceField("HP", "hp")}
                 {resourceField("Max HP", "maxHP")}
                 {resources.mode === "TP" ? (
-                    resourceField("TP", "tp")
+                    <>
+                        {resourceField("TP", "tp")}
+                        {resourceField("Max TP", "maxTP")}
+                    </>
                 ) : (
                     <>
                         {resourceField("MP", "mp")}
@@ -6874,11 +6929,11 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName, 
                         <ul>
                             <li>Level {level} · EXP {resources.exp}</li>
                             <li>HP {resources.hp}/{resources.maxHP}</li>
-                        {resources.mode === "TP" ? (
-                            <li>TP {resources.tp}</li>
-                        ) : (
-                            <li>MP {resources.mp}/{resources.maxMP}</li>
-                        )}
+                            {resources.mode === "TP" ? (
+                                <li>TP {resources.tp}/{resources.maxTP || resources.tp}</li>
+                            ) : (
+                                <li>MP {resources.mp}/{resources.maxMP}</li>
+                            )}
                         <li>SP {resources.sp}</li>
                         <li>Macca {resources.macca}</li>
                     </ul>
@@ -6980,8 +7035,13 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName, 
                                 Next
                             </button>
                         ) : (
-                            <button type="button" className="btn" onClick={handleApply} disabled={!canApply}>
-                                Apply to sheet
+                            <button
+                                type="button"
+                                className="btn"
+                                onClick={handleApply}
+                                disabled={!canApply || applying}
+                            >
+                                {applying ? "Applying…" : "Apply to sheet"}
                             </button>
                         )}
                     </div>
@@ -7006,6 +7066,7 @@ function buildInitialWizardState(character, playerName, worldSkills = DEFAULT_WO
         mp: clampNonNegative(normalized.resources?.mp),
         maxMP: clampNonNegative(normalized.resources?.maxMP),
         tp: clampNonNegative(normalized.resources?.tp),
+        maxTP: clampNonNegative(normalized.resources?.maxTP),
         sp: clampNonNegative(normalized.resources?.sp),
         macca: clampNonNegative(normalized.resources?.macca),
         initiative: Number(normalized.resources?.initiative) || 0,
@@ -7070,7 +7131,10 @@ function buildCharacterFromWizard(state, base, worldSkills = DEFAULT_WORLD_SKILL
         maxHP: clampNonNegative(state.resources.maxHP),
         mp: useTP ? 0 : clampNonNegative(state.resources.mp),
         maxMP: useTP ? 0 : clampNonNegative(state.resources.maxMP),
-        tp: useTP ? clampNonNegative(state.resources.tp) : 0,
+        tp: useTP ? clampNonNegative(state.resources.tp) : clampNonNegative(normalized.resources?.tp),
+        maxTP: useTP
+            ? clampNonNegative(state.resources.maxTP)
+            : clampNonNegative(normalized.resources?.maxTP),
         sp: clampNonNegative(state.resources.sp),
         macca: clampNonNegative(state.resources.macca),
         initiative: Number(state.resources.initiative) || 0,

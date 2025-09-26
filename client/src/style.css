@@ -3382,11 +3382,46 @@ label {
 .wizard-stack { display: grid; gap: 16px; }
 .wizard-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
 .wizard-grid--stretch { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
-.wizard-role-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; background: var(--surface-2); display: grid; gap: 6px; }
+.wizard-role-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+    background: var(--surface-2);
+    display: grid;
+    gap: 6px;
+    cursor: pointer;
+    text-align: left;
+    color: inherit;
+    transition: border-color var(--trans-fast), box-shadow var(--trans-fast), transform var(--trans-fast);
+    font: inherit;
+}
+.wizard-role-card:hover {
+    border-color: var(--border-strong);
+}
+.wizard-role-card:focus-visible {
+    outline: none;
+    border-color: var(--brand);
+    box-shadow: var(--focus);
+}
+.wizard-role-card.is-selected {
+    border-color: var(--brand);
+    box-shadow: var(--focus);
+}
 .wizard-role-card h5 { margin: 0; font-size: 1rem; }
 .wizard-role-meta { font-size: 0.85rem; color: var(--muted); }
 .wizard-role-row { display: flex; gap: 8px; align-items: center; font-size: 0.85rem; }
 .wizard-role-row .pill { border: none; }
+.wizard-role-card__cta {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--brand);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.wizard-role-card.is-selected .wizard-role-card__cta {
+    color: var(--muted);
+}
 .wizard-roller { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 .wizard-rolled { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; font-size: 0.9rem; }
 .wizard-arcana-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
