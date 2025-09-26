@@ -3537,6 +3537,7 @@ const sessionStore = new MongoSessionStore({
 });
 
 let sessionStoreClosed = false;
+let sessionsCleared = false;
 async function closeSessionStore() {
     if (sessionStoreClosed) return;
     sessionStoreClosed = true;
@@ -3545,6 +3546,17 @@ async function closeSessionStore() {
         console.log('[session] Session store closed.');
     } catch (err) {
         console.warn('[session] Failed to close session store:', err);
+    }
+}
+
+async function logoutAllUsers() {
+    if (sessionsCleared) return;
+    sessionsCleared = true;
+    try {
+        await sessionStore.clear();
+        console.log('[session] Cleared all active sessions.');
+    } catch (err) {
+        console.warn('[session] Failed to clear active sessions during shutdown:', err);
     }
 }
 
@@ -5755,6 +5767,8 @@ async function shutdownServer({ signal = null, exitCode = 0 } = {}) {
         clearPersonaRequests();
         clearPendingTrades();
         stopAllStoryWatchers();
+
+        await logoutAllUsers();
 
         try {
             await closeWebSocketServer();
