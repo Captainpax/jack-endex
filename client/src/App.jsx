@@ -970,9 +970,8 @@ function GameView({
     );
 
     const toggleSidebar = useCallback(() => {
-        if (isDesktop) return;
         setSidebarOpen((prev) => !prev);
-    }, [isDesktop]);
+    }, []);
 
     const closeSidebar = useCallback(() => {
         if (isDesktop) return;
@@ -1044,59 +1043,6 @@ function GameView({
             label: Number.isFinite(raw) ? value.toLocaleString() : "0",
         };
     }, [myEntry]);
-
-    const playerProfileDetails = useMemo(() => {
-        const details = [];
-
-        const playerName =
-            myEntry?.character?.profile?.player?.trim() || me?.username?.trim() || "";
-        if (playerName) {
-            details.push({ label: "Player", value: playerName });
-        }
-
-        const classLabel = myEntry?.character?.profile?.class?.trim();
-        if (classLabel) {
-            details.push({ label: "Class", value: classLabel });
-        }
-
-        const alignment = myEntry?.character?.profile?.alignment?.trim();
-        if (alignment) {
-            details.push({ label: "Alignment", value: alignment });
-        }
-
-        const arcana = myEntry?.character?.profile?.arcana?.trim();
-        if (arcana) {
-            details.push({ label: "Arcana", value: arcana });
-        }
-
-        const resources = myEntry?.character?.resources || EMPTY_OBJECT;
-        const levelRaw = Number(resources.level);
-        if (Number.isFinite(levelRaw)) {
-            details.push({ label: "Level", value: levelRaw });
-        }
-
-        const hpRaw = Number(resources.hp);
-        const maxHpRaw = Number(resources.maxHP);
-        const hp = Number.isFinite(hpRaw) ? hpRaw : null;
-        const maxHP = Number.isFinite(maxHpRaw) ? maxHpRaw : null;
-        if (hp !== null || maxHP !== null) {
-            let hpLabel = "";
-            if (hp !== null && maxHP !== null) {
-                hpLabel = `${hp}/${maxHP}`;
-            } else if (hp !== null) {
-                hpLabel = String(hp);
-            } else {
-                hpLabel = `0/${maxHP}`;
-            }
-            details.push({ label: "HP", value: hpLabel });
-        }
-
-        if (!details.length && playerMaccaInfo.label) {
-            details.push({ label: "Player", value: playerName || me?.username || "" });
-        }
-
-        return details;
-    }, [me, myEntry, playerMaccaInfo.label]);
 
     const demonCount = Array.isArray(game.demons) ? game.demons.length : 0;
 
@@ -1230,7 +1176,7 @@ function GameView({
         }
     }, [game.media, syncMedia]);
 
-    const sidebarVisible = isDesktop || sidebarOpen;
+    const sidebarVisible = sidebarOpen;
     const shellClassName = `app-shell ${sidebarVisible ? "is-sidebar-open" : "is-sidebar-collapsed"}`;
 
     return (
@@ -1271,27 +1217,21 @@ function GameView({
                             </button>
                         </div>
                         <nav className="sidebar__nav">
-                            {navItems.map((item) => {
-                                const description =
-                                    !isDM && item.key === "profile"
-                                        ? `Macca ${playerMaccaInfo.label}`
-                                        : item.description;
-                                return (
-                                    <button
-                                        key={item.key}
-                                        type="button"
-                                        className={`sidebar__nav-button${
-                                            tab === item.key ? " is-active" : ""
-                                        }`}
-                                        onClick={() => handleSelectNav(item.key)}
-                                    >
-                                        <span className="sidebar__nav-label">{item.label}</span>
-                                        {description && (
-                                            <span className="sidebar__nav-desc">{description}</span>
-                                        )}
-                                    </button>
-                                );
-                            })}
+                            {navItems.map((item) => (
+                                <button
+                                    key={item.key}
+                                    type="button"
+                                    className={`sidebar__nav-button${
+                                        tab === item.key ? " is-active" : ""
+                                    }`}
+                                    onClick={() => handleSelectNav(item.key)}
+                                >
+                                    <span className="sidebar__nav-label">{item.label}</span>
+                                    {item.description && (
+                                        <span className="sidebar__nav-desc">{item.description}</span>
+                                    )}
+                                </button>
+                            ))}
                         </nav>
                         <div className="sidebar__footer">
                             {isDM && <InviteButton gameId={game.id} />}
@@ -1325,7 +1265,6 @@ function GameView({
                                     aria-expanded={sidebarVisible}
                                     aria-controls="game-sidebar"
                                     title={sidebarOpen ? "Hide navigation" : "Show navigation"}
-                                    hidden={isDesktop}
                                 >
                                     <span className="sidebar-toggle__icon" aria-hidden>
                                         ☰
@@ -1344,38 +1283,54 @@ function GameView({
                                     )}
                                 </div>
                             </div>
-                        <div className="app-main__header-meta">
-                        <div className="header-actions">
-                            <button
-                                type="button"
-                                className="btn ghost btn-small"
-                                onClick={handleRefresh}
-                                disabled={refreshBusy}
-                                title="Ctrl+Alt+R"
-                            >
-                                {refreshBusy ? "Refreshing…" : "Refresh data"}
-                            </button>
-                            <span className="text-muted text-small hotkey-hint">
-                                Ctrl+Alt+1–{navItems.length} to switch · Ctrl+Alt+R refresh
-                            </span>
-                        </div>
-                        <div className="header-pills">
-                            {headerPills.map((pill, idx) => (
-                                <span
-                                    key={idx}
-                                    className={`pill${pill.tone ? ` ${pill.tone}` : ""}`}
-                                >
-                                    {pill.label}
-                                </span>
-                            ))}
-                        </div>
-                        {!isDM && myEntry && (
-                            <div className="header-player">
-                                <span className="text-muted text-small">Character</span>
-                                <strong>{myEntry.character?.name || me.username}</strong>
+                            <div className="app-main__header-meta">
+                                <div className="header-actions">
+                                    <button
+                                        type="button"
+                                        className="btn ghost btn-small"
+                                        onClick={handleRefresh}
+                                        disabled={refreshBusy}
+                                        title="Ctrl+Alt+R"
+                                    >
+                                        {refreshBusy ? "Refreshing…" : "Refresh data"}
+                                    </button>
+                                    <span className="text-muted text-small hotkey-hint">
+                                        Ctrl+Alt+1–{navItems.length} to switch · Ctrl+Alt+R refresh
+                                    </span>
+                                </div>
+                                <div className="header-pills">
+                                    {headerPills.map((pill, idx) => (
+                                        <span
+                                            key={idx}
+                                            className={`pill${pill.tone ? ` ${pill.tone}` : ""}`}
+                                        >
+                                            {pill.label}
+                                        </span>
+                                    ))}
+                                </div>
+                                {!isDM && (
+                                    <div className="header-metrics">
+                                        <div className="header-metric">
+                                            <span className="text-muted text-small">Account</span>
+                                            <strong>{me?.username?.trim() || "Player"}</strong>
+                                        </div>
+                                        <div className="header-metric">
+                                            <span className="text-muted text-small">Macca</span>
+                                            <strong>{playerMaccaInfo.label}</strong>
+                                        </div>
+                                        {myEntry && (
+                                            <div className="header-metric">
+                                                <span className="text-muted text-small">Character</span>
+                                                <strong>
+                                                    {myEntry.character?.name?.trim() ||
+                                                        me?.username?.trim() ||
+                                                        "Character"}
+                                                </strong>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
-                        )}
-                    </div>
                 </header>
 
                 <div className="app-content">
@@ -1388,44 +1343,6 @@ function GameView({
                                 setTab("sheet");
                             }}
                         />
-                    )}
-
-                    {tab === "profile" && !isDM && (
-                        <section className="profile-tab" aria-live="polite">
-                            <div className="card profile-tab__card">
-                                <header className="profile-tab__header">
-                                    <div>
-                                        <span className="text-muted text-small">Character</span>
-                                        <h3>
-                                            {myEntry?.character?.name?.trim() ||
-                                                me?.username?.trim() ||
-                                                "Player"}
-                                        </h3>
-                                    </div>
-                                    <div className="profile-tab__macca">
-                                        <span className="text-muted text-small">Macca</span>
-                                        <span className="profile-tab__macca-value">
-                                            {playerMaccaInfo.label}
-                                        </span>
-                                    </div>
-                                </header>
-                                {!myEntry && (
-                                    <p className="text-muted">
-                                        Join a character sheet to unlock full profile details.
-                                    </p>
-                                )}
-                                {playerProfileDetails.length > 0 && (
-                                    <dl className="profile-tab__details">
-                                        {playerProfileDetails.map(({ label, value }) => (
-                                            <div key={label} className="profile-tab__details-item">
-                                                <dt>{label}</dt>
-                                                <dd>{value || "—"}</dd>
-                                            </div>
-                                        ))}
-                                    </dl>
-                                )}
-                            </div>
-                        </section>
                     )}
 
                     {tab === "sheet" && (

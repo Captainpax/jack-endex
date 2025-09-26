@@ -63,11 +63,6 @@ export const DM_NAV = [
 
 export const PLAYER_NAV = [
     {
-        key: "profile",
-        label: "Profile",
-        description: "View your player overview",
-    },
-    {
         key: "sheet",
         label: "My Character",
         description: "Update your stats and background",
