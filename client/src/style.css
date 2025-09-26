@@ -1982,13 +1982,20 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     justify-content: flex-end;
 }
 
-.header-player {
+.header-metrics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    justify-content: flex-end;
+}
+
+.header-metric {
     display: grid;
     gap: 2px;
     text-align: right;
 }
 
-.header-player strong {
+.header-metric strong {
     font-size: 1rem;
 }
 
