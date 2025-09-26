@@ -405,6 +405,19 @@ function clamp01(value) {
     return num;
 }
 
+function toBoolean(value, defaultValue = false) {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (!normalized) return defaultValue;
+        if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+        if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+    }
+    if (value === null || value === undefined) return defaultValue;
+    return Boolean(value);
+}
+
 function normalizeRotation(value) {
     const num = Number(value);
     if (!Number.isFinite(num)) return 0;
@@ -954,10 +967,10 @@ function ensureMapState(game) {
         tokens,
         shapes,
         settings: {
-            allowPlayerDrawing: !!settingsRaw.allowPlayerDrawing,
-            allowPlayerTokenMoves: !!settingsRaw.allowPlayerTokenMoves,
+            allowPlayerDrawing: toBoolean(settingsRaw.allowPlayerDrawing, false),
+            allowPlayerTokenMoves: toBoolean(settingsRaw.allowPlayerTokenMoves, false),
         },
-        paused: !!raw.paused,
+        paused: toBoolean(raw.paused, false),
         background: presentMapBackground(raw.background),
         updatedAt,
     };
@@ -991,10 +1004,10 @@ function presentMapState(map) {
         tokens,
         shapes,
         settings: {
-            allowPlayerDrawing: !!map.settings?.allowPlayerDrawing,
-            allowPlayerTokenMoves: !!map.settings?.allowPlayerTokenMoves,
+            allowPlayerDrawing: toBoolean(map.settings?.allowPlayerDrawing, false),
+            allowPlayerTokenMoves: toBoolean(map.settings?.allowPlayerTokenMoves, false),
         },
-        paused: !!map.paused,
+        paused: toBoolean(map.paused, false),
         background: presentMapBackground(map.background),
         updatedAt: typeof map.updatedAt === 'string' ? map.updatedAt : null,
     };

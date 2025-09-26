@@ -1524,6 +1524,18 @@ function mapClamp01(value) {
     return num;
 }
 
+function mapReadBoolean(value) {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (!normalized) return false;
+        if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+        if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+    }
+    return false;
+}
+
 function clamp(value, min, max, fallback = min) {
     const num = Number(value);
     if (!Number.isFinite(num)) return fallback;
@@ -2012,10 +2024,10 @@ function normalizeClientMapState(map) {
         tokens,
         shapes,
         settings: {
-            allowPlayerDrawing: !!map.settings?.allowPlayerDrawing,
-            allowPlayerTokenMoves: !!map.settings?.allowPlayerTokenMoves,
+            allowPlayerDrawing: mapReadBoolean(map.settings?.allowPlayerDrawing),
+            allowPlayerTokenMoves: mapReadBoolean(map.settings?.allowPlayerTokenMoves),
         },
-        paused: !!map.paused,
+        paused: mapReadBoolean(map.paused),
         background: normalizeClientMapBackground(map.background),
         updatedAt: typeof map.updatedAt === 'string' ? map.updatedAt : null,
     };
@@ -3162,6 +3174,7 @@ function MapTab({ game, me }) {
                                     <input
                                         type="color"
                                         value={brushColor}
+                                        style={{ backgroundColor: brushColor }}
                                         onChange={(event) => {
                                             const value = event.target.value || brushColor;
                                             setBrushColor(typeof value === 'string' ? value : brushColor);
@@ -3558,6 +3571,7 @@ function MapTab({ game, me }) {
                                                             id="map-enemy-color"
                                                             type="color"
                                                             value={enemyForm.color}
+                                                            style={{ backgroundColor: enemyForm.color }}
                                                             onChange={(event) =>
                                                                 setEnemyForm((prev) => ({
                                                                     ...prev,
@@ -4328,6 +4342,7 @@ function MapTab({ game, me }) {
                                                                 <input
                                                                     type="color"
                                                                     value={shape.fill}
+                                                                    style={{ backgroundColor: shape.fill }}
                                                                     onChange={(event) => {
                                                                         const value = event.target.value || shape.fill;
                                                                         setMapState((prev) => ({
@@ -4353,6 +4368,7 @@ function MapTab({ game, me }) {
                                                                 <input
                                                                     type="color"
                                                                     value={shape.stroke}
+                                                                    style={{ backgroundColor: shape.stroke }}
                                                                     onChange={(event) => {
                                                                         const value = event.target.value || shape.stroke;
                                                                         setMapState((prev) => ({
@@ -9779,9 +9795,9 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
     const [storyForm, setStoryForm] = useState(storyDefaults);
     const [storySaving, setStorySaving] = useState(false);
     const [mapSettings, setMapSettings] = useState(() => ({
-        allowPlayerDrawing: !!game.map?.settings?.allowPlayerDrawing,
-        allowPlayerTokenMoves: !!game.map?.settings?.allowPlayerTokenMoves,
-        paused: !!game.map?.paused,
+        allowPlayerDrawing: mapReadBoolean(game.map?.settings?.allowPlayerDrawing),
+        allowPlayerTokenMoves: mapReadBoolean(game.map?.settings?.allowPlayerTokenMoves),
+        paused: mapReadBoolean(game.map?.paused),
     }));
     const [mapSaving, setMapSaving] = useState(false);
     const [clearingDrawings, setClearingDrawings] = useState(false);
@@ -9800,9 +9816,9 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
 
     useEffect(() => {
         setMapSettings({
-            allowPlayerDrawing: !!game.map?.settings?.allowPlayerDrawing,
-            allowPlayerTokenMoves: !!game.map?.settings?.allowPlayerTokenMoves,
-            paused: !!game.map?.paused,
+            allowPlayerDrawing: mapReadBoolean(game.map?.settings?.allowPlayerDrawing),
+            allowPlayerTokenMoves: mapReadBoolean(game.map?.settings?.allowPlayerTokenMoves),
+            paused: mapReadBoolean(game.map?.paused),
         });
     }, [
         game.id,
@@ -9847,9 +9863,9 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
             try {
                 const updated = await Games.updateMapSettings(game.id, changes);
                 setMapSettings({
-                    allowPlayerDrawing: !!updated.settings?.allowPlayerDrawing,
-                    allowPlayerTokenMoves: !!updated.settings?.allowPlayerTokenMoves,
-                    paused: !!updated.paused,
+                    allowPlayerDrawing: mapReadBoolean(updated.settings?.allowPlayerDrawing),
+                    allowPlayerTokenMoves: mapReadBoolean(updated.settings?.allowPlayerTokenMoves),
+                    paused: mapReadBoolean(updated.paused),
                 });
                 if (typeof onGameRefresh === "function") {
                     await onGameRefresh();
