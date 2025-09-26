@@ -924,12 +924,29 @@ function GameView({
     const isDM = game.dmId === me.id;
     const [apiBusy, setApiBusy] = useState(false);
     const [refreshBusy, setRefreshBusy] = useState(false);
+    const [isDesktop, setIsDesktop] = useState(() =>
+        typeof window === "undefined" ? true : window.innerWidth >= 960
+    );
     const [sidebarOpen, setSidebarOpen] = useState(() =>
         typeof window === "undefined" ? true : window.innerWidth > 960
     );
     const [logoutBusy, setLogoutBusy] = useState(false);
     const loadedTabRef = useRef(false);
     const loadedSheetRef = useRef(false);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return undefined;
+        const handleResize = () => {
+            setIsDesktop(window.innerWidth >= 960);
+        };
+        handleResize();
+        window.addEventListener("resize", handleResize);
+        return () => window.removeEventListener("resize", handleResize);
+    }, []);
+
+    useEffect(() => {
+        setSidebarOpen(isDesktop);
+    }, [isDesktop]);
 
     useEffect(() => onApiActivity(setApiBusy), []);
 
@@ -949,20 +966,22 @@ function GameView({
     const handleSelectNav = useCallback(
         (key) => {
             setTab(key);
-            if (typeof window !== "undefined" && window.innerWidth < 960) {
+            if (!isDesktop) {
                 setSidebarOpen(false);
             }
         },
-        [setTab]
+        [isDesktop, setTab]
     );
 
     const toggleSidebar = useCallback(() => {
+        if (isDesktop) return;
         setSidebarOpen((prev) => !prev);
-    }, []);
+    }, [isDesktop]);
 
     const closeSidebar = useCallback(() => {
+        if (isDesktop) return;
         setSidebarOpen(false);
-    }, []);
+    }, [isDesktop]);
 
     useEffect(() => {
         if (navItems.length === 0) return;
@@ -1168,7 +1187,8 @@ function GameView({
         }
     }, [game.media, syncMedia]);
 
-    const shellClassName = `app-shell ${sidebarOpen ? "is-sidebar-open" : "is-sidebar-collapsed"}`;
+    const sidebarVisible = isDesktop || sidebarOpen;
+    const shellClassName = `app-shell ${sidebarVisible ? "is-sidebar-open" : "is-sidebar-collapsed"}`;
 
     return (
         <RealtimeContext.Provider value={realtime}>
@@ -1182,7 +1202,7 @@ function GameView({
                     <aside
                         id="game-sidebar"
                         className="app-sidebar"
-                        aria-hidden={!sidebarOpen}
+                        aria-hidden={!sidebarVisible}
                     >
                         <div className="sidebar__header">
                             <div className="sidebar__header-main">
@@ -1202,7 +1222,7 @@ function GameView({
                                 onClick={closeSidebar}
                                 aria-label="Close menu"
                                 title="Close menu"
-                                hidden={!sidebarOpen}
+                                hidden={isDesktop || !sidebarOpen}
                             >
                                 <span aria-hidden>×</span>
                             </button>
@@ -1256,11 +1276,12 @@ function GameView({
                             <div className="header-leading">
                                 <button
                                     type="button"
-                                    className={`sidebar-toggle${sidebarOpen ? "" : " is-closed"}`}
+                                    className={`sidebar-toggle${sidebarVisible ? "" : " is-closed"}`}
                                     onClick={toggleSidebar}
-                                    aria-expanded={sidebarOpen}
+                                    aria-expanded={sidebarVisible}
                                     aria-controls="game-sidebar"
                                     title={sidebarOpen ? "Hide navigation" : "Show navigation"}
+                                    hidden={isDesktop}
                                 >
                                     <span className="sidebar-toggle__icon" aria-hidden>
                                         ☰
