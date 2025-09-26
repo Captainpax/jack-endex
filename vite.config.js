@@ -1,5 +1,7 @@
 import {defineConfig} from 'vite'
 import react from '@vitejs/plugin-react'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const devApiTarget = process.env.VITE_DEV_API_TARGET || 'http://localhost:3000'
 
@@ -17,6 +19,8 @@ function toWebSocketTarget(input) {
 
 const devRealtimeTarget = process.env.VITE_DEV_REALTIME_TARGET || toWebSocketTarget(devApiTarget)
 
+const projectRootDir = path.dirname(fileURLToPath(import.meta.url))
+
 export default defineConfig({
     root: 'client',
     publicDir: '../public',
@@ -25,11 +29,19 @@ export default defineConfig({
         emptyOutDir: true,
     },
     plugins: [react()],
+    resolve: {
+        alias: {
+            '@shared': path.resolve(projectRootDir, 'shared'),
+        },
+    },
     server: {
         host: true,
         port: 5173,
         strictPort: true,
         allowedHosts: ['jack-endex.darkmatterservers.com'],
+        fs: {
+            allow: [projectRootDir],
+        },
         proxy: {
             '/api': {
                 target: devApiTarget,

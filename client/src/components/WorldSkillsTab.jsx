@@ -649,6 +649,39 @@ function WorldSkillsTab({ game, me, onUpdate }) {
                         ))}
                     </ul>
                 </div>
+                {WORLD_SKILL_REFERENCE.disciplines?.length > 0 && (
+                    <div className="world-skill-reference__abilities">
+                        <h4>Core disciplines</h4>
+                        <div className="world-skill-reference__abilities-grid">
+                            {WORLD_SKILL_REFERENCE.disciplines.map((group) => (
+                                <div
+                                    key={group.ability}
+                                    className="world-skill-reference__ability"
+                                >
+                                    <div className="world-skill-reference__ability-header">
+                                        <span className="pill light">{group.ability}</span>
+                                        <strong>{group.label}</strong>
+                                    </div>
+                                    {group.summary && (
+                                        <p className="text-muted text-small">
+                                            {group.summary}
+                                        </p>
+                                    )}
+                                    <ul>
+                                        {group.skills.map((skill) => (
+                                            <li key={skill.key}>
+                                                <strong>{skill.label}</strong>
+                                                <span className="text-small">
+                                                    {skill.summary}
+                                                </span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
                 <div className="world-skill-reference__callouts">
                     <h4>Table tips</h4>
                     <ul>
