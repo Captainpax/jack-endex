@@ -3536,6 +3536,18 @@ const sessionStore = new MongoSessionStore({
     ttlSeconds: SESSION_TTL_SECONDS,
 });
 
+let sessionStoreClosed = false;
+async function closeSessionStore() {
+    if (sessionStoreClosed) return;
+    sessionStoreClosed = true;
+    try {
+        await sessionStore.close();
+        console.log('[session] Session store closed.');
+    } catch (err) {
+        console.warn('[session] Failed to close session store:', err);
+    }
+}
+
 const sessionParser = session({
     secret: SESSION_SECRET,
     resave: false,
@@ -5573,9 +5585,7 @@ const server = http.createServer(app);
 server.on('close', () => {
     readiness.server = false;
     updateReadiness();
-    sessionStore.close().catch((err) => {
-        console.warn('[session] Failed to close session store:', err);
-    });
+    closeSessionStore().catch(() => {});
 });
 const wss = new WebSocketServer({ noServer: true });
 
@@ -5650,35 +5660,231 @@ server.on('upgrade', (req, socket, head) => {
     });
 });
 
-async function startServer() {
-    try {
-        await connectToDatabaseWithRetry(MONGODB_URI, { dbName: MONGODB_DB_NAME || undefined });
-
-        await ensureInitialItemDocs();
-        await ensureInitialDemonDocs();
-
-        await ensureDiscordBotOnline();
-
-        const port = process.env.PORT || 3000;
-        await new Promise((resolve, reject) => {
-            const onError = (err) => {
-                server.off('error', onError);
-                reject(err);
-            };
-            server.once('error', onError);
-            server.listen(port, () => {
-                server.off('error', onError);
-                readiness.server = true;
-                updateReadiness();
-                console.log(`server listening on ${port}`);
-                resolve();
-            });
-        });
-    } catch (err) {
-        console.error('[startup] Failed to initialize server:', err);
-        process.exit(1);
+function stopAllStoryWatchers() {
+    for (const gameId of Array.from(storyWatchers.keys())) {
+        removeStoryWatcher(gameId);
     }
 }
-import imageProxy from "./routes/image-proxy.routes.js";
-app.use("/api/personas", imageProxy);
-await startServer();
+
+function clearStoryBroadcastQueue() {
+    for (const timer of storyBroadcastQueue.values()) {
+        clearTimeout(timer);
+    }
+    storyBroadcastQueue.clear();
+}
+
+function clearPersonaRequests() {
+    for (const request of pendingPersonaRequests.values()) {
+        if (request?.timeout) {
+            clearTimeout(request.timeout);
+        }
+    }
+    pendingPersonaRequests.clear();
+}
+
+function clearPendingTrades() {
+    for (const trade of pendingTrades.values()) {
+        if (trade?.timeout) {
+            clearTimeout(trade.timeout);
+        }
+    }
+    pendingTrades.clear();
+}
+
+async function closeWebSocketServer({ timeoutMs = 2000 } = {}) {
+    try {
+        clearInterval(heartbeat);
+    } catch {
+        // ignore interval cleanup errors
+    }
+
+    for (const ws of wss.clients) {
+        try {
+            ws.close(1001, 'Server shutting down');
+        } catch {
+            // ignore close errors
+        }
+    }
+
+    await new Promise((resolve) => {
+        let settled = false;
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            resolve();
+        };
+
+        try {
+            wss.close(() => finish());
+        } catch (err) {
+            console.warn('[shutdown] Failed to close WebSocket server cleanly:', err);
+            finish();
+            return;
+        }
+
+        if (wss.clients.size === 0) {
+            queueMicrotask(finish);
+        } else if (timeoutMs > 0) {
+            setTimeout(() => {
+                for (const ws of wss.clients) {
+                    try {
+                        ws.terminate();
+                    } catch {
+                        // ignore terminate errors
+                    }
+                }
+                finish();
+            }, timeoutMs);
+        }
+    });
+}
+
+let shutdownPromise = null;
+
+async function shutdownServer({ signal = null, exitCode = 0 } = {}) {
+    if (shutdownPromise) return shutdownPromise;
+
+    const label = signal ? `signal ${signal}` : 'request';
+    console.log(`[shutdown] Initiating graceful shutdown (${label}).`);
+
+    shutdownPromise = (async () => {
+        readiness.server = false;
+        updateReadiness();
+
+        clearStoryBroadcastQueue();
+        clearPersonaRequests();
+        clearPendingTrades();
+        stopAllStoryWatchers();
+
+        try {
+            await closeWebSocketServer();
+        } catch (err) {
+            console.warn('[shutdown] WebSocket shutdown encountered an error:', err);
+        }
+
+        if (server.listening) {
+            await new Promise((resolve) => {
+                server.close((err) => {
+                    if (err && err.code !== 'ERR_SERVER_NOT_RUNNING') {
+                        console.warn('[shutdown] HTTP server close error:', err);
+                    }
+                    resolve();
+                });
+            });
+        }
+
+        await closeSessionStore();
+
+        try {
+            if (mongoose.connection.readyState !== 0) {
+                await mongoose.disconnect();
+                console.log('[db] MongoDB connection closed.');
+            }
+        } catch (err) {
+            console.warn('[shutdown] Failed to disconnect MongoDB cleanly:', err);
+        }
+
+        storySubscribers.clear();
+        gameSubscribers.clear();
+        userSockets.clear();
+        gamePresence.clear();
+
+        console.log('[shutdown] Graceful shutdown complete.');
+        return exitCode;
+    })();
+
+    return shutdownPromise;
+}
+
+let shutdownHooksInstalled = false;
+let shutdownInitiated = false;
+
+function setupGracefulShutdown() {
+    if (shutdownHooksInstalled) return;
+    shutdownHooksInstalled = true;
+
+    const handleSignal = (signal) => {
+        if (shutdownInitiated) {
+            console.warn(`[shutdown] Received ${signal} during shutdown; forcing exit.`);
+            process.exit(1);
+            return;
+        }
+        shutdownInitiated = true;
+        console.log(`[shutdown] Received ${signal}; starting graceful shutdown.`);
+        shutdownServer({ signal, exitCode: 0 })
+            .then((code) => {
+                process.exit(code);
+            })
+            .catch((err) => {
+                console.error('[shutdown] Error during graceful shutdown:', err);
+                process.exit(1);
+            });
+    };
+
+    for (const signal of ['SIGINT', 'SIGTERM']) {
+        process.on(signal, () => handleSignal(signal));
+    }
+
+    process.on('uncaughtException', (err) => {
+        console.error('[shutdown] Uncaught exception:', err);
+        if (shutdownInitiated) {
+            process.exit(1);
+            return;
+        }
+        shutdownInitiated = true;
+        shutdownServer({ exitCode: 1 })
+            .then(() => process.exit(1))
+            .catch(() => process.exit(1));
+    });
+
+    process.on('unhandledRejection', (reason) => {
+        console.error('[shutdown] Unhandled rejection:', reason);
+    });
+}
+
+async function startServer() {
+    console.log('[startup] Starting server bootstrap…');
+    console.log('[startup] Connecting to MongoDB…');
+    await connectToDatabaseWithRetry(MONGODB_URI, { dbName: MONGODB_DB_NAME || undefined });
+    console.log('[startup] MongoDB connection established.');
+
+    console.log('[startup] Loading initial data…');
+    await ensureInitialItemDocs();
+    await ensureInitialDemonDocs();
+    console.log('[startup] Initial data ready.');
+
+    console.log('[startup] Checking Discord bot availability…');
+    await ensureDiscordBotOnline();
+
+    const port = process.env.PORT || 3000;
+    console.log('[startup] Starting HTTP server…');
+    await new Promise((resolve, reject) => {
+        const onError = (err) => {
+            server.off('error', onError);
+            reject(err);
+        };
+        server.once('error', onError);
+        server.listen(port, () => {
+            server.off('error', onError);
+            readiness.server = true;
+            updateReadiness();
+            console.log(`[startup] HTTP server listening on ${port}.`);
+            resolve();
+        });
+    });
+
+    return port;
+}
+import imageProxy from './routes/image-proxy.routes.js';
+app.use('/api/personas', imageProxy);
+
+setupGracefulShutdown();
+
+try {
+    const port = await startServer();
+    console.log(`[startup] Boot sequence finished on port ${port}.`);
+} catch (err) {
+    console.error('[startup] Failed to initialize server:', err);
+    await shutdownServer({ exitCode: 1 }).catch(() => {});
+    process.exit(1);
+}
