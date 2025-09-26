@@ -1265,6 +1265,8 @@ function GameView({
                                     aria-expanded={sidebarVisible}
                                     aria-controls="game-sidebar"
                                     title={sidebarOpen ? "Hide navigation" : "Show navigation"}
+                                    hidden={isDesktop}
+                                    aria-hidden={isDesktop}
                                 >
                                     <span className="sidebar-toggle__icon" aria-hidden>
                                         ☰
