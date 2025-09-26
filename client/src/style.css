@@ -104,6 +104,98 @@ body {
     padding: clamp(16px, 3vw, 32px);
 }
 
+.loading-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    z-index: 4000;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(-100%);
+    transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.loading-bar--visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.loading-bar__track {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: rgba(59, 130, 246, 0.18);
+    border-radius: 999px;
+}
+
+.loading-bar__indicator {
+    position: absolute;
+    inset: 0;
+}
+
+.loading-bar__indicator::before,
+.loading-bar__indicator::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--brand-600), var(--brand-700));
+    transform: translateX(-120%);
+}
+
+.loading-bar__indicator::before {
+    width: 42%;
+    animation: loading-bar-primary 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.loading-bar__indicator::after {
+    width: 26%;
+    animation: loading-bar-secondary 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    animation-delay: 0.2s;
+}
+
+.loading-bar--finishing .loading-bar__indicator::before,
+.loading-bar--finishing .loading-bar__indicator::after {
+    animation: none;
+    width: 100%;
+    transform: translateX(0);
+    opacity: 0.85;
+    transition: transform 200ms ease, width 200ms ease, opacity 200ms ease;
+}
+
+.loading-bar--finishing .loading-bar__indicator::after {
+    opacity: 0;
+}
+
+@keyframes loading-bar-primary {
+    0% {
+        transform: translateX(-120%);
+    }
+    55% {
+        transform: translateX(125%);
+    }
+    100% {
+        transform: translateX(125%);
+    }
+}
+
+@keyframes loading-bar-secondary {
+    0% {
+        transform: translateX(-130%);
+    }
+    45% {
+        transform: translateX(120%);
+    }
+    100% {
+        transform: translateX(120%);
+    }
+}
+
 /* Typography */
 h1, h2, h3, h4 {
     margin: 0 0 .5rem;
