@@ -2273,12 +2273,46 @@ function MapTab({ game, me }) {
         const map = new Map();
         if (Array.isArray(game.demons)) {
             for (const demon of game.demons) {
-                if (!demon || !demon.id) continue;
-                map.set(demon.id, demon);
+                if (!demon) continue;
+                const addKey = (value, { allowLowercase = false } = {}) => {
+                    const trimmed = typeof value === 'string' ? value.trim() : '';
+                    if (!trimmed) return;
+                    map.set(trimmed, demon);
+                    if (allowLowercase) {
+                        map.set(trimmed.toLowerCase(), demon);
+                    }
+                };
+                addKey(demon.id);
+                addKey(demon.slug, { allowLowercase: true });
+                addKey(demon.query, { allowLowercase: true });
             }
         }
         return map;
     }, [game.demons]);
+
+    const findDemon = useCallback(
+        (value) => {
+            const raw = typeof value === 'string' ? value.trim() : '';
+            if (!raw) return null;
+            if (demonMap.has(raw)) return demonMap.get(raw);
+            const lower = raw.toLowerCase();
+            if (demonMap.has(lower)) return demonMap.get(lower);
+            if (!Array.isArray(game.demons)) return null;
+            for (const demon of game.demons) {
+                if (!demon) continue;
+                const id = typeof demon.id === 'string' ? demon.id.trim() : '';
+                if (id && id === raw) return demon;
+                const slug = typeof demon.slug === 'string' ? demon.slug.trim().toLowerCase() : '';
+                if (slug && slug === lower) return demon;
+                const query = typeof demon.query === 'string' ? demon.query.trim().toLowerCase() : '';
+                if (query && query === lower) return demon;
+                const name = typeof demon.name === 'string' ? demon.name.trim().toLowerCase() : '';
+                if (name && name === lower) return demon;
+            }
+            return null;
+        },
+        [demonMap, game.demons],
+    );
 
     const playerTokens = useMemo(
         () => mapState.tokens.filter((token) => token.kind === 'player'),
@@ -2977,7 +3011,7 @@ function MapTab({ game, me }) {
         if (!isDM) return;
         const slug = (enemyDemonChoice || '').trim();
         if (!slug) return;
-        const demon = demonMap.get(slug);
+        const demon = findDemon(slug);
         if (!demon) return;
         const statsText = describeDemonEnemyStats(demon);
         const description = clampText(demon.description, 280);
@@ -3003,7 +3037,7 @@ function MapTab({ game, me }) {
             };
         });
         setEnemyDemonChoice('');
-    }, [demonMap, enemyDemonChoice, isDM]);
+    }, [enemyDemonChoice, findDemon, isDM]);
 
     const handleShareMapToStory = useCallback(
         async () => {
@@ -3329,7 +3363,7 @@ function MapTab({ game, me }) {
                     <div className="map-board__tokens" style={{ pointerEvents: tokenLayerPointerEvents }}>
                         {mapState.tokens.map((token) => {
                             const player = token.kind === 'player' ? playerMap.get(token.refId) : null;
-                            const demon = token.kind === 'demon' ? demonMap.get(token.refId) : null;
+                            const demon = token.kind === 'demon' ? findDemon(token.refId) : null;
                             const display =
                                 dragPreview && dragPreview.kind === 'token' && dragPreview.id === token.id
                                     ? { ...token, x: dragPreview.x, y: dragPreview.y }
@@ -3518,7 +3552,7 @@ function MapTab({ game, me }) {
                                     ) : (
                                         <ul className="map-token-list">
                                             {demonTokens.map((token) => {
-                                                const demon = demonMap.get(token.refId);
+                                                const demon = findDemon(token.refId);
                                                 const label = token.label || demon?.name || 'Demon';
                                                 const subtitle = describeDemonTooltip(demon);
                                                 return (
