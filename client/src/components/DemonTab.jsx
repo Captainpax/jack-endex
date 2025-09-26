@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiError, Games, Personas } from "../api";
+import DemonImage from "./DemonImage";
 import {
     ABILITY_DEFS,
     COMBAT_CATEGORY_LABELS,
