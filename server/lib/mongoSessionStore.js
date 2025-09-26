@@ -174,4 +174,14 @@ export default class MongoSessionStore extends session.Store {
             callback(err);
         }
     }
+
+    async clear(callback = () => {}) {
+        try {
+            const collection = await this._getCollection();
+            await collection.deleteMany({});
+            callback(null);
+        } catch (err) {
+            callback(err);
+        }
+    }
 }
