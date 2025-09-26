@@ -1,7 +1,7 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
 import WebSocket from 'ws';
-import { loadEnv, envString } from '../config/env.js';
+import { loadEnv, envString, envNumber } from '../config/env.js';
 import mongoose from '../lib/mongoose.js';
 import {
     searchDemons,
@@ -23,6 +23,8 @@ const token = envString('DISCORD_PRIMARY_BOT_TOKEN')
     || envString('BOT_TOKEN');
 const uri = envString('MONGODB_URI');
 const dbName = envString('MONGODB_DB_NAME');
+const DB_CONNECT_MAX_ATTEMPTS = Math.max(1, envNumber('BOT_MONGODB_CONNECT_MAX_ATTEMPTS', 5) || 5);
+const DB_CONNECT_RETRY_DELAY_MS = Math.max(500, envNumber('BOT_MONGODB_CONNECT_RETRY_MS', 2000) || 2000);
 
 if (!token) {
     console.error('Missing bot token. Set DISCORD_PRIMARY_BOT_TOKEN or DISCORD_BOT_TOKEN in your .env file.');
@@ -33,8 +35,44 @@ if (!uri) {
     process.exit(1);
 }
 
-await mongoose.connect(uri, { dbName: dbName || undefined });
-console.log('[bot] Connected to MongoDB. Starting gateway connection…');
+async function delay(ms) {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function connectToDatabaseWithRetry(
+    connectionUri,
+    options = {},
+    { attempts = DB_CONNECT_MAX_ATTEMPTS, delayMs = DB_CONNECT_RETRY_DELAY_MS } = {},
+) {
+    const totalAttempts = Math.max(1, Math.floor(attempts));
+    const baseDelay = Math.max(500, Math.floor(delayMs));
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
+        try {
+            await mongoose.connect(connectionUri, options);
+            console.log(`[bot] Connected to MongoDB (attempt ${attempt}/${totalAttempts}).`);
+            return;
+        } catch (err) {
+            lastError = err;
+            console.error(`[bot] MongoDB connection attempt ${attempt} failed:`, err);
+            if (attempt >= totalAttempts) break;
+            const waitMs = Math.min(baseDelay * 2 ** (attempt - 1), 30_000);
+            console.log(`[bot] Retrying MongoDB connection in ${waitMs}ms…`);
+            await delay(waitMs);
+        }
+    }
+
+    throw lastError ?? new Error('Bot failed to connect to MongoDB.');
+}
+
+try {
+    await connectToDatabaseWithRetry(uri, { dbName: dbName || undefined });
+    console.log('[bot] Connected to MongoDB. Starting gateway connection…');
+} catch (err) {
+    console.error('[bot] Failed to prepare bot. Exiting.', err);
+    process.exit(1);
+}
 
 const ABILITY_KEYS = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'];
 const RESIST_KEYS = [
@@ -235,8 +273,23 @@ function startGateway() {
 
 startGateway();
 
-process.on('SIGINT', async () => {
-    console.log('\n[bot] Shutting down…');
-    await mongoose.disconnect();
+async function gracefulShutdown(signal) {
+    console.log(`\n[bot] Received ${signal}. Shutting down…`);
+    try {
+        await mongoose.disconnect();
+    } catch (err) {
+        console.error('[bot] Error during shutdown:', err);
+    }
     process.exit(0);
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
+process.on('uncaughtException', (err) => {
+    console.error('[bot] Uncaught exception:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+    console.error('[bot] Unhandled rejection:', reason);
 });
