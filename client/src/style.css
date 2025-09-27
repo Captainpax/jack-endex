@@ -3055,6 +3055,9 @@ label {
 .sheet-table tbody tr:hover { background: color-mix(in srgb, var(--brand) 6%, transparent); }
 .skill-table input { width: 100%; padding: 6px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); }
 .skill-name { font-weight: 600; }
+.skill-table__header { display: flex; align-items: center; gap: 8px; }
+.skill-table__header-actions { display: flex; gap: 6px; margin-left: auto; }
+.skill-table__header-actions .skill-card__icon-btn { padding-block: 2px; }
 .skill-total { font-weight: 700; }
 .sp-summary { display: flex; flex-wrap: wrap; gap: 12px; padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-2); font-size: 0.9rem; }
 .sp-summary.warn { border-color: var(--warning); }
@@ -3065,6 +3068,8 @@ label {
 .world-skill-manager__header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .world-skill-manager__header-actions { display: grid; gap: 8px; justify-items: end; align-items: center; }
 .world-skill-manager__tools { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.world-skill-planner__tools { justify-content: flex-start; margin-top: 8px; }
+.world-skill-planner__tools .world-skill-manager__search { min-width: 220px; }
 .world-skill-manager__search { min-width: 200px; }
 .world-skill-manager__sort { display: grid; gap: 4px; text-align: right; font-weight: 600; color: var(--muted); }
 .world-skill-manager__sort select { min-width: 170px; }

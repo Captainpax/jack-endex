@@ -446,7 +446,7 @@ function WorldSkillsTab({ game, me, onUpdate }) {
             : clampNonNegative(spRaw);
     const maxSkillRank = Math.max(4, level * 2 + 2);
 
-    const skillRows = useMemo(() => {
+    const allSkillRows = useMemo(() => {
         return worldSkills.map((skill) => {
             const entry = skills?.[skill.key] || { ranks: 0, misc: 0 };
             const ranks = clampNonNegative(entry.ranks);
@@ -457,6 +457,22 @@ function WorldSkillsTab({ game, me, onUpdate }) {
             return { ...skill, ranks, misc, abilityMod, total };
         });
     }, [abilityMods, skills, worldSkills]);
+
+    const skillRowById = useMemo(() => {
+        const map = new Map();
+        allSkillRows.forEach((row) => {
+            if (row?.id) {
+                map.set(row.id, row);
+            }
+        });
+        return map;
+    }, [allSkillRows]);
+
+    const plannerSkillRows = useMemo(() => {
+        return displaySkills
+            .map((skill) => (skill ? skillRowById.get(skill.id) : null))
+            .filter(Boolean);
+    }, [displaySkills, skillRowById]);
 
     const customSkillRows = useMemo(() => {
         return customSkills.map((skill) => {
@@ -470,20 +486,20 @@ function WorldSkillsTab({ game, me, onUpdate }) {
     }, [abilityMods, customSkills]);
 
     const spentSP = useMemo(() => {
-        const base = skillRows.reduce((sum, row) => sum + row.ranks, 0);
+        const base = allSkillRows.reduce((sum, row) => sum + row.ranks, 0);
         const extras = customSkillRows.reduce((sum, row) => sum + row.ranks, 0);
         return base + extras;
-    }, [customSkillRows, skillRows]);
+    }, [allSkillRows, customSkillRows]);
     const overSpent = spentSP > availableSP;
     const rankIssues = useMemo(() => {
-        const standard = skillRows
+        const standard = allSkillRows
             .filter((row) => row.ranks > maxSkillRank)
             .map((row) => row.label);
         const extras = customSkillRows
             .filter((row) => row.ranks > maxSkillRank)
             .map((row) => row.label);
         return [...standard, ...extras];
-    }, [customSkillRows, maxSkillRank, skillRows]);
+    }, [allSkillRows, customSkillRows, maxSkillRank]);
 
     const addCustomSkill = useCallback(() => {
         const label = customDraft.label.trim();
@@ -998,80 +1014,80 @@ function WorldSkillsTab({ game, me, onUpdate }) {
                             )}
                         </div>
                     </div>
-                    {hiddenSkills.length > 0 && (
-                        <div className="skill-hidden">
-                            <div className="skill-hidden__summary">
-                                <strong>Hidden skills ({hiddenSkills.length})</strong>
-                                <div className="skill-hidden__summary-actions">
-                                    <button
-                                        type="button"
-                                        className="btn ghost btn-small"
-                                        onClick={restoreAllHiddenSkills}
-                                    >
-                                        Restore all
-                                    </button>
-                                    {showHiddenSkills && (
-                                        <button
-                                            type="button"
-                                            className="btn ghost btn-small"
-                                            onClick={() => setShowHiddenSkills(false)}
-                                        >
-                                            Collapse
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-                            {showHiddenSkills ? (
-                                <ul className="skill-hidden__list">
-                                    {hiddenSkills.map((skill) => {
-                                        const isFavorite = favoriteSkillIds.has(skill.id);
-                                        return (
-                                            <li key={skill.id} className="skill-hidden__item">
-                                                <div className="skill-hidden__info">
-                                                    <strong>{skill.label}</strong>
-                                                    <span className="text-muted text-small">
-                                                        {skill.ability}
-                                                    </span>
-                                                </div>
-                                                <div className="skill-hidden__item-actions">
-                                                    <button
-                                                        type="button"
-                                                        className={`skill-card__icon-btn skill-card__icon-btn--star${
-                                                            isFavorite ? " is-active" : ""
-                                                        }`}
-                                                        onClick={() => toggleFavoriteSkill(skill.id)}
-                                                        aria-pressed={isFavorite}
-                                                        aria-label={
-                                                            isFavorite
-                                                                ? `Unstar ${skill.label}`
-                                                                : `Star ${skill.label}`
-                                                        }
-                                                        title={
-                                                            isFavorite
-                                                                ? "Unstar to remove from the pinned list"
-                                                                : "Star to pin this skill to the top"
-                                                        }
-                                                    >
-                                                        {isFavorite ? "★" : "☆"}
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        className="btn ghost btn-small"
-                                                        onClick={() => restoreHiddenSkill(skill.id)}
-                                                    >
-                                                        Restore
-                                                    </button>
-                                                </div>
-                                            </li>
-                                        );
-                                    })}
-                                </ul>
-                            ) : (
-                                <p className="text-muted text-small">
-                                    Hidden skills stay tucked away until you restore them.
-                                </p>
+                </div>
+            )}
+            {hiddenSkills.length > 0 && (
+                <div className="skill-hidden">
+                    <div className="skill-hidden__summary">
+                        <strong>Hidden skills ({hiddenSkills.length})</strong>
+                        <div className="skill-hidden__summary-actions">
+                            <button
+                                type="button"
+                                className="btn ghost btn-small"
+                                onClick={restoreAllHiddenSkills}
+                            >
+                                Restore all
+                            </button>
+                            {showHiddenSkills && (
+                                <button
+                                    type="button"
+                                    className="btn ghost btn-small"
+                                    onClick={() => setShowHiddenSkills(false)}
+                                >
+                                    Collapse
+                                </button>
                             )}
                         </div>
+                    </div>
+                    {showHiddenSkills ? (
+                        <ul className="skill-hidden__list">
+                            {hiddenSkills.map((skill) => {
+                                const isFavorite = favoriteSkillIds.has(skill.id);
+                                return (
+                                    <li key={skill.id} className="skill-hidden__item">
+                                        <div className="skill-hidden__info">
+                                            <strong>{skill.label}</strong>
+                                            <span className="text-muted text-small">
+                                                {skill.ability}
+                                            </span>
+                                        </div>
+                                        <div className="skill-hidden__item-actions">
+                                            <button
+                                                type="button"
+                                                className={`skill-card__icon-btn skill-card__icon-btn--star${
+                                                    isFavorite ? " is-active" : ""
+                                                }`}
+                                                onClick={() => toggleFavoriteSkill(skill.id)}
+                                                aria-pressed={isFavorite}
+                                                aria-label={
+                                                    isFavorite
+                                                        ? `Unstar ${skill.label}`
+                                                        : `Star ${skill.label}`
+                                                }
+                                                title={
+                                                    isFavorite
+                                                        ? "Unstar to remove from the pinned list"
+                                                        : "Star to pin this skill to the top"
+                                                }
+                                            >
+                                                {isFavorite ? "★" : "☆"}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="btn ghost btn-small"
+                                                onClick={() => restoreHiddenSkill(skill.id)}
+                                            >
+                                                Restore
+                                            </button>
+                                        </div>
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    ) : (
+                        <p className="text-muted text-small">
+                            Hidden skills stay tucked away until you restore them.
+                        </p>
                     )}
                 </div>
             )}
@@ -1255,9 +1271,66 @@ function WorldSkillsTab({ game, me, onUpdate }) {
                             ))}
                         </div>
 
+                        {!isDM && (
+                            <div className="world-skill-manager__tools world-skill-planner__tools">
+                                <input
+                                    type="search"
+                                    className="world-skill-manager__search"
+                                    placeholder="Search skills…"
+                                    value={skillQuery}
+                                    onChange={(e) => setSkillQuery(e.target.value)}
+                                    aria-label="Search world skills"
+                                />
+                                <label className="world-skill-manager__sort text-small">
+                                    <span>Sort by</span>
+                                    <select
+                                        value={skillSort}
+                                        onChange={(e) => setSkillSort(e.target.value)}
+                                        aria-label="Sort world skills"
+                                    >
+                                        {WORLD_SKILL_SORT_OPTIONS.map((option) => (
+                                            <option key={option.value} value={option.value}>
+                                                {option.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                                <button
+                                    type="button"
+                                    className="btn ghost btn-small"
+                                    onClick={() => setShowHiddenSkills((prev) => !prev)}
+                                    disabled={hiddenSkills.length === 0}
+                                >
+                                    {hiddenSkills.length === 0
+                                        ? "No hidden skills"
+                                        : showHiddenSkills
+                                        ? "Hide hidden list"
+                                        : `Show hidden (${hiddenSkills.length})`}
+                                </button>
+                                {hasSkillFilters && (
+                                    <button
+                                        type="button"
+                                        className="btn ghost btn-small"
+                                        onClick={() => {
+                                            setSkillQuery("");
+                                            setSkillSort("default");
+                                        }}
+                                    >
+                                        Clear
+                                    </button>
+                                )}
+                            </div>
+                        )}
+
                         {worldSkills.length === 0 ? (
                             <div className="text-muted">
                                 No world skills are configured. Add entries above to begin planning ranks.
+                            </div>
+                        ) : plannerSkillRows.length === 0 ? (
+                            <div className="text-muted text-small">
+                                {hasSkillFilters
+                                    ? "No skills match your filters."
+                                    : "Everything is hidden. Use “Show hidden” to bring skills back."}
                             </div>
                         ) : (
                             <div className="sheet-table-wrapper">
@@ -1274,11 +1347,49 @@ function WorldSkillsTab({ game, me, onUpdate }) {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {skillRows.map((row) => (
-                                            <tr key={row.key}>
-                                                <th scope="row">
-                                                    <span className="skill-name">{row.label}</span>
-                                                </th>
+                                        {plannerSkillRows.map((row) => {
+                                            const isFavorite = favoriteSkillIds.has(row.id);
+                                            return (
+                                                <tr key={row.key}>
+                                                    <th scope="row">
+                                                        <div className="skill-table__header">
+                                                            <span className="skill-name">{row.label}</span>
+                                                            <div className="skill-table__header-actions">
+                                                                <button
+                                                                    type="button"
+                                                                    className={`skill-card__icon-btn skill-card__icon-btn--star${
+                                                                        isFavorite ? " is-active" : ""
+                                                                    }`}
+                                                                    onClick={() => toggleFavoriteSkill(row.id)}
+                                                                    aria-pressed={isFavorite}
+                                                                    aria-label={
+                                                                        isFavorite
+                                                                            ? `Unstar ${row.label}`
+                                                                            : `Star ${row.label}`
+                                                                    }
+                                                                    title={
+                                                                        isFavorite
+                                                                            ? "Unstar to remove from the pinned list"
+                                                                            : "Star to pin this skill to the top"
+                                                                    }
+                                                                >
+                                                                    {isFavorite ? "★" : "☆"}
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    className="skill-card__icon-btn"
+                                                                    onClick={() => {
+                                                                        hideSkillFromView(row.id);
+                                                                        setShowHiddenSkills(true);
+                                                                    }}
+                                                                    aria-label={`Hide ${row.label}`}
+                                                                    title="Hide this skill from the table"
+                                                                >
+                                                                    Hide
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    </th>
                                                 <td>{row.ability}</td>
                                                 <td>
                                                     <span className="pill light">
@@ -1328,7 +1439,8 @@ function WorldSkillsTab({ game, me, onUpdate }) {
                                                     </td>
                                                 )}
                                             </tr>
-                                        ))}
+                                            );
+                                        })}
                                     </tbody>
                                 </table>
                             </div>
