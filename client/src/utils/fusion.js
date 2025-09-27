@@ -217,7 +217,11 @@ export function createFusionPlan({ demonA, demonB, fuseSeed, moonPhase }) {
     let candidates = [];
     const chartArcana = resolveChartArcana(arcanaA, arcanaB);
 
-    if (normalizedPhase === MOON_PHASES.FULL || normalizedPhase === MOON_PHASES.NEW) {
+    const shouldRandomize =
+        (normalizedPhase === MOON_PHASES.FULL && roll?.isCriticalHigh) ||
+        (normalizedPhase === MOON_PHASES.NEW && roll?.isCriticalLow);
+
+    if (shouldRandomize) {
         arcanaSource = "random";
         candidates = buildRandomArcanaOrder(baseSeed);
     } else if (chartArcana) {
