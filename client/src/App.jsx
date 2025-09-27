@@ -5884,6 +5884,8 @@ function AlertOverlay() {
     );
 }
 
+const MAX_PORTRAIT_BYTES = 2 * 1024 * 1024;
+
 // ---------- Sheet ----------
 function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     const isDM = game.dmId === me.id;
@@ -5904,6 +5906,8 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     );
     const slotCharacter = slot?.character;
     const [ch, setCh] = useState(() => normalizeCharacter(slotCharacter, worldSkills));
+    const portraitInputRef = useRef(null);
+    const [portraitError, setPortraitError] = useState("");
     const [saving, setSaving] = useState(false);
     const [showWizard, setShowWizard] = useState(false);
     const [playerSortMode, setPlayerSortMode] = useState("name");
@@ -5915,6 +5919,13 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     useEffect(() => {
         setCh(normalizeCharacter(slotCharacter, worldSkills));
     }, [game.id, selectedPlayerId, slotCharacter, worldSkills]);
+
+    useEffect(() => {
+        setPortraitError("");
+        if (portraitInputRef.current) {
+            portraitInputRef.current.value = "";
+        }
+    }, [slotCharacter, setPortraitError]);
 
     const set = useCallback((path, value) => {
         setCh((prev) => {
@@ -6124,6 +6135,9 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     const arcanaLabel = ch?.profile?.arcana?.trim() || "";
     const alignmentLabel = ch?.profile?.alignment?.trim() || "";
     const handlerName = ch?.profile?.player?.trim() || slot?.username || me.username;
+    const portraitSrc = typeof ch?.profile?.portrait === "string" ? ch.profile.portrait : "";
+    const hasPortrait = portraitSrc.trim() !== "";
+    const portraitAlt = characterName ? `${characterName} portrait` : "Character portrait";
 
     const initiativeValueRaw = get(ch, "resources.initiative");
     const initiativeValue = Number.isFinite(Number(initiativeValueRaw))
@@ -6144,6 +6158,65 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     };
 
     const headlineParts = [classLabel, arcanaLabel, alignmentLabel].filter(Boolean);
+    const portraitButtonLabel = hasPortrait ? "Replace portrait" : "Upload portrait";
+
+    const handlePortraitUploadClick = useCallback(() => {
+        if (disableInputs) return;
+        portraitInputRef.current?.click();
+    }, [disableInputs]);
+
+    const handlePortraitRemove = useCallback(() => {
+        if (disableInputs) return;
+        set("profile.portrait", "");
+        setPortraitError("");
+        if (portraitInputRef.current) {
+            portraitInputRef.current.value = "";
+        }
+    }, [disableInputs, set, setPortraitError]);
+
+    const handlePortraitUpload = useCallback(
+        (event) => {
+            if (disableInputs) return;
+            const input = event.target;
+            const file = input?.files?.[0];
+
+            const resetInput = () => {
+                if (input) input.value = "";
+            };
+
+            if (!file) {
+                resetInput();
+                return;
+            }
+
+            const type = typeof file.type === "string" ? file.type : "";
+            if (type && !type.startsWith("image/")) {
+                setPortraitError("Please choose an image file.");
+                resetInput();
+                return;
+            }
+
+            if (file.size > MAX_PORTRAIT_BYTES) {
+                setPortraitError("Portrait images must be 2 MB or smaller.");
+                resetInput();
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = () => {
+                const result = typeof reader.result === "string" ? reader.result : "";
+                set("profile.portrait", result);
+                setPortraitError("");
+                resetInput();
+            };
+            reader.onerror = () => {
+                setPortraitError("Failed to load image. Try a different file.");
+                resetInput();
+            };
+            reader.readAsDataURL(file);
+        },
+        [disableInputs, set, setPortraitError]
+    );
 
     const handleWizardApply = useCallback(
         async (payload) => {
@@ -6282,12 +6355,58 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
             ) : (
                 <>
                     <div className="sheet-spotlight">
-                        <div className="sheet-spotlight__identity">
-                            <h2>{characterName}</h2>
-                            {headlineParts.length > 0 && (
-                                <p className="sheet-spotlight__meta">{headlineParts.join(" · ")}</p>
-                            )}
-                            <p className="text-muted text-small">Handler: {handlerName}</p>
+                        <div className="sheet-spotlight__top">
+                            <div className="sheet-spotlight__identity">
+                                <h2>{characterName}</h2>
+                                {headlineParts.length > 0 && (
+                                    <p className="sheet-spotlight__meta">{headlineParts.join(" · ")}</p>
+                                )}
+                                <p className="text-muted text-small">Handler: {handlerName}</p>
+                            </div>
+                            <div className="sheet-portrait">
+                                <div className="sheet-portrait__frame">
+                                    {hasPortrait ? (
+                                        <img src={portraitSrc} alt={portraitAlt} className="sheet-portrait__image" />
+                                    ) : (
+                                        <span className="sheet-portrait__placeholder">No portrait uploaded</span>
+                                    )}
+                                </div>
+                                {canEditSheet && (
+                                    <>
+                                        <input
+                                            ref={portraitInputRef}
+                                            type="file"
+                                            accept="image/*"
+                                            onChange={handlePortraitUpload}
+                                            style={{ display: "none" }}
+                                            disabled={disableInputs}
+                                        />
+                                        <div className="sheet-portrait__actions">
+                                            <button
+                                                type="button"
+                                                className="btn secondary btn-small"
+                                                onClick={handlePortraitUploadClick}
+                                                disabled={disableInputs}
+                                            >
+                                                {portraitButtonLabel}
+                                            </button>
+                                            {hasPortrait && (
+                                                <button
+                                                    type="button"
+                                                    className="btn ghost btn-small"
+                                                    onClick={handlePortraitRemove}
+                                                    disabled={disableInputs}
+                                                >
+                                                    Remove
+                                                </button>
+                                            )}
+                                        </div>
+                                        {portraitError && (
+                                            <p className="text-error sheet-portrait__error">{portraitError}</p>
+                                        )}
+                                    </>
+                                )}
+                            </div>
                         </div>
                         <div className="sheet-spotlight__stats">
                             <div className="sheet-spotlight__stat">
