@@ -1119,6 +1119,9 @@ function ensureGameShape(game) {
     if (!game.demonPool || typeof game.demonPool !== 'object') game.demonPool = { max: 0, used: 0 };
     game.demonPool.max = Number(game.demonPool.max) || 0;
     game.demonPool.used = Number(game.demonPool.used) || 0;
+    if (typeof game.fuseSeed !== 'string' || !game.fuseSeed.trim()) {
+        game.fuseSeed = crypto.randomBytes(16).toString('hex');
+    }
     if (!game.permissions || typeof game.permissions !== 'object') {
         game.permissions = {
             canEditStats: false,
@@ -1169,6 +1172,7 @@ function presentGame(game, { includeSecrets = false } = {}) {
         gear: normalized.gear,
         demons: normalized.demons,
         demonPool: normalized.demonPool,
+        fuseSeed: normalized.fuseSeed,
         permissions: normalized.permissions,
         invites: normalized.invites,
         story: presentStoryConfig(story, { includeSecrets }),
@@ -3740,6 +3744,7 @@ app.post('/api/games', requireAuth, async (req, res) => {
         gear: { custom: [] },
         demons: [],
         demonPool: { max: 0, used: 0 },
+        fuseSeed: crypto.randomBytes(16).toString('hex'),
         permissions: {
             canEditStats: false,
             canEditItems: false,

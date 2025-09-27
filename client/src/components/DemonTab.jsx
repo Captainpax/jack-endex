@@ -22,11 +22,13 @@ import {
 } from "../constants/gameData";
 import { EMPTY_ARRAY, EMPTY_OBJECT } from "../utils/constants";
 import {
+    MOON_PHASE_OPTIONS,
+    createFusionPlan,
     describeFusionPair,
+    formatMoonPhaseLabel,
     getArcanaLabel,
-    listArcanaOptions,
-    normalizeArcanaKey,
-    suggestFusionArcana,
+    normalizeMoonPhase,
+    resolveFusionResult,
 } from "../utils/fusion";
 
 const FUSION_SEARCH_DEBOUNCE_MS = 350;
@@ -375,146 +377,161 @@ function FusionSlot({ title, slot, onUsePersona }) {
     );
 }
 
+
 function DemonFusionPlanner({ game, onUsePersona, onRefresh }) {
-    const arcanaOptions = useMemo(() => listArcanaOptions(), []);
     const leftSlot = useFusionSlot();
     const rightSlot = useFusionSlot();
+    const [moonPhase, setMoonPhase] = useState(() => MOON_PHASE_OPTIONS[2]?.value || "other");
+    const [plan, setPlan] = useState(null);
+    const [rosterState, setRosterState] = useState({
+        arcanaKey: "",
+        arcanaLabel: "",
+        demons: [],
+        loading: false,
+        error: "",
+        candidateIndex: 0,
+    });
+    const [fusionResult, setFusionResult] = useState(null);
+    const [history, setHistory] = useState([]);
+    const lastHistoryRef = useRef("");
 
-    const leftArcana = normalizeArcanaKey(leftSlot.selected?.arcana || "");
-    const rightArcana = normalizeArcanaKey(rightSlot.selected?.arcana || "");
-    const fusionSuggestion = useMemo(
-        () => suggestFusionArcana(leftArcana, rightArcana),
-        [leftArcana, rightArcana],
-    );
-
-    const [targetArcana, setTargetArcana] = useState("");
-    const [targetArcanaManual, setTargetArcanaManual] = useState(false);
+    const fusionPairLabel = describeFusionPair(leftSlot.selected?.arcana, rightSlot.selected?.arcana);
+    const fusionReady = Boolean(leftSlot.selected && rightSlot.selected && game?.fuseSeed);
 
     useEffect(() => {
-        if (!leftSlot.selected || !rightSlot.selected) {
-            setTargetArcana("");
-            setTargetArcanaManual(false);
+        if (!fusionReady) {
+            setPlan(null);
+            setFusionResult(null);
+            setRosterState({ arcanaKey: "", arcanaLabel: "", demons: [], loading: false, error: "", candidateIndex: 0 });
             return;
         }
-        if (!targetArcanaManual) {
-            setTargetArcana(fusionSuggestion || "");
-        }
-    }, [fusionSuggestion, leftSlot.selected, rightSlot.selected, targetArcanaManual]);
-
-    const handleArcanaChange = useCallback((event) => {
-        setTargetArcanaManual(true);
-        setTargetArcana(event.target.value);
-    }, []);
-
-    const resetArcanaSuggestion = useCallback(() => {
-        setTargetArcanaManual(false);
-    }, []);
-
-    const targetArcanaLabel = targetArcana ? getArcanaLabel(targetArcana) || targetArcana : "";
-    const fusionPairLabel = describeFusionPair(leftSlot.selected?.arcana, rightSlot.selected?.arcana);
-
-    const [arcanaDemons, setArcanaDemons] = useState([]);
-    const [arcanaLoading, setArcanaLoading] = useState(false);
-    const [arcanaError, setArcanaError] = useState("");
+        const nextPlan = createFusionPlan({
+            demonA: leftSlot.selected,
+            demonB: rightSlot.selected,
+            fuseSeed: game.fuseSeed,
+            moonPhase,
+        });
+        setPlan(nextPlan);
+    }, [fusionReady, leftSlot.selected, rightSlot.selected, game?.fuseSeed, moonPhase]);
 
     useEffect(() => {
         let cancelled = false;
-        if (!leftSlot.selected || !rightSlot.selected || !targetArcanaLabel) {
-            setArcanaDemons([]);
-            setArcanaError("");
-            setArcanaLoading(false);
+        if (!plan || !Array.isArray(plan.arcanaCandidates) || plan.arcanaCandidates.length === 0) {
+            setRosterState({ arcanaKey: "", arcanaLabel: "", demons: [], loading: false, error: plan ? "No fusion arcana available." : "", candidateIndex: 0 });
             return;
         }
-        setArcanaLoading(true);
-        setArcanaError("");
-        Personas.list({ arcana: targetArcanaLabel, limit: 200 })
-            .then((list) => {
-                if (cancelled) return;
-                setArcanaDemons(Array.isArray(list) ? list : []);
-            })
-            .catch((err) => {
-                if (cancelled) return;
-                console.warn("Failed to load fusion arcana roster", err);
-                setArcanaDemons([]);
-                setArcanaError(err instanceof ApiError ? err.message : "Failed to load arcana roster");
-            })
-            .finally(() => {
+
+        const run = async () => {
+            for (let index = 0; index < plan.arcanaCandidates.length; index += 1) {
+                const arcanaKey = plan.arcanaCandidates[index];
+                const arcanaLabel = getArcanaLabel(arcanaKey) || arcanaKey;
                 if (!cancelled) {
-                    setArcanaLoading(false);
+                    setRosterState({ arcanaKey, arcanaLabel, demons: [], loading: true, error: "", candidateIndex: index });
                 }
-            });
+                try {
+                    const list = await Personas.list({ arcana: arcanaLabel, limit: 200 });
+                    if (cancelled) return;
+                    const demons = Array.isArray(list) ? list : [];
+                    if (demons.length > 0) {
+                        setRosterState({ arcanaKey, arcanaLabel, demons, loading: false, error: "", candidateIndex: index });
+                        return;
+                    }
+                } catch (err) {
+                    if (cancelled) return;
+                    const message = err instanceof ApiError ? err.message : "Failed to load arcana roster";
+                    setRosterState({ arcanaKey, arcanaLabel, demons: [], loading: false, error: message, candidateIndex: index });
+                    return;
+                }
+            }
+
+            if (!cancelled) {
+                const fallbackKey = plan.arcanaCandidates[0];
+                const fallbackLabel = getArcanaLabel(fallbackKey) || fallbackKey;
+                setRosterState({
+                    arcanaKey: fallbackKey,
+                    arcanaLabel: fallbackLabel,
+                    demons: [],
+                    loading: false,
+                    error: "No demons available for the selected arcana.",
+                    candidateIndex: plan.arcanaCandidates.length - 1,
+                });
+            }
+        };
+
+        run();
         return () => {
             cancelled = true;
         };
-    }, [leftSlot.selected, rightSlot.selected, targetArcanaLabel]);
-
-    const leftLevel = Number(leftSlot.selected?.level);
-    const rightLevel = Number(rightSlot.selected?.level);
-    const hasLevels = Number.isFinite(leftLevel) && Number.isFinite(rightLevel);
-    const averageExact = hasLevels ? (leftLevel + rightLevel) / 2 : null;
-    const averageFloor = hasLevels ? Math.floor(averageExact) : null;
-
-    const recommendedIndex = useMemo(() => {
-        if (!Array.isArray(arcanaDemons) || arcanaDemons.length === 0 || averageFloor === null) {
-            return -1;
-        }
-        let idx = arcanaDemons.findIndex((entry) => Number(entry?.level) >= averageFloor);
-        if (idx === -1) idx = arcanaDemons.length - 1;
-        return idx;
-    }, [arcanaDemons, averageFloor]);
-
-    const [resultIndex, setResultIndex] = useState(0);
-    const [resultManual, setResultManual] = useState(false);
+    }, [plan]);
 
     useEffect(() => {
-        if (!Array.isArray(arcanaDemons) || arcanaDemons.length === 0) {
-            setResultIndex(0);
-            setResultManual(false);
+        if (!plan || !rosterState.arcanaKey || rosterState.loading || rosterState.error) {
+            setFusionResult(null);
             return;
         }
-        if (!resultManual) {
-            if (recommendedIndex >= 0) {
-                setResultIndex(recommendedIndex);
-            } else {
-                setResultIndex(0);
-            }
-        }
-    }, [arcanaDemons, recommendedIndex, resultManual]);
+        const outcome = resolveFusionResult({
+            plan,
+            demons: rosterState.demons,
+            arcanaKey: rosterState.arcanaKey,
+            arcanaLabel: rosterState.arcanaLabel,
+            demonA: leftSlot.selected,
+            demonB: rightSlot.selected,
+        });
+        setFusionResult(outcome);
+    }, [plan, rosterState, leftSlot.selected, rightSlot.selected]);
 
-    const resultDemon = arcanaDemons[resultIndex] || null;
+    useEffect(() => {
+        if (!plan || !fusionResult?.demon || !leftSlot.selected || !rightSlot.selected) return;
+        const signature = [
+            plan.pairKey,
+            plan.moonPhase,
+            rosterState.arcanaKey,
+            fusionResult.demon.id || fusionResult.demon.slug || fusionResult.demon.name || "",
+        ].join("|");
+        if (lastHistoryRef.current === signature) return;
+        lastHistoryRef.current = signature;
+        const pairLabel = describeFusionPair(leftSlot.selected?.arcana, rightSlot.selected?.arcana);
+        setHistory((prev) => {
+            const entry = {
+                id: signature,
+                timestamp: Date.now(),
+                arcanaKey: rosterState.arcanaKey,
+                arcanaLabel: rosterState.arcanaLabel,
+                result: fusionResult.demon,
+                averageLevel: fusionResult.averageLevel,
+                moonPhase: plan.moonPhase,
+                roll: plan.roll,
+                notifications: plan.notifications,
+                pairLabel,
+                leftName: leftSlot.selected?.name || "Unknown",
+                rightName: rightSlot.selected?.name || "Unknown",
+            };
+            const next = [entry, ...prev];
+            return next.slice(0, 12);
+        });
+    }, [plan, fusionResult, rosterState.arcanaKey, rosterState.arcanaLabel, leftSlot.selected, rightSlot.selected]);
 
-    const selectResult = useCallback((index) => {
-        setResultManual(true);
-        setResultIndex(index);
-    }, []);
+    const fusionArcanaLabel = rosterState.arcanaLabel;
+    const fusionResultDemon = fusionResult?.demon || null;
+    const averageLevelDisplay =
+        fusionResult?.averageLevel !== null && fusionResult?.averageLevel !== undefined
+            ? fusionResult.averageLevel.toFixed(1)
+            : "—";
+    const roundingLabel = fusionResult?.rounding?.label || "—";
+    const moonPhaseLabel = formatMoonPhaseLabel(moonPhase);
+    const isRandomArcana = plan?.arcanaSource === "random";
 
-    const stepResult = useCallback(
-        (delta) => {
-            if (!Array.isArray(arcanaDemons) || arcanaDemons.length === 0) return;
-            setResultManual(true);
-            setResultIndex((prev) => {
-                const next = (prev + delta + arcanaDemons.length) % arcanaDemons.length;
-                return next;
-            });
-        },
-        [arcanaDemons],
-    );
-
-    const resetResultSelection = useCallback(() => {
-        setResultManual(false);
-    }, []);
-
-    const resultStats = useMemo(() => resolveAbilityState(resultDemon?.stats), [resultDemon]);
+    const resultStats = useMemo(() => resolveAbilityState(fusionResultDemon?.stats), [fusionResultDemon]);
     const resultResistances = useMemo(() => {
         const map = {};
         for (const field of RESISTANCE_FIELDS) {
-            map[field.key] = getResistanceValues(resultDemon, field.key);
+            map[field.key] = getResistanceValues(fusionResultDemon, field.key);
         }
         return map;
-    }, [resultDemon]);
+    }, [fusionResultDemon]);
     const resultSkills = useMemo(() => {
-        if (!Array.isArray(resultDemon?.skills)) return EMPTY_ARRAY;
-        return resultDemon.skills
+        if (!Array.isArray(fusionResultDemon?.skills)) return EMPTY_ARRAY;
+        return fusionResultDemon.skills
             .map((skill) => {
                 if (!skill) return null;
                 if (typeof skill === "string") return skill;
@@ -526,7 +543,7 @@ function DemonFusionPlanner({ game, onUsePersona, onRefresh }) {
                 return parts.length > 0 ? `${name} (${parts.join(" · ")})` : name;
             })
             .filter(Boolean);
-    }, [resultDemon]);
+    }, [fusionResultDemon]);
 
     const poolUsed = Number(game?.demonPool?.used ?? 0);
     const rawMax = game?.demonPool?.max;
@@ -536,7 +553,7 @@ function DemonFusionPlanner({ game, onUsePersona, onRefresh }) {
     const [busyAdd, setBusyAdd] = useState(false);
 
     const handleAddToPool = useCallback(async () => {
-        if (!resultDemon) return;
+        if (!fusionResultDemon) return;
         try {
             setBusyAdd(true);
             const resistancePayload = RESISTANCE_FIELDS.reduce((acc, field) => {
@@ -545,57 +562,56 @@ function DemonFusionPlanner({ game, onUsePersona, onRefresh }) {
                 return acc;
             }, {});
             const payload = {
-                name: resultDemon.name,
-                arcana: resultDemon.arcana,
-                alignment: resultDemon.alignment,
-                level: Number(resultDemon.level) || 0,
-                stats: resolveAbilityState(resultDemon.stats),
+                name: fusionResultDemon.name,
+                arcana: fusionResultDemon.arcana,
+                alignment: fusionResultDemon.alignment,
+                level: Number(fusionResultDemon.level) || 0,
+                stats: resolveAbilityState(fusionResultDemon.stats),
                 resistances: resistancePayload,
-                skills: Array.isArray(resultDemon.skills)
-                    ? resultDemon.skills
+                skills: Array.isArray(fusionResultDemon.skills)
+                    ? fusionResultDemon.skills
                         .map((skill) => (typeof skill === "string" ? skill : skill?.name))
                         .filter((skill) => typeof skill === "string" && skill.trim().length > 0)
                     : [],
                 notes: [
                     `Fusion of ${leftSlot.selected?.name || "Unknown"} + ${rightSlot.selected?.name || "Unknown"}.`,
-                    typeof resultDemon.description === "string" ? resultDemon.description.trim() : "",
+                    typeof fusionResultDemon.description === "string" ? fusionResultDemon.description.trim() : "",
                 ]
                     .filter(Boolean)
                     .join("\n\n"),
-                image: resultDemon.image || "",
+                image: fusionResultDemon.image || "",
             };
             await Games.addDemon(game.id, payload);
             await onRefresh?.();
-            alert(`${resultDemon.name} added to the shared pool.`);
+            alert(`${fusionResultDemon.name} added to the shared pool.`);
         } catch (err) {
             const message = err instanceof ApiError ? err.message : "Failed to add fused demon.";
             alert(message);
         } finally {
             setBusyAdd(false);
         }
-    }, [resultDemon, resultResistances, leftSlot.selected, rightSlot.selected, game.id, onRefresh]);
+    }, [fusionResultDemon, resultResistances, leftSlot.selected, rightSlot.selected, game.id, onRefresh]);
 
     const handleSendToEditor = useCallback(async () => {
-        if (!resultDemon?.slug || !onUsePersona) return;
+        if (!fusionResultDemon?.slug || !onUsePersona) return;
         try {
-            await onUsePersona(resultDemon.slug);
+            await onUsePersona(fusionResultDemon.slug);
         } catch (err) {
             const message = err instanceof ApiError ? err.message : "Failed to load demon.";
             alert(message);
         }
-    }, [resultDemon, onUsePersona]);
+    }, [fusionResultDemon, onUsePersona]);
 
-    const fusionReady = Boolean(leftSlot.selected && rightSlot.selected);
-    const arcanaRosterReady =
-        fusionReady && Boolean(targetArcanaLabel) && Array.isArray(arcanaDemons) && arcanaDemons.length > 0;
+    const arcanaLoading = rosterState.loading;
+    const arcanaError = rosterState.error;
 
     return (
         <div className="demon-fusion">
             <div className="demon-fusion__intro">
                 <h4>Demon fusion planner</h4>
                 <p className="text-small text-muted">
-                    Pick two demons to estimate a fusion result. Adjust the target arcana to explore alternate outcomes,
-                    then add the fused demon to the shared pool.
+                    Select two demons to preview the automatic fusion result. The current moon phase can twist the arcana
+                    and ranking that emerge.
                 </p>
             </div>
             <div className="demon-fusion__grid">
@@ -605,183 +621,204 @@ function DemonFusionPlanner({ game, onUsePersona, onRefresh }) {
                     <div className="demon-fusion__summary-header">
                         <div>
                             <h4>Fusion result</h4>
-                            {fusionSuggestion && fusionReady && (
-                                <p className="text-small text-muted">
-                                    Suggested arcana: {getArcanaLabel(fusionSuggestion) || fusionSuggestion}
-                                </p>
+                            {isRandomArcana && (
+                                <p className="text-small text-muted">Arcana chosen at random due to the {moonPhaseLabel.toLowerCase()}.</p>
                             )}
                         </div>
-                        {fusionReady && fusionSuggestion && targetArcanaManual && (
-                            <button type="button" className="btn ghost btn-small" onClick={resetArcanaSuggestion}>
-                                Reset to suggestion
-                            </button>
-                        )}
                     </div>
                     <div className="demon-fusion__summary-grid">
                         <div className="demon-fusion__summary-row">
-                            <span>Ingredients</span>
+                            <span>Materials</span>
                             <span>{fusionReady ? fusionPairLabel || "—" : "—"}</span>
                         </div>
-                        <div className="demon-fusion__summary-row">
-                            <span>Average level</span>
-                            <span>
-                                {averageExact !== null
-                                    ? `${averageExact.toFixed(1)} (floor ${averageFloor})`
-                                    : "—"}
-                            </span>
-                        </div>
-                        <label className="field">
-                            <span className="field__label">Target arcana</span>
+                        <label className="field demon-fusion__summary-row">
+                            <span className="field__label">Moon phase</span>
                             <select
-                                value={targetArcana || ""}
-                                onChange={handleArcanaChange}
-                                disabled={!fusionReady}
+                                id="fusion-moon-phase"
+                                value={moonPhase}
+                                onChange={(event) => setMoonPhase(normalizeMoonPhase(event.target.value))}
                             >
-                                <option value="">{fusionReady ? "Select arcana…" : "Select materials first"}</option>
-                                {arcanaOptions.map((option) => (
-                                    <option key={option.key} value={option.key}>
+                                {MOON_PHASE_OPTIONS.map((option) => (
+                                    <option key={option.value} value={option.value}>
                                         {option.label}
                                     </option>
                                 ))}
                             </select>
                         </label>
+                        <div className="demon-fusion__summary-row">
+                            <span>Result arcana</span>
+                            <span>{fusionArcanaLabel ? `${fusionArcanaLabel}${isRandomArcana ? " · Randomized" : ""}` : "—"}</span>
+                        </div>
+                        <div className="demon-fusion__summary-row">
+                            <span>Average level</span>
+                            <span>{averageLevelDisplay}</span>
+                        </div>
+                        <div className="demon-fusion__summary-row">
+                            <span>Selection rule</span>
+                            <span>{roundingLabel}</span>
+                        </div>
+                        {fusionResult?.targetLevel !== null && fusionResult?.targetLevel !== undefined && (
+                            <div className="demon-fusion__summary-row">
+                                <span>Target demon level</span>
+                                <span>LV {fusionResult.targetLevel}</span>
+                            </div>
+                        )}
                     </div>
+                    {plan?.roll && (
+                        <div className="demon-fusion__summary-note text-small">
+                            Moon roll: {plan.roll.value}/20
+                            {plan.roll.isCriticalHigh
+                                ? " · Critical success"
+                                : plan.roll.isCriticalLow
+                                    ? " · Critical failure"
+                                    : ""}
+                        </div>
+                    )}
+                    {Array.isArray(plan?.notifications) && plan.notifications.length > 0 && (
+                        <div className="demon-fusion__summary-note text-small">
+                            {plan.notifications.map((note) => (
+                                <div key={note}>{note}</div>
+                            ))}
+                        </div>
+                    )}
                     {!fusionReady && (
                         <div className="demon-fusion__empty text-small text-muted">
                             Choose two ingredient demons to preview a fusion.
                         </div>
                     )}
-                    {fusionReady && !targetArcanaLabel && (
-                        <div className="demon-fusion__empty text-small text-muted">
-                            Pick an arcana to search for fusion candidates.
+                    {fusionReady && arcanaError && (
+                        <div className="text-small text-error">{arcanaError}</div>
+                    )}
+                    {fusionReady && !arcanaError && arcanaLoading && (
+                        <div className="text-small text-muted">
+                            Loading {fusionArcanaLabel || "fusion"} roster…
                         </div>
                     )}
-                    {fusionReady && targetArcanaLabel && (
-                        <>
-                            {arcanaLoading && (
-                                <div className="text-small text-muted">Loading {targetArcanaLabel} roster…</div>
-                            )}
-                            {arcanaError && <div className="text-small text-error">{arcanaError}</div>}
-                            {arcanaRosterReady && resultDemon && (
-                                <div className="demon-fusion__result-card">
-                                    <div className="demon-fusion__result-meta">
-                                        <strong>{resultDemon.name}</strong>
+                    {fusionReady && !arcanaLoading && !fusionResultDemon && !arcanaError && (
+                        <div className="demon-fusion__empty text-small text-muted">
+                            No demons found for the {fusionArcanaLabel || "selected"} arcana in the codex.
+                        </div>
+                    )}
+                    {fusionReady && fusionResultDemon && (
+                        <div className="demon-fusion__result-card">
+                            <div className="demon-fusion__result-meta">
+                                <strong>{fusionResultDemon.name}</strong>
+                                <span className="text-small text-muted">
+                                    {(fusionResultDemon.arcana || "—")} · {(fusionResultDemon.alignment || "—")} · LV {fusionResultDemon.level ?? "—"}
+                                </span>
+                                {fusionResultDemon.description && (
+                                    <p className="text-small">{fusionResultDemon.description}</p>
+                                )}
+                            </div>
+                            <div className="demon-fusion__result-stats">
+                                {ABILITY_DEFS.map((ability) => (
+                                    <span key={ability.key} className="pill">
+                                        {ability.key} {resultStats[ability.key]} ({formatModifier(abilityModifier(resultStats[ability.key]))})
+                                    </span>
+                                ))}
+                            </div>
+                            <div className="demon-fusion__result-resist text-small">
+                                {RESISTANCE_FIELDS.map((field) => (
+                                    <div key={field.key}>
+                                        <strong>{field.label}:</strong>{" "}
+                                        {formatResistanceList(resultResistances[field.key])}
+                                    </div>
+                                ))}
+                            </div>
+                            {resultSkills.length > 0 && (
+                                <div className="demon-fusion__result-skills">
+                                    <strong>Skills</strong>
+                                    {resultSkills.slice(0, 6).map((skill) => (
+                                        <span key={skill}>&bull; {skill}</span>
+                                    ))}
+                                    {resultSkills.length > 6 && (
                                         <span className="text-small text-muted">
-                                            {(resultDemon.arcana || "—")} · {(resultDemon.alignment || "—")} · LV {resultDemon.level ?? "—"}
+                                            …and {resultSkills.length - 6} more
                                         </span>
-                                        {resultDemon.description && (
-                                            <p className="text-small">{resultDemon.description}</p>
-                                        )}
-                                    </div>
-                                    <div className="demon-fusion__result-stats">
-                                        {ABILITY_DEFS.map((ability) => (
-                                            <span key={ability.key} className="pill">
-                                                {ability.key} {resultStats[ability.key]} ({formatModifier(abilityModifier(resultStats[ability.key]))})
-                                            </span>
-                                        ))}
-                                    </div>
-                                    <div className="demon-fusion__result-resist text-small">
-                                        {RESISTANCE_FIELDS.map((field) => (
-                                            <div key={field.key}>
-                                                <strong>{field.label}:</strong>{" "}
-                                                {formatResistanceList(resultResistances[field.key])}
-                                            </div>
-                                        ))}
-                                    </div>
-                                    {resultSkills.length > 0 && (
-                                        <div className="demon-fusion__result-skills">
-                                            <strong>Skills</strong>
-                                            {resultSkills.slice(0, 6).map((skill) => (
-                                                <span key={skill}>&bull; {skill}</span>
-                                            ))}
-                                            {resultSkills.length > 6 && (
-                                                <span className="text-small text-muted">
-                                                    …and {resultSkills.length - 6} more
-                                                </span>
-                                            )}
-                                        </div>
-                                    )}
-                                    <div className="demon-fusion__candidate-nav">
-                                        {arcanaDemons.length > 1 && (
-                                            <>
-                                                <button
-                                                    type="button"
-                                                    className="btn ghost btn-small"
-                                                    onClick={() => stepResult(-1)}
-                                                >
-                                                    Previous
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    className="btn ghost btn-small"
-                                                    onClick={() => stepResult(1)}
-                                                >
-                                                    Next
-                                                </button>
-                                            </>
-                                        )}
-                                        {resultManual && (
-                                            <button
-                                                type="button"
-                                                className="btn ghost btn-small"
-                                                onClick={resetResultSelection}
-                                            >
-                                                Use suggested result
-                                            </button>
-                                        )}
-                                    </div>
-                                    <div className="demon-fusion__actions">
-                                        {resultDemon.slug && (
-                                            <button type="button" className="btn ghost" onClick={handleSendToEditor}>
-                                                Load result in editor
-                                            </button>
-                                        )}
-                                        <button
-                                            type="button"
-                                            className="btn"
-                                            onClick={handleAddToPool}
-                                            disabled={busyAdd || poolFull}
-                                        >
-                                            {busyAdd ? "Adding…" : "Add fused demon to pool"}
-                                        </button>
-                                    </div>
-                                    {poolFull && (
-                                        <div className="text-small text-muted">
-                                            Demon pool is full ({poolUsed}/{poolMax}). Remove a demon or increase the limit before adding new allies.
-                                        </div>
                                     )}
                                 </div>
                             )}
-                            {arcanaRosterReady && (
-                                <div className="demon-fusion__candidate-list">
-                                    <div className="text-small text-muted">{targetArcanaLabel} lineup</div>
-                                    <div className="demon-fusion__candidate-scroll">
-                                        {arcanaDemons.map((entry, index) => (
-                                            <button
-                                                key={entry.slug || `${entry.name}-${index}`}
-                                                type="button"
-                                                className={`demon-fusion__candidate${index === resultIndex ? " is-active" : ""}`}
-                                                onClick={() => selectResult(index)}
-                                            >
-                                                <span>{entry.name}</span>
-                                                <span className="text-small text-muted">LV {entry.level ?? "—"}</span>
-                                            </button>
-                                        ))}
+                            <div className="demon-fusion__actions">
+                                {fusionResultDemon.slug && (
+                                    <button type="button" className="btn ghost" onClick={handleSendToEditor}>
+                                        Load result in editor
+                                    </button>
+                                )}
+                                <button
+                                    type="button"
+                                    className="btn"
+                                    onClick={handleAddToPool}
+                                    disabled={busyAdd || poolFull}
+                                >
+                                    {busyAdd ? "Adding…" : "Add fused demon to pool"}
+                                </button>
+                            </div>
+                            {poolFull && (
+                                <div className="text-small text-muted">
+                                    Demon pool is full ({poolUsed}/{poolMax}). Remove a demon or increase the limit before adding new allies.
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    {fusionReady && rosterState.demons.length > 0 && (
+                        <div className="demon-fusion__candidate-list">
+                            <div className="text-small text-muted">{fusionArcanaLabel || "Arcana"} lineup</div>
+                            <div className="demon-fusion__candidate-scroll">
+                                {rosterState.demons.map((entry, index) => (
+                                    <div
+                                        key={entry.slug || `${entry.name}-${index}`}
+                                        className={`demon-fusion__candidate${fusionResult?.selectedIndex === index ? " is-active" : ""}`}
+                                    >
+                                        <span>{entry.name}</span>
+                                        <span className="text-small text-muted">LV {entry.level ?? "—"}</span>
                                     </div>
-                                </div>
-                            )}
-                            {fusionReady && targetArcanaLabel && !arcanaLoading && arcanaDemons.length === 0 && (
-                                <div className="demon-fusion__empty text-small text-muted">
-                                    No demons found for the {targetArcanaLabel} arcana in the codex.
-                                </div>
-                            )}
-                        </>
+                                ))}
+                            </div>
+                        </div>
                     )}
                 </section>
             </div>
+            {history.length > 0 && (
+                <section className="demon-fusion__history">
+                    <h5>Fusion history</h5>
+                    <div className="demon-fusion__history-list">
+                        {history.map((entry) => {
+                            const time = new Date(entry.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+                            return (
+                                <article key={entry.id} className="demon-fusion__history-entry">
+                                    <div className="demon-fusion__history-header-row">
+                                        <div>
+                                            <strong>{entry.result?.name || "Unknown"}</strong>
+                                            <span className="text-small text-muted">
+                                                {entry.arcanaLabel || "—"} · LV {entry.result?.level ?? "—"}
+                                            </span>
+                                        </div>
+                                        <span className="text-small text-muted">{time}</span>
+                                    </div>
+                                    <div className="text-small">
+                                        Materials: {entry.pairLabel || "—"}
+                                    </div>
+                                    <div className="text-small text-muted">
+                                        {formatMoonPhaseLabel(entry.moonPhase)}
+                                        {entry.roll ? ` · Roll ${entry.roll.value}/20` : ""}
+                                    </div>
+                                    {entry.notifications?.length > 0 && (
+                                        <div className="text-small">
+                                            {entry.notifications.map((note) => (
+                                                <div key={note}>{note}</div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </article>
+                            );
+                        })}
+                    </div>
+                </section>
+            )}
         </div>
     );
 }
+
 
 function DemonTab({ game, me, onUpdate }) {
     const [name, setName] = useState("");
