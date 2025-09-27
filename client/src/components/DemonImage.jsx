@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EMPTY_ARRAY } from "../utils/constants";
 
@@ -209,14 +209,23 @@ export default function DemonImage({
     onError,
     crossOrigin: crossOriginProp,
     referrerPolicy: referrerPolicyProp,
+    enablePreview = false,
     ...imgProps
 }) {
     const sources = useMemo(() => computeDemonImageSources(src, { personaSlug }), [src, personaSlug]);
     const [index, setIndex] = useState(0);
+    const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+    const closeButtonRef = useRef(null);
 
     useEffect(() => {
         setIndex(0);
     }, [sources]);
+
+    useEffect(() => {
+        if (!enablePreview) {
+            setIsPreviewOpen(false);
+        }
+    }, [enablePreview]);
 
     const handleError = useCallback(
         (event) => {
@@ -229,6 +238,41 @@ export default function DemonImage({
         [index, onError, sources.length],
     );
 
+    const openPreview = useCallback(() => {
+        if (!enablePreview || sources.length === 0) return;
+        setIsPreviewOpen(true);
+    }, [enablePreview, sources.length]);
+
+    const closePreview = useCallback(() => {
+        setIsPreviewOpen(false);
+    }, []);
+
+    useEffect(() => {
+        if (!enablePreview || !isPreviewOpen) return undefined;
+        const handleKey = (event) => {
+            if (event.key === "Escape") {
+                event.preventDefault();
+                setIsPreviewOpen(false);
+            }
+        };
+        window.addEventListener("keydown", handleKey);
+        return () => window.removeEventListener("keydown", handleKey);
+    }, [enablePreview, isPreviewOpen]);
+
+    useEffect(() => {
+        if (!enablePreview || !isPreviewOpen) return undefined;
+        const previous = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        return () => {
+            document.body.style.overflow = previous;
+        };
+    }, [enablePreview, isPreviewOpen]);
+
+    useEffect(() => {
+        if (!enablePreview || !isPreviewOpen) return;
+        closeButtonRef.current?.focus();
+    }, [enablePreview, isPreviewOpen]);
+
     if (sources.length === 0) {
         return null;
     }
@@ -236,14 +280,88 @@ export default function DemonImage({
     const crossOrigin = crossOriginProp ?? "anonymous";
     const referrerPolicy = referrerPolicyProp ?? "no-referrer";
 
+    const {
+        className: imgClassName,
+        onClick: imgOnClick,
+        onKeyDown: imgOnKeyDown,
+        tabIndex: imgTabIndex,
+        role: imgRole,
+        ["aria-haspopup"]: imgAriaHasPopup,
+        ...restImgProps
+    } = imgProps;
+
+    const interactive = enablePreview && sources.length > 0;
+
+    const handleImageClick = (event) => {
+        if (imgOnClick) {
+            imgOnClick(event);
+        }
+        if (event.defaultPrevented) return;
+        openPreview();
+    };
+
+    const handleImageKeyDown = (event) => {
+        if (imgOnKeyDown) {
+            imgOnKeyDown(event);
+        }
+        if (event.defaultPrevented) return;
+        if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            openPreview();
+        }
+    };
+
+    const mergedClassName = interactive
+        ? [imgClassName, "demon-image--interactive"].filter(Boolean).join(" ")
+        : imgClassName;
+
+    const finalTabIndex = interactive ? imgTabIndex ?? 0 : imgTabIndex;
+    const finalRole = interactive ? imgRole ?? "button" : imgRole;
+    const finalAriaHasPopup = interactive ? imgAriaHasPopup ?? "dialog" : imgAriaHasPopup;
+
     return (
-        <img
-            {...imgProps}
-            alt={alt}
-            src={sources[index]}
-            onError={handleError}
-            crossOrigin={crossOrigin}
-            referrerPolicy={referrerPolicy}
-        />
+        <>
+            <img
+                {...restImgProps}
+                className={mergedClassName}
+                alt={alt}
+                src={sources[index]}
+                onError={handleError}
+                onClick={interactive ? handleImageClick : imgOnClick}
+                onKeyDown={interactive ? handleImageKeyDown : imgOnKeyDown}
+                tabIndex={finalTabIndex}
+                role={finalRole}
+                aria-haspopup={finalAriaHasPopup}
+                crossOrigin={crossOrigin}
+                referrerPolicy={referrerPolicy}
+            />
+            {interactive && isPreviewOpen && (
+                <div
+                    className="demon-image-lightbox"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label={alt || "Demon artwork preview"}
+                    onClick={closePreview}
+                >
+                    <div className="demon-image-lightbox__body" onClick={(event) => event.stopPropagation()}>
+                        <button
+                            type="button"
+                            className="btn ghost btn-small demon-image-lightbox__close"
+                            onClick={closePreview}
+                            ref={closeButtonRef}
+                        >
+                            Close
+                        </button>
+                        <img
+                            src={sources[index]}
+                            alt={alt}
+                            className="demon-image-lightbox__image"
+                            crossOrigin={crossOrigin}
+                            referrerPolicy={referrerPolicy}
+                        />
+                    </div>
+                </div>
+            )}
+        </>
     );
 }
