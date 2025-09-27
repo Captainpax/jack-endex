@@ -1577,8 +1577,8 @@ function GameView({
 }
 
 const MAP_DEFAULT_SETTINGS = Object.freeze({
-    allowPlayerDrawing: false,
-    allowPlayerTokenMoves: false,
+    allowPlayerDrawing: true,
+    allowPlayerTokenMoves: true,
 });
 
 const MAP_BRUSH_COLORS = ['#f97316', '#38bdf8', '#a855f7', '#22c55e', '#f472b6'];
@@ -1620,16 +1620,17 @@ function mapClamp01(value) {
     return num;
 }
 
-function mapReadBoolean(value) {
+function mapReadBoolean(value, fallback = false) {
     if (typeof value === 'boolean') return value;
     if (typeof value === 'number') return value !== 0;
     if (typeof value === 'string') {
         const normalized = value.trim().toLowerCase();
-        if (!normalized) return false;
+        if (!normalized) return fallback;
         if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
         if (['false', '0', 'no', 'off'].includes(normalized)) return false;
     }
-    return false;
+    if (value === null || value === undefined) return fallback;
+    return Boolean(value);
 }
 
 function clamp(value, min, max, fallback = min) {
@@ -2120,8 +2121,14 @@ function normalizeClientMapState(map) {
         tokens,
         shapes,
         settings: {
-            allowPlayerDrawing: mapReadBoolean(map.settings?.allowPlayerDrawing),
-            allowPlayerTokenMoves: mapReadBoolean(map.settings?.allowPlayerTokenMoves),
+            allowPlayerDrawing: mapReadBoolean(
+                map.settings?.allowPlayerDrawing,
+                MAP_DEFAULT_SETTINGS.allowPlayerDrawing,
+            ),
+            allowPlayerTokenMoves: mapReadBoolean(
+                map.settings?.allowPlayerTokenMoves,
+                MAP_DEFAULT_SETTINGS.allowPlayerTokenMoves,
+            ),
         },
         paused: mapReadBoolean(map.paused),
         background: normalizeClientMapBackground(map.background),
@@ -10033,8 +10040,14 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
     const [storyForm, setStoryForm] = useState(storyDefaults);
     const [storySaving, setStorySaving] = useState(false);
     const [mapSettings, setMapSettings] = useState(() => ({
-        allowPlayerDrawing: mapReadBoolean(game.map?.settings?.allowPlayerDrawing),
-        allowPlayerTokenMoves: mapReadBoolean(game.map?.settings?.allowPlayerTokenMoves),
+        allowPlayerDrawing: mapReadBoolean(
+            game.map?.settings?.allowPlayerDrawing,
+            MAP_DEFAULT_SETTINGS.allowPlayerDrawing,
+        ),
+        allowPlayerTokenMoves: mapReadBoolean(
+            game.map?.settings?.allowPlayerTokenMoves,
+            MAP_DEFAULT_SETTINGS.allowPlayerTokenMoves,
+        ),
         paused: mapReadBoolean(game.map?.paused),
     }));
     const [mapSaving, setMapSaving] = useState(false);
@@ -10054,8 +10067,14 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
 
     useEffect(() => {
         setMapSettings({
-            allowPlayerDrawing: mapReadBoolean(game.map?.settings?.allowPlayerDrawing),
-            allowPlayerTokenMoves: mapReadBoolean(game.map?.settings?.allowPlayerTokenMoves),
+            allowPlayerDrawing: mapReadBoolean(
+                game.map?.settings?.allowPlayerDrawing,
+                MAP_DEFAULT_SETTINGS.allowPlayerDrawing,
+            ),
+            allowPlayerTokenMoves: mapReadBoolean(
+                game.map?.settings?.allowPlayerTokenMoves,
+                MAP_DEFAULT_SETTINGS.allowPlayerTokenMoves,
+            ),
             paused: mapReadBoolean(game.map?.paused),
         });
     }, [
@@ -10101,8 +10120,14 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
             try {
                 const updated = await Games.updateMapSettings(game.id, changes);
                 setMapSettings({
-                    allowPlayerDrawing: mapReadBoolean(updated.settings?.allowPlayerDrawing),
-                    allowPlayerTokenMoves: mapReadBoolean(updated.settings?.allowPlayerTokenMoves),
+                    allowPlayerDrawing: mapReadBoolean(
+                        updated.settings?.allowPlayerDrawing,
+                        MAP_DEFAULT_SETTINGS.allowPlayerDrawing,
+                    ),
+                    allowPlayerTokenMoves: mapReadBoolean(
+                        updated.settings?.allowPlayerTokenMoves,
+                        MAP_DEFAULT_SETTINGS.allowPlayerTokenMoves,
+                    ),
                     paused: mapReadBoolean(updated.paused),
                 });
                 if (typeof onGameRefresh === "function") {
