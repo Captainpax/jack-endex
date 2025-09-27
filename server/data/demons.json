@@ -32,8 +32,8 @@
       "resist": [
         "Fire"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -73,8 +73,8 @@
         "Strike",
         "Dark"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -111,8 +111,8 @@
       "resist": [
         "Dark"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -152,8 +152,8 @@
         "Strike",
         "Fire"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -188,10 +188,10 @@
         "Light"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Fire"
       ],
-      "absorb": [
+      "drain": [
         "Ice"
       ],
       "reflect": [
@@ -230,10 +230,10 @@
         "Light"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Dark"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -270,10 +270,10 @@
       "resist": [
         "Electric"
       ],
-      "null": [
+      "block": [
         "Dark"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -308,8 +308,8 @@
         "Slash"
       ],
       "resist": [],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -346,10 +346,10 @@
       "resist": [
         "Dark"
       ],
-      "null": [
+      "block": [
         "Ice"
       ],
-      "absorb": [
+      "drain": [
         "Wind"
       ],
       "reflect": []
@@ -387,10 +387,10 @@
         "Light"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Wind"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": [
         "Pierce"
       ]
@@ -430,10 +430,10 @@
         "Electric",
         "Wind"
       ],
-      "null": [
+      "block": [
         "Light"
       ],
-      "absorb": [
+      "drain": [
         "Dark"
       ],
       "reflect": []
@@ -478,8 +478,8 @@
         "Light",
         "Dark"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -516,8 +516,8 @@
       "resist": [
         "Fire"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -552,10 +552,10 @@
         "Wind"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Fire"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -592,8 +592,8 @@
       "resist": [
         "Wind"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -628,10 +628,10 @@
         "Fire"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Ice"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -666,10 +666,10 @@
         "Ice"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Fire"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -704,11 +704,11 @@
         "Ice"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Fire",
         "Dark"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -745,8 +745,8 @@
       "resist": [
         "Wind"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -781,10 +781,10 @@
         "Ice"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Fire"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -821,10 +821,10 @@
       "resist": [
         "Dark"
       ],
-      "null": [
+      "block": [
         "Wind"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -861,10 +861,10 @@
       "resist": [
         "Light"
       ],
-      "null": [
+      "block": [
         "Wind"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -902,8 +902,8 @@
       "resist": [
         "Fire"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Strike"
       ]
@@ -940,8 +940,8 @@
         "Ice"
       ],
       "resist": [],
-      "null": [],
-      "absorb": [
+      "block": [],
+      "drain": [
         "Fire"
       ],
       "reflect": []
@@ -981,10 +981,10 @@
         "Strike",
         "Electric"
       ],
-      "null": [
+      "block": [
         "Slash"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1021,8 +1021,8 @@
       "resist": [
         "Ice"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1058,11 +1058,11 @@
         "Dark"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Ice",
         "Light"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1095,8 +1095,8 @@
     "resistances": {
       "weak": [],
       "resist": [],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1129,8 +1129,8 @@
     "resistances": {
       "weak": [],
       "resist": [],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1165,10 +1165,10 @@
         "Wind"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Ice"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1205,8 +1205,8 @@
       "resist": [
         "Strike"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1243,10 +1243,10 @@
       "resist": [
         "Light"
       ],
-      "null": [
+      "block": [
         "Ice"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1286,8 +1286,8 @@
         "Ice",
         "Light"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1322,10 +1322,10 @@
         "Fire"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Ice"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1362,10 +1362,10 @@
       "resist": [
         "Ice"
       ],
-      "null": [
+      "block": [
         "Strike"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1403,10 +1403,10 @@
         "Wind",
         "Light"
       ],
-      "null": [
+      "block": [
         "Ice"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1444,11 +1444,11 @@
         "Wind",
         "Light"
       ],
-      "null": [
+      "block": [
         "Pierce",
         "Ice"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1485,8 +1485,8 @@
       "resist": [
         "Ice"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1521,10 +1521,10 @@
         "Fire"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Ice"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1561,8 +1561,8 @@
       "resist": [
         "Wind"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1599,10 +1599,10 @@
       "resist": [
         "Pierce"
       ],
-      "null": [
+      "block": [
         "Ice"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1639,8 +1639,8 @@
       "resist": [
         "Pierce"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1675,8 +1675,8 @@
         "Electric"
       ],
       "resist": [],
-      "null": [],
-      "absorb": [
+      "block": [],
+      "drain": [
         "Ice",
         "Light"
       ],
@@ -1716,10 +1716,10 @@
       "resist": [
         "Dark"
       ],
-      "null": [
+      "block": [
         "Pierce"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1755,10 +1755,10 @@
         "Dark"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Light"
       ],
-      "absorb": [
+      "drain": [
         "Ice"
       ],
       "reflect": []
@@ -1797,8 +1797,8 @@
       "resist": [
         "Wind"
       ],
-      "null": [],
-      "absorb": [
+      "block": [],
+      "drain": [
         "Ice"
       ],
       "reflect": []
@@ -1836,11 +1836,11 @@
         "Wind"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Strike",
         "Dark"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": [
         "Electric"
       ]
@@ -1880,10 +1880,10 @@
       "resist": [
         "Wind"
       ],
-      "null": [
+      "block": [
         "Ice"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": [
         "Slash",
         "Strike"
@@ -1923,8 +1923,8 @@
       "resist": [
         "Ice"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1961,8 +1961,8 @@
       "resist": [
         "Electric"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -1997,10 +1997,10 @@
         "Ice"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Electric"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2038,10 +2038,10 @@
         "Light",
         "Dark"
       ],
-      "null": [
+      "block": [
         "Electric"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2078,10 +2078,10 @@
       "resist": [
         "Slash"
       ],
-      "null": [
+      "block": [
         "Electric"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2118,8 +2118,8 @@
       "resist": [
         "Ice"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2154,8 +2154,8 @@
         "Fire"
       ],
       "resist": [],
-      "null": [],
-      "absorb": [
+      "block": [],
+      "drain": [
         "Ice"
       ],
       "reflect": []
@@ -2194,10 +2194,10 @@
       "resist": [
         "Pierce"
       ],
-      "null": [
+      "block": [
         "Electric"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2234,10 +2234,10 @@
       "resist": [
         "Wind"
       ],
-      "null": [
+      "block": [
         "Ice"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2276,8 +2276,8 @@
         "Ice",
         "Electric"
       ],
-      "null": [],
-      "absorb": [
+      "block": [],
+      "drain": [
         "Dark"
       ],
       "reflect": []
@@ -2314,11 +2314,11 @@
         "Wind"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Electric",
         "Light"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2353,8 +2353,8 @@
         "Wind"
       ],
       "resist": [],
-      "null": [],
-      "absorb": [
+      "block": [],
+      "drain": [
         "Electric"
       ],
       "reflect": []
@@ -2393,8 +2393,8 @@
       "resist": [
         "Electric"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2432,8 +2432,8 @@
         "Fire",
         "Wind"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2471,10 +2471,10 @@
         "Strike",
         "Light"
       ],
-      "null": [
+      "block": [
         "Ice"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2511,10 +2511,10 @@
       "resist": [
         "Wind"
       ],
-      "null": [
+      "block": [
         "Fire"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2547,8 +2547,8 @@
     "resistances": {
       "weak": [],
       "resist": [],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2584,11 +2584,11 @@
         "Dark"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Electric",
         "Light"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2623,11 +2623,11 @@
         "Ice"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Electric",
         "Dark"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2662,10 +2662,10 @@
         "Dark"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Light"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2698,10 +2698,10 @@
     "resistances": {
       "weak": [],
       "resist": [],
-      "null": [
+      "block": [
         "Light"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": [
         "Electric"
       ]
@@ -2740,8 +2740,8 @@
       "resist": [
         "Wind"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2776,10 +2776,10 @@
         "Electric"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Wind"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2816,8 +2816,8 @@
       "resist": [
         "Electric"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2855,8 +2855,8 @@
       "resist": [
         "Ice"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2894,10 +2894,10 @@
         "Slash",
         "Light"
       ],
-      "null": [
+      "block": [
         "Electric"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2934,8 +2934,8 @@
       "resist": [
         "Fire"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -2974,8 +2974,8 @@
         "Electric",
         "Wind"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3012,10 +3012,10 @@
       "resist": [
         "Fire"
       ],
-      "null": [
+      "block": [
         "Electric"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3055,8 +3055,8 @@
         "Electric",
         "Wind"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3093,10 +3093,10 @@
       "resist": [
         "Electric"
       ],
-      "null": [
+      "block": [
         "Fire"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3133,10 +3133,10 @@
       "resist": [
         "Light"
       ],
-      "null": [
+      "block": [
         "Ice"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3174,11 +3174,11 @@
       "resist": [
         "Fire"
       ],
-      "null": [
+      "block": [
         "Wind",
         "Light"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3216,10 +3216,10 @@
         "Fire",
         "Light"
       ],
-      "null": [
+      "block": [
         "Ice"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3257,8 +3257,8 @@
         "Strike",
         "Fire"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3296,8 +3296,8 @@
         "Strike",
         "Fire"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3334,8 +3334,8 @@
       "resist": [
         "Strike"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3372,8 +3372,8 @@
       "resist": [
         "Electric"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3410,8 +3410,8 @@
       "resist": [
         "Slash"
       ],
-      "null": [],
-      "absorb": [
+      "block": [],
+      "drain": [
         "Fire"
       ],
       "reflect": []
@@ -3450,8 +3450,8 @@
       "resist": [
         "Pierce"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3486,10 +3486,10 @@
         "Electric"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Pierce"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3524,8 +3524,8 @@
       "resist": [
         "Strike"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3562,10 +3562,10 @@
       "resist": [
         "Fire"
       ],
-      "null": [
+      "block": [
         "Electric"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3604,10 +3604,10 @@
         "Light",
         "Dark"
       ],
-      "null": [
+      "block": [
         "Pierce"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": [
         "Strike"
       ]
@@ -3647,10 +3647,10 @@
         "Strike",
         "Pierce"
       ],
-      "null": [
+      "block": [
         "Wind"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3685,11 +3685,11 @@
         "Wind"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Strike",
         "Electric"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3727,8 +3727,8 @@
         "Electric",
         "Light"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3766,10 +3766,10 @@
       "resist": [
         "Slash"
       ],
-      "null": [
+      "block": [
         "Light"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3806,10 +3806,10 @@
       "resist": [
         "Fire"
       ],
-      "null": [
+      "block": [
         "Light"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3847,10 +3847,10 @@
         "Pierce",
         "Wind"
       ],
-      "null": [
+      "block": [
         "Light"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3887,8 +3887,8 @@
       "resist": [
         "Wind"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Light"
       ]
@@ -3927,8 +3927,8 @@
       "resist": [
         "Light"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -3965,8 +3965,8 @@
       "resist": [
         "Light"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -4001,10 +4001,10 @@
         "Dark"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Light"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -4042,10 +4042,10 @@
       "resist": [
         "Wind"
       ],
-      "null": [
+      "block": [
         "Light"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -4081,10 +4081,10 @@
         "Dark"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Fire"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": [
         "Light"
       ]
@@ -4124,10 +4124,10 @@
         "Fire",
         "Ice"
       ],
-      "null": [
+      "block": [
         "Dark"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -4162,8 +4162,8 @@
         "Wind"
       ],
       "resist": [],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Strike",
         "Light"
@@ -4205,8 +4205,8 @@
         "Fire",
         "Wind"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -4244,8 +4244,8 @@
         "Electric",
         "Dark"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -4283,10 +4283,10 @@
         "Electric",
         "Dark"
       ],
-      "null": [
+      "block": [
         "Fire"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -4325,10 +4325,10 @@
         "Fire",
         "Dark"
       ],
-      "null": [
+      "block": [
         "Wind"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": [
         "Electric"
       ]
@@ -4368,8 +4368,8 @@
         "Strike",
         "Fire"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -4406,8 +4406,8 @@
       "resist": [
         "Dark"
       ],
-      "null": [],
-      "absorb": [
+      "block": [],
+      "drain": [
         "Wind"
       ],
       "reflect": []
@@ -4444,10 +4444,10 @@
         "Light"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Dark"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": [
         "Ice"
       ]
@@ -4486,10 +4486,10 @@
       "resist": [
         "Dark"
       ],
-      "null": [
+      "block": [
         "Wind"
       ],
-      "absorb": [
+      "drain": [
         "Fire"
       ],
       "reflect": []
@@ -4530,8 +4530,8 @@
       "resist": [
         "Light"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Slash",
         "Pierce"
@@ -4569,11 +4569,11 @@
         "Electric"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Fire",
         "Wind"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -4609,11 +4609,11 @@
         "Electric"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Fire",
         "Wind"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -4650,10 +4650,10 @@
       "resist": [
         "Electric"
       ],
-      "null": [
+      "block": [
         "Wind"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -4688,10 +4688,10 @@
         "Fire"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Wind"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -4728,10 +4728,10 @@
       "resist": [
         "Ice"
       ],
-      "null": [
+      "block": [
         "Wind"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -4769,10 +4769,10 @@
         "Light",
         "Dark"
       ],
-      "null": [
+      "block": [
         "Wind"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -4805,8 +4805,8 @@
     "resistances": {
       "weak": [],
       "resist": [],
-      "null": [],
-      "absorb": [
+      "block": [],
+      "drain": [
         "Dark"
       ],
       "reflect": [
@@ -4843,8 +4843,8 @@
     "resistances": {
       "weak": [],
       "resist": [],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Fire",
         "Dark"
@@ -4882,10 +4882,10 @@
         "Electric"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Fire"
       ],
-      "absorb": [
+      "drain": [
         "Wind"
       ],
       "reflect": [
@@ -4924,11 +4924,11 @@
         "Fire"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Ice",
         "Light"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -4966,8 +4966,8 @@
         "Pierce",
         "Ice"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -5006,8 +5006,8 @@
         "Slash",
         "Pierce"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -5042,10 +5042,10 @@
         "Fire"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Wind"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": [
         "Dark"
       ]
@@ -5085,8 +5085,8 @@
         "Slash",
         "Light"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Ice"
       ]
@@ -5123,11 +5123,11 @@
         "Light"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Fire",
         "Dark"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -5165,8 +5165,8 @@
         "Slash",
         "Fire"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -5203,10 +5203,10 @@
       "resist": [
         "Fire"
       ],
-      "null": [
+      "block": [
         "Light"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": [
         "Dark"
       ]
@@ -5245,11 +5245,11 @@
       "resist": [
         "Strike"
       ],
-      "null": [
+      "block": [
         "Slash",
         "Light"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -5286,8 +5286,8 @@
       "resist": [
         "Fire"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Slash"
       ]
@@ -5324,11 +5324,11 @@
         "Ice"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Pierce",
         "Light"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -5365,10 +5365,10 @@
       "resist": [
         "Dark"
       ],
-      "null": [
+      "block": [
         "Fire"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -5408,8 +5408,8 @@
         "Fire",
         "Electric"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -5446,8 +5446,8 @@
       "resist": [
         "Dark"
       ],
-      "null": [],
-      "absorb": [
+      "block": [],
+      "drain": [
         "Fire"
       ],
       "reflect": []
@@ -5487,8 +5487,8 @@
         "Ice",
         "Electric"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Light"
       ]
@@ -5531,8 +5531,8 @@
         "Electric",
         "Dark"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -5572,10 +5572,10 @@
         "Strike",
         "Electric"
       ],
-      "null": [
+      "block": [
         "Dark"
       ],
-      "absorb": [
+      "drain": [
         "Fire"
       ],
       "reflect": []
@@ -5610,8 +5610,8 @@
     "resistances": {
       "weak": [],
       "resist": [],
-      "null": [],
-      "absorb": [
+      "block": [],
+      "drain": [
         "Fire"
       ],
       "reflect": []
@@ -5648,8 +5648,8 @@
         "Light"
       ],
       "resist": [],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Fire",
         "Wind"
@@ -5692,10 +5692,10 @@
         "Strike",
         "Pierce"
       ],
-      "null": [
+      "block": [
         "Fire"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": [
         "Wind"
       ]
@@ -5737,10 +5737,10 @@
         "Strike",
         "Electric"
       ],
-      "null": [
+      "block": [
         "Dark"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -5777,8 +5777,8 @@
       "resist": [
         "Wind"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Dark"
       ]
@@ -5818,8 +5818,8 @@
         "Electric",
         "Dark"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -5856,11 +5856,11 @@
       "resist": [
         "Ice"
       ],
-      "null": [
+      "block": [
         "Electric",
         "Dark"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -5895,10 +5895,10 @@
         "Wind"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Electric"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": [
         "Dark"
       ]
@@ -5935,8 +5935,8 @@
         "Light"
       ],
       "resist": [],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Dark"
       ]
@@ -5978,8 +5978,8 @@
         "Electric",
         "Wind"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Dark"
       ]
@@ -6019,10 +6019,10 @@
         "Light",
         "Dark"
       ],
-      "null": [
+      "block": [
         "Wind"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -6057,11 +6057,11 @@
         "Electric"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Ice",
         "Light"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -6096,10 +6096,10 @@
         "Electric"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Ice"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -6134,10 +6134,10 @@
         "Electric"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Ice"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -6174,10 +6174,10 @@
       "resist": [
         "Light"
       ],
-      "null": [
+      "block": [
         "Fire"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": [
         "Electric"
       ]
@@ -6216,8 +6216,8 @@
       "resist": [
         "Light"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Fire"
       ]
@@ -6254,10 +6254,10 @@
         "Fire"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Ice"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": [
         "Electric"
       ]
@@ -6298,8 +6298,8 @@
         "Electric",
         "Light"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -6337,8 +6337,8 @@
         "Electric",
         "Dark"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -6373,11 +6373,11 @@
         "Fire"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Ice",
         "Dark"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -6415,10 +6415,10 @@
       "resist": [
         "Fire"
       ],
-      "null": [
+      "block": [
         "Dark"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -6454,11 +6454,11 @@
         "Light"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Fire",
         "Dark"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -6494,8 +6494,8 @@
         "Light"
       ],
       "resist": [],
-      "null": [],
-      "absorb": [
+      "block": [],
+      "drain": [
         "Dark"
       ],
       "reflect": [
@@ -6537,10 +6537,10 @@
       "resist": [
         "Dark"
       ],
-      "null": [
+      "block": [
         "Wind"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": [
         "Ice"
       ]
@@ -6579,10 +6579,10 @@
       "resist": [
         "Ice"
       ],
-      "null": [
+      "block": [
         "Dark"
       ],
-      "absorb": [
+      "drain": [
         "Electric"
       ],
       "reflect": []
@@ -6620,10 +6620,10 @@
         "Light"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Fire"
       ],
-      "absorb": [
+      "drain": [
         "Slash",
         "Strike",
         "Dark"
@@ -6663,12 +6663,12 @@
         "Light"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Strike",
         "Electric",
         "Wind"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": [
         "Dark"
       ]
@@ -6708,10 +6708,10 @@
         "Pierce",
         "Dark"
       ],
-      "null": [
+      "block": [
         "Fire"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -6749,8 +6749,8 @@
         "Pierce",
         "Electric"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Wind"
       ]
@@ -6789,11 +6789,11 @@
       "resist": [
         "Pierce"
       ],
-      "null": [
+      "block": [
         "Light",
         "Dark"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -6830,11 +6830,11 @@
       "resist": [
         "Light"
       ],
-      "null": [
+      "block": [
         "Strike",
         "Fire"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -6871,10 +6871,10 @@
       "resist": [
         "Wind"
       ],
-      "null": [
+      "block": [
         "Pierce"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -6910,8 +6910,8 @@
         "Light"
       ],
       "resist": [],
-      "null": [],
-      "absorb": [
+      "block": [],
+      "drain": [
         "Strike",
         "Fire",
         "Dark"
@@ -6955,8 +6955,8 @@
         "Pierce",
         "Dark"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Light"
       ]
@@ -6993,11 +6993,11 @@
         "Ice"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Pierce",
         "Light"
       ],
-      "absorb": [
+      "drain": [
         "Electric"
       ],
       "reflect": []
@@ -7037,8 +7037,8 @@
         "Slash",
         "Pierce"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -7075,11 +7075,11 @@
       "resist": [
         "Electric"
       ],
-      "null": [
+      "block": [
         "Light",
         "Dark"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -7117,10 +7117,10 @@
       "resist": [
         "Pierce"
       ],
-      "null": [
+      "block": [
         "Electric"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -7157,8 +7157,8 @@
       "resist": [
         "Light"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -7197,8 +7197,8 @@
         "Ice",
         "Dark"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -7233,10 +7233,10 @@
         "Dark"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Pierce"
       ],
-      "absorb": [
+      "drain": [
         "Wind"
       ],
       "reflect": []
@@ -7275,10 +7275,10 @@
       "resist": [
         "Slash"
       ],
-      "null": [
+      "block": [
         "Light"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -7320,10 +7320,10 @@
         "Fire",
         "Wind"
       ],
-      "null": [
+      "block": [
         "Light"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -7361,10 +7361,10 @@
       "resist": [
         "Ice"
       ],
-      "null": [
+      "block": [
         "Wind"
       ],
-      "absorb": [
+      "drain": [
         "Fire",
         "Light"
       ],
@@ -7402,10 +7402,10 @@
         "Ice"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Wind"
       ],
-      "absorb": [
+      "drain": [
         "Fire"
       ],
       "reflect": []
@@ -7446,8 +7446,8 @@
         "Strike",
         "Pierce"
       ],
-      "null": [],
-      "absorb": [
+      "block": [],
+      "drain": [
         "Light",
         "Dark"
       ],
@@ -7488,10 +7488,10 @@
       "resist": [
         "Wind"
       ],
-      "null": [
+      "block": [
         "Dark"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -7526,11 +7526,11 @@
         "Slash"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Ice",
         "Electric"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -7567,11 +7567,11 @@
       "resist": [
         "Wind"
       ],
-      "null": [
+      "block": [
         "Light",
         "Dark"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -7607,8 +7607,8 @@
         "Light"
       ],
       "resist": [],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Slash",
         "Pierce"
@@ -7648,8 +7648,8 @@
       "resist": [
         "Strike"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Electric"
       ]
@@ -7688,10 +7688,10 @@
       "resist": [
         "Pierce"
       ],
-      "null": [
+      "block": [
         "Slash"
       ],
-      "absorb": [
+      "drain": [
         "Dark"
       ],
       "reflect": []
@@ -7731,8 +7731,8 @@
       "resist": [
         "Dark"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Fire"
       ]
@@ -7774,8 +7774,8 @@
         "Electric",
         "Wind"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Dark"
       ]
@@ -7814,10 +7814,10 @@
       "resist": [
         "Electric"
       ],
-      "null": [
+      "block": [
         "Slash"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": [
         "Light"
       ]
@@ -7856,10 +7856,10 @@
       "resist": [
         "Wind"
       ],
-      "null": [
+      "block": [
         "Light"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -7894,10 +7894,10 @@
         "Pierce"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Light"
       ],
-      "absorb": [
+      "drain": [
         "Electric"
       ],
       "reflect": []
@@ -7936,11 +7936,11 @@
       "resist": [
         "Wind"
       ],
-      "null": [
+      "block": [
         "Ice",
         "Light"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -7980,8 +7980,8 @@
         "Ice",
         "Light"
       ],
-      "null": [],
-      "absorb": [
+      "block": [],
+      "drain": [
         "Wind"
       ],
       "reflect": []
@@ -8020,10 +8020,10 @@
       "resist": [
         "Ice"
       ],
-      "null": [
+      "block": [
         "Electric"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": [
         "Light"
       ]
@@ -8060,11 +8060,11 @@
         "Dark"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Ice",
         "Electric"
       ],
-      "absorb": [
+      "drain": [
         "Light"
       ],
       "reflect": []
@@ -8101,11 +8101,11 @@
         "Wind"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Strike",
         "Light"
       ],
-      "absorb": [
+      "drain": [
         "Fire"
       ],
       "reflect": []
@@ -8140,11 +8140,11 @@
     "resistances": {
       "weak": [],
       "resist": [],
-      "null": [
+      "block": [
         "Light",
         "Dark"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -8179,11 +8179,11 @@
         "Wind"
       ],
       "resist": [],
-      "null": [
+      "block": [
         "Ice",
         "Dark"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": [
         "Light"
       ]
@@ -8224,8 +8224,8 @@
         "Pierce",
         "Dark"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Light"
       ]
@@ -8264,8 +8264,8 @@
       "resist": [
         "Fire"
       ],
-      "null": [],
-      "absorb": [
+      "block": [],
+      "drain": [
         "Dark"
       ],
       "reflect": [
@@ -8302,8 +8302,8 @@
     "resistances": {
       "weak": [],
       "resist": [],
-      "null": [],
-      "absorb": [
+      "block": [],
+      "drain": [
         "Fire",
         "Electric"
       ],
@@ -8346,8 +8346,8 @@
         "Electric",
         "Wind"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Light",
         "Dark"
@@ -8389,11 +8389,11 @@
         "Pierce",
         "Dark"
       ],
-      "null": [
+      "block": [
         "Ice",
         "Electric"
       ],
-      "absorb": [],
+      "drain": [],
       "reflect": []
     },
     "skills": []
@@ -8431,11 +8431,11 @@
       "resist": [
         "Slash"
       ],
-      "null": [
+      "block": [
         "Electric",
         "Light"
       ],
-      "absorb": [
+      "drain": [
         "Fire"
       ],
       "reflect": []
@@ -8475,10 +8475,10 @@
       "resist": [
         "Pierce"
       ],
-      "null": [
+      "block": [
         "Light"
       ],
-      "absorb": [
+      "drain": [
         "Ice"
       ],
       "reflect": []
@@ -8518,8 +8518,8 @@
       "resist": [
         "Ice"
       ],
-      "null": [],
-      "absorb": [],
+      "block": [],
+      "drain": [],
       "reflect": [
         "Fire",
         "Wind",

@@ -42,11 +42,26 @@ export const ABILITY_SORT_INDEX = ABILITY_DEFS.reduce((map, ability, index) => {
     return map;
 }, {});
 
+export const RESISTANCE_FIELDS = [
+    { key: "weak", label: "Weak", aliases: ["weak", "weaks"] },
+    { key: "resist", label: "Resist", aliases: ["resist", "resists"] },
+    { key: "block", label: "Block", aliases: ["block", "blocks", "null", "nullify", "nullifies"] },
+    { key: "drain", label: "Drain", aliases: ["drain", "drains", "absorb", "absorbs"] },
+    { key: "reflect", label: "Reflect", aliases: ["reflect", "reflects"] },
+];
+
+export const RESISTANCE_ALIAS_MAP = RESISTANCE_FIELDS.reduce((map, field) => {
+    map[field.key] = Array.isArray(field.aliases) && field.aliases.length > 0
+        ? field.aliases
+        : [field.key];
+    return map;
+}, {});
+
 export const DEMON_RESISTANCE_SORTS = [
     { key: "weak", label: "Weakness slots (fewest → most)", direction: "asc" },
     { key: "resist", label: "Resistances (most → fewest)", direction: "desc" },
-    { key: "null", label: "Nullifications (most → fewest)", direction: "desc" },
-    { key: "absorb", label: "Absorptions (most → fewest)", direction: "desc" },
+    { key: "block", label: "Blocks (most → fewest)", direction: "desc" },
+    { key: "drain", label: "Drains (most → fewest)", direction: "desc" },
     { key: "reflect", label: "Reflections (most → fewest)", direction: "desc" },
 ];
 
@@ -407,19 +422,26 @@ export function normalizeStringList(value) {
 
 export function getResistanceValues(demon, key) {
     if (!demon) return EMPTY_ARRAY;
-    const primary = demon.resistances?.[key];
-    const fallback = demon[key];
-    const primaryList = normalizeStringList(primary);
-    if (primaryList.length > 0) return primaryList;
-    return normalizeStringList(fallback);
+    const aliases = RESISTANCE_ALIAS_MAP[key] || [key];
+    const values = new Set();
+    for (const alias of aliases) {
+        for (const entry of normalizeStringList(demon.resistances?.[alias])) {
+            values.add(entry);
+        }
+    }
+    for (const alias of aliases) {
+        for (const entry of normalizeStringList(demon[alias])) {
+            values.add(entry);
+        }
+    }
+    return Array.from(values);
 }
 
 export function collectResistanceTerms(demon) {
     if (!demon) return EMPTY_ARRAY;
-    const keys = ['weak', 'resist', 'null', 'absorb', 'reflect'];
     const values = [];
-    for (const key of keys) {
-        for (const entry of getResistanceValues(demon, key)) {
+    for (const field of RESISTANCE_FIELDS) {
+        for (const entry of getResistanceValues(demon, field.key)) {
             values.push(entry.toLowerCase());
         }
     }
