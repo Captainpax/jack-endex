@@ -1,7 +1,7 @@
 import { MAIN_MENU_TRACK_ID, MUSIC_TRACKS } from "@shared/music/index.js";
 
 /**
- * @typedef {{ id: string, title: string, subtitle?: string, filename: string, loop?: boolean, default?: boolean }} MusicTrack
+ * @typedef {{ id: string, title: string, info?: string, filename: string, loop?: boolean, default?: boolean }} MusicTrack
  */
 
 /**

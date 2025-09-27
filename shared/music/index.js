@@ -2,8 +2,8 @@ export const MUSIC_TRACKS = [
     {
         id: "recovery-spring",
         title: "Recovery Spring",
-        subtitle: "Shin Megami Tensei III: Nocturne",
-        filename: "Recovery Spring - SMT III_ Nocturne.mp3",
+        info: "Shin Megami Tensei III: Nocturne",
+        filename: "recovery-spring.mp3",
         loop: true,
         default: true,
     },

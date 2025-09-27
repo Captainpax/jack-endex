@@ -1,0 +1,13 @@
+[
+    {
+        "id": "recovery-spring",
+        "title": "Recovery Spring",
+        "info": "Shin Megami Tensei III: Nocturne",
+        "filename": "recovery-spring.mp3",
+        "loop": true,
+        "default": true,
+        "legacyFilenames": [
+            "Recovery Spring - SMT III_ Nocturne.mp3"
+        ]
+    }
+]
