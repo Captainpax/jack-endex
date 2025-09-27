@@ -22,6 +22,7 @@ import { get } from "../utils/object";
 import { deepClone, normalizeCharacter, normalizeSkills } from "../utils/character";
 
 import MathField from "./MathField";
+import { createEmptySkillViewPrefs, sanitizeSkillViewPrefs } from "../utils/skillViewPrefs";
 
 function WorldSkillsTab({ game, me, onUpdate }) {
     const isDM = game.dmId === me.id;
@@ -37,6 +38,12 @@ function WorldSkillsTab({ game, me, onUpdate }) {
     }, [editingSkillId, worldSkills]);
     const [skillBusy, setSkillBusy] = useState(false);
     const [skillRowBusy, setSkillRowBusy] = useState(null);
+    const viewPrefKey = useMemo(
+        () => `world-skill-view:${game.id || "game"}:${me.id || "user"}`,
+        [game.id, me.id]
+    );
+    const [viewPrefs, setViewPrefs] = useState(() => createEmptySkillViewPrefs());
+    const [showHiddenSkills, setShowHiddenSkills] = useState(false);
     const isCreatingSkill = editingSkillId === NEW_WORLD_SKILL_ID;
     const abilityDetails = useMemo(
         () =>
@@ -61,6 +68,35 @@ function WorldSkillsTab({ game, me, onUpdate }) {
         setSkillSort("default");
     }, [game.id]);
 
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        try {
+            const stored = window.localStorage.getItem(viewPrefKey);
+            if (!stored) {
+                setViewPrefs(createEmptySkillViewPrefs());
+                return;
+            }
+            const parsed = JSON.parse(stored);
+            setViewPrefs(sanitizeSkillViewPrefs(parsed));
+        } catch (err) {
+            console.warn("Failed to load world skill view preferences", err);
+            setViewPrefs(createEmptySkillViewPrefs());
+        }
+    }, [viewPrefKey]);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        try {
+            window.localStorage.setItem(viewPrefKey, JSON.stringify(viewPrefs));
+        } catch (err) {
+            console.warn("Failed to save world skill view preferences", err);
+        }
+    }, [viewPrefKey, viewPrefs]);
+
+    useEffect(() => {
+        setShowHiddenSkills(false);
+    }, [game.id]);
+
     const startCreateSkill = useCallback(() => {
         setEditingSkillId(NEW_WORLD_SKILL_ID);
         setSkillForm({ label: "", ability: abilityDefault });
@@ -83,6 +119,22 @@ function WorldSkillsTab({ game, me, onUpdate }) {
         }
     }, [editingSkill, abilityDefault]);
 
+    useEffect(() => {
+        setViewPrefs((prev) => {
+            if (!prev) return createEmptySkillViewPrefs();
+            const validIds = new Set(worldSkills.map((skill) => skill.id));
+            const favorites = prev.favorites.filter((id) => validIds.has(id));
+            const hidden = prev.hidden.filter((id) => validIds.has(id));
+            if (favorites.length === prev.favorites.length && hidden.length === prev.hidden.length) {
+                return prev;
+            }
+            return { favorites, hidden };
+        });
+    }, [worldSkills]);
+
+    const favoriteSkillIds = useMemo(() => new Set(viewPrefs.favorites), [viewPrefs.favorites]);
+    const hiddenSkillIds = useMemo(() => new Set(viewPrefs.hidden), [viewPrefs.hidden]);
+
     const filteredSkills = useMemo(() => {
         const query = skillQuery.trim().toLowerCase();
         if (!query && skillSort === "default") {
@@ -104,15 +156,88 @@ function WorldSkillsTab({ game, me, onUpdate }) {
         return list;
     }, [abilityDetails, skillQuery, skillSort, worldSkills]);
 
+    const visibleSkills = useMemo(() => {
+        const list = filteredSkills.filter((skill) => !hiddenSkillIds.has(skill.id));
+        if (favoriteSkillIds.size === 0) return list;
+        const favorites = [];
+        const rest = [];
+        list.forEach((skill) => {
+            if (favoriteSkillIds.has(skill.id)) {
+                favorites.push(skill);
+            } else {
+                rest.push(skill);
+            }
+        });
+        return favorites.concat(rest);
+    }, [filteredSkills, favoriteSkillIds, hiddenSkillIds]);
+
     const displaySkills = useMemo(() => {
-        if (!editingSkill) return filteredSkills;
-        if (filteredSkills.some((skill) => skill.id === editingSkill.id)) {
-            return filteredSkills;
+        if (!editingSkill) return visibleSkills;
+        if (visibleSkills.some((skill) => skill.id === editingSkill.id)) {
+            return visibleSkills;
         }
-        return [editingSkill, ...filteredSkills];
-    }, [editingSkill, filteredSkills]);
+        return [editingSkill, ...visibleSkills];
+    }, [editingSkill, visibleSkills]);
+
+    const hiddenSkills = useMemo(
+        () => worldSkills.filter((skill) => hiddenSkillIds.has(skill.id)),
+        [hiddenSkillIds, worldSkills]
+    );
+
+    useEffect(() => {
+        if (hiddenSkills.length === 0) {
+            setShowHiddenSkills(false);
+        }
+    }, [hiddenSkills.length]);
 
     const hasSkillFilters = skillQuery.trim().length > 0 || skillSort !== "default";
+
+    const toggleFavoriteSkill = useCallback((skillId) => {
+        if (!skillId) return;
+        setViewPrefs((prev) => {
+            const favorites = new Set(prev.favorites);
+            if (favorites.has(skillId)) {
+                favorites.delete(skillId);
+            } else {
+                favorites.add(skillId);
+            }
+            const nextFavorites = Array.from(favorites);
+            if (
+                nextFavorites.length === prev.favorites.length &&
+                nextFavorites.every((id, index) => id === prev.favorites[index])
+            ) {
+                return prev;
+            }
+            return { favorites: nextFavorites, hidden: prev.hidden };
+        });
+    }, []);
+
+    const hideSkillFromView = useCallback((skillId) => {
+        if (!skillId) return;
+        setViewPrefs((prev) => {
+            if (prev.hidden.includes(skillId)) return prev;
+            return {
+                favorites: prev.favorites,
+                hidden: [...prev.hidden, skillId],
+            };
+        });
+    }, []);
+
+    const restoreHiddenSkill = useCallback((skillId) => {
+        if (!skillId) return;
+        setViewPrefs((prev) => {
+            if (!prev.hidden.includes(skillId)) return prev;
+            const hidden = prev.hidden.filter((id) => id !== skillId);
+            return { favorites: prev.favorites, hidden };
+        });
+    }, []);
+
+    const restoreAllHiddenSkills = useCallback(() => {
+        setViewPrefs((prev) => {
+            if (prev.hidden.length === 0) return prev;
+            return { favorites: prev.favorites, hidden: [] };
+        });
+    }, []);
 
     const startEditSkill = useCallback(
         (skill) => {
@@ -732,6 +857,18 @@ function WorldSkillsTab({ game, me, onUpdate }) {
                                         ))}
                                     </select>
                                 </label>
+                                <button
+                                    type="button"
+                                    className="btn ghost btn-small"
+                                    onClick={() => setShowHiddenSkills((prev) => !prev)}
+                                    disabled={hiddenSkills.length === 0}
+                                >
+                                    {hiddenSkills.length === 0
+                                        ? "No hidden skills"
+                                        : showHiddenSkills
+                                        ? "Hide hidden list"
+                                        : `Show hidden (${hiddenSkills.length})`}
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -755,22 +892,60 @@ function WorldSkillsTab({ game, me, onUpdate }) {
                         {displaySkills.map((skill) => {
                             const abilityInfo = abilityDetails[skill.ability] || null;
                             const isEditing = editingSkillId === skill.id;
+                            const isFavorite = favoriteSkillIds.has(skill.id);
                             return (
                                 <div
                                     key={skill.id}
-                                    className={`world-skill-card${isEditing ? " is-editing" : ""}`}
+                                    className={`world-skill-card${isEditing ? " is-editing" : ""}${
+                                        isFavorite ? " is-favorite" : ""
+                                    }`}
                                 >
                                     <div className="world-skill-card__header">
                                         <span className="world-skill-card__badge">{skill.ability}</span>
-                                        <button
-                                            type="button"
-                                            className="world-skill-card__delete"
-                                            onClick={() => handleSkillDelete(skill.id)}
-                                            disabled={skillRowBusy === skill.id || skillBusy || isEditing}
-                                            aria-label={`Delete ${skill.label}`}
-                                        >
-                                            {skillRowBusy === skill.id ? "…" : "×"}
-                                        </button>
+                                        <div className="skill-card__toolbar">
+                                            <button
+                                                type="button"
+                                                className={`skill-card__icon-btn skill-card__icon-btn--star${
+                                                    isFavorite ? " is-active" : ""
+                                                }`}
+                                                onClick={() => toggleFavoriteSkill(skill.id)}
+                                                aria-pressed={isFavorite}
+                                                aria-label={
+                                                    isFavorite
+                                                        ? `Unstar ${skill.label}`
+                                                        : `Star ${skill.label}`
+                                                }
+                                                title={
+                                                    isFavorite
+                                                        ? "Unstar to remove from the pinned list"
+                                                        : "Star to pin this skill to the top"
+                                                }
+                                            >
+                                                {isFavorite ? "★" : "☆"}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="skill-card__icon-btn"
+                                                onClick={() => {
+                                                    hideSkillFromView(skill.id);
+                                                    setShowHiddenSkills(true);
+                                                }}
+                                                disabled={skillRowBusy === skill.id || skillBusy || isEditing}
+                                                aria-label={`Hide ${skill.label}`}
+                                                title="Hide this skill from the grid"
+                                            >
+                                                Hide
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="world-skill-card__delete"
+                                                onClick={() => handleSkillDelete(skill.id)}
+                                                disabled={skillRowBusy === skill.id || skillBusy || isEditing}
+                                                aria-label={`Delete ${skill.label}`}
+                                            >
+                                                {skillRowBusy === skill.id ? "…" : "×"}
+                                            </button>
+                                        </div>
                                     </div>
                                     {isEditing ? (
                                         renderSkillEditor("edit")
@@ -823,6 +998,81 @@ function WorldSkillsTab({ game, me, onUpdate }) {
                             )}
                         </div>
                     </div>
+                    {hiddenSkills.length > 0 && (
+                        <div className="skill-hidden">
+                            <div className="skill-hidden__summary">
+                                <strong>Hidden skills ({hiddenSkills.length})</strong>
+                                <div className="skill-hidden__summary-actions">
+                                    <button
+                                        type="button"
+                                        className="btn ghost btn-small"
+                                        onClick={restoreAllHiddenSkills}
+                                    >
+                                        Restore all
+                                    </button>
+                                    {showHiddenSkills && (
+                                        <button
+                                            type="button"
+                                            className="btn ghost btn-small"
+                                            onClick={() => setShowHiddenSkills(false)}
+                                        >
+                                            Collapse
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                            {showHiddenSkills ? (
+                                <ul className="skill-hidden__list">
+                                    {hiddenSkills.map((skill) => {
+                                        const isFavorite = favoriteSkillIds.has(skill.id);
+                                        return (
+                                            <li key={skill.id} className="skill-hidden__item">
+                                                <div className="skill-hidden__info">
+                                                    <strong>{skill.label}</strong>
+                                                    <span className="text-muted text-small">
+                                                        {skill.ability}
+                                                    </span>
+                                                </div>
+                                                <div className="skill-hidden__item-actions">
+                                                    <button
+                                                        type="button"
+                                                        className={`skill-card__icon-btn skill-card__icon-btn--star${
+                                                            isFavorite ? " is-active" : ""
+                                                        }`}
+                                                        onClick={() => toggleFavoriteSkill(skill.id)}
+                                                        aria-pressed={isFavorite}
+                                                        aria-label={
+                                                            isFavorite
+                                                                ? `Unstar ${skill.label}`
+                                                                : `Star ${skill.label}`
+                                                        }
+                                                        title={
+                                                            isFavorite
+                                                                ? "Unstar to remove from the pinned list"
+                                                                : "Star to pin this skill to the top"
+                                                        }
+                                                    >
+                                                        {isFavorite ? "★" : "☆"}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="btn ghost btn-small"
+                                                        onClick={() => restoreHiddenSkill(skill.id)}
+                                                    >
+                                                        Restore
+                                                    </button>
+                                                </div>
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                            ) : (
+                                <p className="text-muted text-small">
+                                    Hidden skills stay tucked away until you restore them.
+                                </p>
+                            )}
+                        </div>
+                    )}
                 </div>
             )}
             <div className="card" style={{ display: "grid", gap: 16 }}>

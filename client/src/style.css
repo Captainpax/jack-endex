@@ -3088,6 +3088,22 @@ label {
 .world-skill-card__add-btn:hover:not(:disabled) { color: var(--brand-600); transform: translateY(-1px); }
 .world-skill-card__add-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 .world-skill-card__plus { display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 999px; background: color-mix(in oklab, var(--brand) 18%, transparent); color: var(--brand-700); font-size: 1.6rem; font-weight: 700; }
+.world-skill-card.is-favorite { border-color: color-mix(in oklab, var(--brand) 55%, var(--border) 45%); box-shadow: 0 10px 24px rgba(15,17,21,0.22); }
+.skill-card__toolbar { display: flex; gap: 6px; align-items: center; }
+.skill-card__icon-btn { border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--muted); padding: 4px 10px; font-size: 0.85rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: color var(--trans-fast), background var(--trans-fast), border-color var(--trans-fast), transform var(--trans-fast); }
+.skill-card__icon-btn--star { font-size: 1.1rem; padding-inline: 8px; min-width: 34px; }
+.skill-card__icon-btn:hover:not(:disabled) { color: var(--brand-600); border-color: color-mix(in oklab, var(--brand) 35%, transparent); background: color-mix(in oklab, var(--brand) 12%, transparent); transform: translateY(-1px); }
+.skill-card__icon-btn.is-active { color: var(--brand-700); border-color: color-mix(in oklab, var(--brand) 55%, transparent); background: color-mix(in oklab, var(--brand) 18%, transparent); }
+.skill-card__icon-btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+.skill-card__icon-btn:focus-visible { outline: none; border-color: var(--brand); box-shadow: var(--focus); }
+.skill-hidden { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); padding: 14px 16px; display: grid; gap: 12px; }
+.skill-hidden__summary { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.skill-hidden__summary-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.skill-hidden__list { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.skill-hidden__item { display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; align-items: center; border: 1px dashed color-mix(in oklab, var(--border) 70%, transparent); border-radius: var(--radius-sm); background: var(--surface); padding: 10px 12px; }
+.skill-hidden__info { display: grid; gap: 4px; min-width: 0; }
+.skill-hidden__info strong { color: var(--text); }
+.skill-hidden__item-actions { display: flex; gap: 8px; align-items: center; }
 .world-skill-empty { border: 1px dashed var(--border); border-radius: var(--radius); padding: 16px; display: grid; gap: 6px; align-content: start; background: var(--surface); text-align: center; color: var(--muted); }
 .world-skill-reference { display: grid; gap: 16px; }
 .world-skill-reference__grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
@@ -3117,7 +3133,9 @@ label {
 .combat-skill-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; background: var(--surface-2); display: grid; gap: 12px; transition: border-color var(--trans-fast), box-shadow var(--trans-fast), transform var(--trans-fast); }
 .combat-skill-card:hover { border-color: color-mix(in oklab, var(--brand) 40%, var(--border) 60%); box-shadow: 0 8px 22px rgba(15,17,21,0.16); transform: translateY(-2px); }
 .combat-skill-card.is-editing { border-color: var(--brand); box-shadow: 0 12px 28px rgba(15,17,21,0.18); }
+.combat-skill-card.is-favorite { border-color: color-mix(in oklab, var(--brand) 55%, var(--border) 45%); box-shadow: 0 10px 24px rgba(15,17,21,0.22); }
 .combat-skill-card__header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.combat-skill-card__heading { display: grid; gap: 6px; flex: 1 1 auto; }
 .combat-skill-card__header h4 { margin: 0; font-size: 1.05rem; color: var(--text); }
 .combat-skill-card__badges { display: flex; gap: 6px; flex-wrap: wrap; }
 .combat-skill-card__badges .pill { border: none; }
