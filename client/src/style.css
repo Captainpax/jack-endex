@@ -3260,7 +3260,8 @@ label {
 }
 
 .demon-fusion__slot,
-.demon-fusion__summary {
+.demon-fusion__summary,
+.demon-fusion__chart {
     display: grid;
     gap: 12px;
     padding: 16px;
@@ -3275,6 +3276,78 @@ label {
     justify-content: space-between;
     align-items: flex-start;
     gap: 12px;
+}
+
+.demon-fusion__chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.demon-fusion__chart-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.demon-fusion__chart-grid {
+    overflow: auto;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    max-height: 480px;
+}
+
+.demon-fusion__chart-table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 720px;
+    font-size: 0.85rem;
+}
+
+.demon-fusion__chart-table th,
+.demon-fusion__chart-table td {
+    border: 1px solid var(--border);
+    padding: 6px;
+    text-align: center;
+    background: var(--surface);
+}
+
+.demon-fusion__chart-table thead th {
+    position: sticky;
+    top: 0;
+    background: var(--surface-2);
+    z-index: 1;
+}
+
+.demon-fusion__chart-table thead th.demon-fusion__chart-corner {
+    left: 0;
+    z-index: 2;
+}
+
+.demon-fusion__chart-table tbody th {
+    background: var(--surface-2);
+    position: sticky;
+    left: 0;
+    text-align: left;
+    z-index: 1;
+    font-weight: 600;
+}
+
+.demon-fusion__chart-corner {
+    text-align: left;
+    min-width: 140px;
+}
+
+.demon-fusion__chart-select {
+    width: 100%;
+    min-width: 110px;
+    font-size: 0.82rem;
+}
+
+.demon-fusion__chart-cell.has-override {
+    background: color-mix(in oklab, var(--brand) 12%, transparent);
 }
 
 .demon-fusion__results {

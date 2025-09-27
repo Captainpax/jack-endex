@@ -32,9 +32,10 @@ import {
  *   moonPhase: string,
  *   roll: FusionRoll | null,
  *   notifications: string[],
- *   arcanaSource: "chart" | "random",
+ *   arcanaSource: "chart" | "random" | "override" | "override_random",
  *   arcanaCandidates: string[],
  *   baseArcana: string | null,
+ *   overrideArcana: string | null,
  *   rounding: FusionRounding,
  * }} FusionPlan
  * @typedef {{
@@ -71,14 +72,19 @@ for (const [alias, key] of FUSE_ARCANA_KEY_BY_LABEL.entries()) {
 
 const FUSION_RULE_OVERRIDES = new Map();
 
+export const FUSION_OVERRIDE_RANDOM = "none";
+
 /**
  * Create a deterministic key for a pair of identifiers regardless of order.
  * @param {string} a
  * @param {string} b
  * @returns {string}
  */
-function buildPairKey(a, b) {
-    const list = [a, b].map((value) => value || "").sort();
+export function buildFusionPairKey(a, b) {
+    const list = [a, b]
+        .map((value) => (typeof value === "string" ? value.trim().toLowerCase() : ""))
+        .filter(Boolean)
+        .sort();
     return list.join("+");
 }
 
@@ -118,6 +124,53 @@ export function normalizeArcanaKey(value) {
         return FUSE_ARCANA_KEY_BY_LABEL.get(lower) || "";
     }
     return "";
+}
+
+function normalizeOverridePairKey(value) {
+    if (typeof value !== "string") return "";
+    const parts = value.split("+").map((part) => normalizeArcanaKey(part));
+    if (parts.length !== 2) return "";
+    const [a, b] = parts;
+    if (!a || !b) return "";
+    return buildFusionPairKey(a, b);
+}
+
+function normalizeOverrideValue(value) {
+    if (typeof value !== "string") return "";
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    const lower = trimmed.toLowerCase();
+    if (lower === FUSION_OVERRIDE_RANDOM) return FUSION_OVERRIDE_RANDOM;
+    return normalizeArcanaKey(lower);
+}
+
+export function setFusionChartOverrides(overrides) {
+    FUSION_RULE_OVERRIDES.clear();
+    if (!overrides || typeof overrides !== "object") return;
+    for (const [rawPair, rawValue] of Object.entries(overrides)) {
+        const pairKey = normalizeOverridePairKey(rawPair);
+        if (!pairKey) continue;
+        const normalizedValue = normalizeOverrideValue(rawValue);
+        if (!normalizedValue) continue;
+        FUSION_RULE_OVERRIDES.set(pairKey, normalizedValue);
+    }
+}
+
+export function getFusionOverride(arcanaA, arcanaB) {
+    const key = buildFusionPairKey(arcanaA, arcanaB);
+    if (!key) return "";
+    return FUSION_RULE_OVERRIDES.get(key) || "";
+}
+
+export function resolveBaseChartArcana(arcanaA, arcanaB) {
+    const keyA = normalizeArcanaKey(arcanaA);
+    const keyB = normalizeArcanaKey(arcanaB);
+    if (!keyA || !keyB) return null;
+    const direct = FUSE_CHART[keyA]?.[keyB];
+    if (direct) return direct;
+    const mirrored = FUSE_CHART[keyB]?.[keyA];
+    if (mirrored) return mirrored;
+    return null;
 }
 
 /**
@@ -163,11 +216,11 @@ export function resolveChartArcana(arcanaA, arcanaB) {
     const keyA = normalizeArcanaKey(arcanaA);
     const keyB = normalizeArcanaKey(arcanaB);
     if (!keyA || !keyB) return null;
-    const direct = FUSE_CHART[keyA]?.[keyB];
-    if (direct) return direct;
-    const mirrored = FUSE_CHART[keyB]?.[keyA];
-    if (mirrored) return mirrored;
-    return null;
+    const override = getFusionOverride(keyA, keyB);
+    if (override) {
+        return override === FUSION_OVERRIDE_RANDOM ? null : override;
+    }
+    return resolveBaseChartArcana(keyA, keyB);
 }
 
 /**
@@ -180,12 +233,12 @@ export function suggestFusionArcana(arcanaA, arcanaB) {
     const keyA = normalizeArcanaKey(arcanaA);
     const keyB = normalizeArcanaKey(arcanaB);
     if (!keyA || !keyB) return null;
-    const override = FUSION_RULE_OVERRIDES.get(buildPairKey(keyA, keyB));
+    const override = getFusionOverride(keyA, keyB);
     if (override) {
-        return normalizeArcanaKey(override) || null;
+        return override === FUSION_OVERRIDE_RANDOM ? null : override;
     }
     if (keyA === keyB) return keyA;
-    const chartArc = resolveChartArcana(keyA, keyB);
+    const chartArc = resolveBaseChartArcana(keyA, keyB);
     return chartArc || null;
 }
 
@@ -330,10 +383,16 @@ export function createFusionPlan({ demonA, demonB, fuseSeed, moonPhase }) {
 
     const identifierA = resolveFusionIdentifier(demonA) || arcanaA;
     const identifierB = resolveFusionIdentifier(demonB) || arcanaB;
-    const pairKey = buildPairKey(`${arcanaA}:${identifierA}`, `${arcanaB}:${identifierB}`);
+    const pairKey = buildFusionPairKey(`${arcanaA}:${identifierA}`, `${arcanaB}:${identifierB}`);
 
     const normalizedPhase = normalizeMoonPhase(moonPhase);
     const baseSeed = `${seed}|${pairKey}|${normalizedPhase}`;
+
+    const overrideValue = getFusionOverride(arcanaA, arcanaB);
+    const baseArcana = resolveBaseChartArcana(arcanaA, arcanaB);
+    const overrideArcana =
+        overrideValue && overrideValue !== FUSION_OVERRIDE_RANDOM ? overrideValue : null;
+    const hasRandomOverride = overrideValue === FUSION_OVERRIDE_RANDOM;
 
     let roll = null;
     const notifications = [];
@@ -349,17 +408,20 @@ export function createFusionPlan({ demonA, demonB, fuseSeed, moonPhase }) {
 
     let arcanaSource = "chart";
     let candidates = [];
-    const chartArcana = resolveChartArcana(arcanaA, arcanaB);
 
     const shouldRandomize =
+        hasRandomOverride ||
         (normalizedPhase === MOON_PHASES.FULL && roll?.isCriticalHigh) ||
         (normalizedPhase === MOON_PHASES.NEW && roll?.isCriticalLow);
 
     if (shouldRandomize) {
-        arcanaSource = "random";
+        arcanaSource = hasRandomOverride ? "override_random" : "random";
         candidates = buildRandomArcanaOrder(baseSeed);
-    } else if (chartArcana) {
-        candidates = [chartArcana];
+    } else if (overrideArcana) {
+        arcanaSource = "override";
+        candidates = [overrideArcana];
+    } else if (baseArcana) {
+        candidates = [baseArcana];
     } else {
         const fallback = [...new Set([arcanaA, arcanaB].filter(Boolean))];
         candidates = fallback.length > 0 ? fallback : [...FUSE_ARCANA_ORDER];
@@ -375,7 +437,8 @@ export function createFusionPlan({ demonA, demonB, fuseSeed, moonPhase }) {
         notifications,
         arcanaSource,
         arcanaCandidates: candidates,
-        baseArcana: chartArcana,
+        baseArcana,
+        overrideArcana,
         rounding: computeRounding(normalizedPhase),
     };
 }

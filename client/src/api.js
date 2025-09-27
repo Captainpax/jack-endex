@@ -593,6 +593,8 @@ export const Games = {
     addDemon: (id, body) => api(`/api/games/${encodeURIComponent(id)}/demons`, { method: 'POST', body }),
     updateDemon: (id, demonId, body) => api(`/api/games/${encodeURIComponent(id)}/demons/${encodeURIComponent(demonId)}`, { method: 'PUT', body }),
     delDemon: (id, demonId) => api(`/api/games/${encodeURIComponent(id)}/demons/${encodeURIComponent(demonId)}`, { method: 'DELETE' }),
+    updateFusionChart: (id, payload) =>
+        api(`/api/games/${encodeURIComponent(id)}/fusion-chart`, { method: 'PUT', body: payload }),
 
     updateMapSettings: (id, settings) =>
         api(`/api/games/${encodeURIComponent(id)}/map/settings`, {

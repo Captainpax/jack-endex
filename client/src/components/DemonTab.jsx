@@ -22,16 +22,60 @@ import {
 } from "../constants/gameData";
 import { EMPTY_ARRAY, EMPTY_OBJECT } from "../utils/constants";
 import {
+    FUSION_OVERRIDE_RANDOM,
     MOON_PHASE_OPTIONS,
+    buildFusionPairKey,
     createFusionPlan,
     describeFusionPair,
     formatMoonPhaseLabel,
     getArcanaLabel,
+    listFusionArcanaOptions,
+    normalizeArcanaKey,
     normalizeMoonPhase,
+    resolveBaseChartArcana,
     resolveFusionResult,
+    setFusionChartOverrides,
 } from "../utils/fusion";
 
 const FUSION_SEARCH_DEBOUNCE_MS = 350;
+
+function normalizeFusionPairKeyInput(value) {
+    if (typeof value !== "string") return "";
+    const parts = value.split("+").map((part) => normalizeArcanaKey(part));
+    if (parts.length !== 2) return "";
+    const [a, b] = parts;
+    if (!a || !b) return "";
+    return buildFusionPairKey(a, b);
+}
+
+function normalizeFusionOverrideValue(value) {
+    if (typeof value !== "string") return "";
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    const lower = trimmed.toLowerCase();
+    if (lower === FUSION_OVERRIDE_RANDOM) return FUSION_OVERRIDE_RANDOM;
+    return normalizeArcanaKey(lower);
+}
+
+function normalizeFusionOverrideMap(raw) {
+    if (!raw || typeof raw !== "object") return {};
+    const next = {};
+    for (const [pair, value] of Object.entries(raw)) {
+        const pairKey = normalizeFusionPairKeyInput(pair);
+        if (!pairKey) continue;
+        const normalizedValue = normalizeFusionOverrideValue(String(value || ""));
+        if (!normalizedValue) continue;
+        next[pairKey] = normalizedValue;
+    }
+    return next;
+}
+
+function serializeFusionOverrides(overrides) {
+    const entries = Object.entries(overrides || {})
+        .filter(([key, value]) => Boolean(key) && Boolean(value));
+    entries.sort(([a], [b]) => (a > b ? 1 : a < b ? -1 : 0));
+    return JSON.stringify(entries);
+}
 
 function DemonCombatSkillDialog({ demon, skills, onClose }) {
     const [query, setQuery] = useState("");
@@ -394,6 +438,66 @@ function DemonFusionPlanner({ game, onUsePersona, onRefresh }) {
     const [fusionResult, setFusionResult] = useState(null);
     const [history, setHistory] = useState([]);
     const lastHistoryRef = useRef("");
+    const fusionArcanaOptions = useMemo(() => listFusionArcanaOptions(), []);
+    const serverChartOverrides = useMemo(
+        () => normalizeFusionOverrideMap(game?.fusionChart?.overrides),
+        [game?.fusionChart?.overrides],
+    );
+    const [chartDraft, setChartDraft] = useState(serverChartOverrides);
+    const [savingChart, setSavingChart] = useState(false);
+    const [chartError, setChartError] = useState("");
+    const chartDirty = useMemo(
+        () => serializeFusionOverrides(chartDraft) !== serializeFusionOverrides(serverChartOverrides),
+        [chartDraft, serverChartOverrides],
+    );
+
+    useEffect(() => {
+        if (!chartDirty) {
+            setChartDraft(serverChartOverrides);
+        }
+    }, [serverChartOverrides, chartDirty]);
+
+    useEffect(() => {
+        setFusionChartOverrides(chartDraft);
+    }, [chartDraft]);
+
+    const handleChartChange = useCallback((pairKey, value, baseArcKey) => {
+        setChartError("");
+        setChartDraft((prev) => {
+            const next = { ...prev };
+            if (!value || (baseArcKey && value === baseArcKey)) {
+                delete next[pairKey];
+            } else {
+                next[pairKey] = value;
+            }
+            return next;
+        });
+    }, []);
+
+    const handleResetChart = useCallback(() => {
+        setChartError("");
+        setChartDraft({});
+    }, []);
+
+    const handleSaveChart = useCallback(async () => {
+        if (!game?.id) return;
+        setSavingChart(true);
+        setChartError("");
+        try {
+            const payload = { overrides: chartDraft };
+            const result = await Games.updateFusionChart(game.id, payload);
+            const normalized = normalizeFusionOverrideMap(result?.fusionChart?.overrides);
+            setChartDraft(normalized);
+            if (typeof onRefresh === "function") {
+                await onRefresh();
+            }
+        } catch (err) {
+            const message = err instanceof ApiError ? err.message : "Failed to save fusion chart.";
+            setChartError(message);
+        } finally {
+            setSavingChart(false);
+        }
+    }, [chartDraft, game?.id, onRefresh]);
 
     const fusionPairLabel = describeFusionPair(leftSlot.selected?.arcana, rightSlot.selected?.arcana);
     const fusionReady = Boolean(leftSlot.selected && rightSlot.selected && game?.fuseSeed);
@@ -519,7 +623,12 @@ function DemonFusionPlanner({ game, onUsePersona, onRefresh }) {
             : "—";
     const roundingLabel = fusionResult?.rounding?.label || "—";
     const moonPhaseLabel = formatMoonPhaseLabel(moonPhase);
-    const isRandomArcana = plan?.arcanaSource === "random";
+    const isRandomArcana =
+        plan?.arcanaSource === "random" || plan?.arcanaSource === "override_random";
+    const randomArcanaMessage =
+        plan?.arcanaSource === "override_random"
+            ? "Arcana chosen at random due to your fusion override."
+            : `Arcana chosen at random due to the ${moonPhaseLabel.toLowerCase()}.`;
 
     const resultStats = useMemo(() => resolveAbilityState(fusionResultDemon?.stats), [fusionResultDemon]);
     const resultResistances = useMemo(() => {
@@ -621,8 +730,13 @@ function DemonFusionPlanner({ game, onUsePersona, onRefresh }) {
                     <div className="demon-fusion__summary-header">
                         <div>
                             <h4>Fusion result</h4>
+                            {plan?.arcanaSource === "override" && (
+                                <p className="text-small text-muted">
+                                    Using your custom fusion result for this pair.
+                                </p>
+                            )}
                             {isRandomArcana && (
-                                <p className="text-small text-muted">Arcana chosen at random due to the {moonPhaseLabel.toLowerCase()}.</p>
+                                <p className="text-small text-muted">{randomArcanaMessage}</p>
                             )}
                         </div>
                     </div>
@@ -776,6 +890,94 @@ function DemonFusionPlanner({ game, onUsePersona, onRefresh }) {
                             </div>
                         </div>
                     )}
+                </section>
+                <section className="demon-fusion__chart">
+                    <div className="demon-fusion__chart-header">
+                        <div>
+                            <h4>Fusion chart overrides</h4>
+                            <p className="text-small text-muted">
+                                Adjust the resulting arcana for any pair. Select “None (Random)” to roll a random arcana instead
+                                of the default result.
+                            </p>
+                        </div>
+                        <div className="demon-fusion__chart-actions">
+                            <button
+                                type="button"
+                                className="btn ghost btn-small"
+                                onClick={handleResetChart}
+                                disabled={savingChart}
+                            >
+                                Reset to defaults
+                            </button>
+                            <button
+                                type="button"
+                                className="btn btn-small"
+                                onClick={handleSaveChart}
+                                disabled={savingChart || !chartDirty}
+                            >
+                                {savingChart ? "Saving…" : chartDirty ? "Save chart" : "Saved"}
+                            </button>
+                        </div>
+                    </div>
+                    {chartError && <div className="text-small text-error">{chartError}</div>}
+                    <div className="demon-fusion__chart-grid" role="region" aria-label="Fusion chart overrides">
+                        <table className="demon-fusion__chart-table">
+                            <thead>
+                                <tr>
+                                    <th className="demon-fusion__chart-corner" scope="col">
+                                        Arcana
+                                    </th>
+                                    {fusionArcanaOptions.map((option) => (
+                                        <th key={option.key} scope="col">
+                                            {option.label}
+                                        </th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {fusionArcanaOptions.map((rowOption) => (
+                                    <tr key={rowOption.key}>
+                                        <th scope="row">{rowOption.label}</th>
+                                        {fusionArcanaOptions.map((colOption) => {
+                                            const pairKey = buildFusionPairKey(rowOption.key, colOption.key);
+                                            const overrideValue = chartDraft[pairKey] || "";
+                                            const baseArcKey = resolveBaseChartArcana(rowOption.key, colOption.key);
+                                            const baseArcLabel = baseArcKey
+                                                ? getArcanaLabel(baseArcKey) || baseArcKey
+                                                : "—";
+                                            return (
+                                                <td
+                                                    key={colOption.key}
+                                                    className={`demon-fusion__chart-cell${
+                                                        overrideValue ? " has-override" : ""
+                                                    }`}
+                                                >
+                                                    <select
+                                                        className="demon-fusion__chart-select"
+                                                        aria-label={`${rowOption.label} × ${colOption.label} result`}
+                                                        value={overrideValue}
+                                                        onChange={(event) =>
+                                                            handleChartChange(pairKey, event.target.value, baseArcKey)
+                                                        }
+                                                    >
+                                                        <option value="">
+                                                            {baseArcLabel ? `Default (${baseArcLabel})` : "Default"}
+                                                        </option>
+                                                        {fusionArcanaOptions.map((option) => (
+                                                            <option key={option.key} value={option.key}>
+                                                                {option.label}
+                                                            </option>
+                                                        ))}
+                                                        <option value={FUSION_OVERRIDE_RANDOM}>None (Random)</option>
+                                                    </select>
+                                                </td>
+                                            );
+                                        })}
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 </section>
             </div>
             {history.length > 0 && (
