@@ -1642,7 +1642,7 @@ const ENEMY_TOOLTIP_PREFIX = '__enemy__v1:';
 const ENEMY_TOOLTIP_MAX_LENGTH = 480;
 const MAP_SIDEBAR_TABS = [
     { key: 'tokens', label: 'Tokens' },
-    { key: 'overlays', label: 'External Images' },
+    { key: 'overlays', label: 'Overlays' },
     { key: 'shapes', label: 'Shapes' },
     { key: 'library', label: 'Library' },
 ];
@@ -2319,6 +2319,7 @@ function MapTab({ game, me }) {
     const [boardSize, setBoardSize] = useState({ width: 0, height: 0 });
     const [dragging, setDragging] = useState(null);
     const [dragPreview, setDragPreview] = useState(null);
+    const [selectedShapeId, setSelectedShapeId] = useState(null);
     const [playerChoice, setPlayerChoice] = useState('');
     const [demonChoice, setDemonChoice] = useState('');
     const [demonQuery, setDemonQuery] = useState('');
@@ -2345,6 +2346,20 @@ function MapTab({ game, me }) {
             setTool('select');
         }
     }, [isDM, mapState.paused, mapState.settings.allowPlayerDrawing, tool]);
+
+    useEffect(() => {
+        if (!isDM || tool !== 'shape') {
+            setSelectedShapeId(null);
+        }
+    }, [isDM, tool]);
+
+    useEffect(() => {
+        if (!selectedShapeId) return;
+        const exists = mapState.shapes.some((shape) => shape.id === selectedShapeId);
+        if (!exists) {
+            setSelectedShapeId(null);
+        }
+    }, [mapState.shapes, selectedShapeId]);
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
@@ -3090,6 +3105,7 @@ function MapTab({ game, me }) {
             if (!shape || !isDM || tool !== 'shape') return;
             event.preventDefault();
             event.stopPropagation();
+            setSelectedShapeId(shape.id);
             const { x, y } = getPointerPosition(event);
             const offsetX = x - shape.x;
             const offsetY = y - shape.y;
@@ -3145,6 +3161,149 @@ function MapTab({ game, me }) {
             handleUpdateShape(shape.id, coords);
         },
         [dragPreview, dragging, handleUpdateShape]
+    );
+
+    const handleShapeHandlePointerDown = useCallback(
+        (shape, mode, event) => {
+            if (!shape || !isDM || tool !== 'shape') return;
+            event.preventDefault();
+            event.stopPropagation();
+            setSelectedShapeId(shape.id);
+            const pointer = getPointerPosition(event);
+            const target = event.currentTarget;
+            if (target?.setPointerCapture) {
+                try {
+                    target.setPointerCapture(event.pointerId);
+                } catch {
+                    // ignore capture errors
+                }
+            }
+            setDragging({
+                kind: 'shape-handle',
+                id: shape.id,
+                mode,
+                pointerId: event.pointerId,
+                origin: {
+                    pointerX: pointer.x,
+                    pointerY: pointer.y,
+                    x: shape.x,
+                    y: shape.y,
+                    width: shape.width,
+                    height: shape.height,
+                    rotation: shape.rotation,
+                    ratio: shape.height === 0 ? 1 : shape.width / shape.height,
+                },
+                draft: {
+                    width: shape.width,
+                    height: shape.height,
+                    rotation: shape.rotation,
+                },
+            });
+        },
+        [getPointerPosition, isDM, tool]
+    );
+
+    const handleShapeHandlePointerMove = useCallback(
+        (shape, event) => {
+            if (!shape || !dragging || dragging.kind !== 'shape-handle' || dragging.id !== shape.id) return;
+            const pointer = getPointerPosition(event);
+            if (dragging.mode === 'scale') {
+                const centerX = shape.x;
+                const centerY = shape.y;
+                const width = clamp(Math.abs(pointer.x - centerX) * 2, 0.1, 1, dragging.origin.width);
+                const height = clamp(Math.abs(pointer.y - centerY) * 2, 0.1, 1, dragging.origin.height);
+                let nextWidth = width;
+                let nextHeight = height;
+                if (event.shiftKey) {
+                    const ratio = dragging.origin.ratio || 1;
+                    if (ratio > 0) {
+                        if (width / height > ratio) {
+                            nextWidth = clamp(height * ratio, 0.1, 1, dragging.origin.width);
+                            nextHeight = clamp(nextWidth / ratio, 0.1, 1, dragging.origin.height);
+                        } else {
+                            nextHeight = clamp(width / ratio, 0.1, 1, dragging.origin.height);
+                            nextWidth = clamp(nextHeight * ratio, 0.1, 1, dragging.origin.width);
+                        }
+                    }
+                }
+                setDragging((prev) => {
+                    if (!prev || prev.kind !== 'shape-handle' || prev.id !== shape.id) return prev;
+                    return {
+                        ...prev,
+                        draft: {
+                            ...prev.draft,
+                            width: nextWidth,
+                            height: nextHeight,
+                        },
+                    };
+                });
+                setMapState((prev) => ({
+                    ...prev,
+                    shapes: prev.shapes.map((entry) =>
+                        entry.id === shape.id
+                            ? {
+                                  ...entry,
+                                  width: nextWidth,
+                                  height: nextHeight,
+                              }
+                            : entry
+                    ),
+                }));
+            } else if (dragging.mode === 'rotate') {
+                const angleRadians = Math.atan2(pointer.y - shape.y, pointer.x - shape.x);
+                let angle = (angleRadians * 180) / Math.PI + 90;
+                angle = ((angle % 360) + 360) % 360;
+                setDragging((prev) => {
+                    if (!prev || prev.kind !== 'shape-handle' || prev.id !== shape.id) return prev;
+                    return {
+                        ...prev,
+                        draft: {
+                            ...prev.draft,
+                            rotation: angle,
+                        },
+                    };
+                });
+                setMapState((prev) => ({
+                    ...prev,
+                    shapes: prev.shapes.map((entry) =>
+                        entry.id === shape.id
+                            ? {
+                                  ...entry,
+                                  rotation: angle,
+                              }
+                            : entry
+                    ),
+                }));
+            }
+        },
+        [dragging, getPointerPosition]
+    );
+
+    const handleShapeHandlePointerUp = useCallback(
+        (shape, event) => {
+            if (!shape || !dragging || dragging.kind !== 'shape-handle' || dragging.id !== shape.id) return;
+            const target = event.currentTarget;
+            if (target?.releasePointerCapture) {
+                try {
+                    target.releasePointerCapture(dragging.pointerId);
+                } catch {
+                    // ignore release errors
+                }
+            }
+            const patch = {};
+            if (dragging.mode === 'scale' && dragging.draft) {
+                patch.width = dragging.draft.width;
+                patch.height = dragging.draft.height;
+            }
+            if (dragging.mode === 'rotate' && dragging.draft) {
+                patch.rotation = dragging.draft.rotation;
+            }
+            setDragging(null);
+            if (Object.keys(patch).length > 0) {
+                handleUpdateShape(shape.id, patch);
+            }
+        },
+        [dragging, handleUpdateShape]
     );
 
     const storyConfigured = !!game.story?.webhookConfigured;
@@ -3541,7 +3700,15 @@ function MapTab({ game, me }) {
                         onPointerCancel={handleCanvasPointerFinish}
                         onPointerLeave={handleCanvasPointerFinish}
                     />
-                    <div className="map-board__shapes" style={{ pointerEvents: shapeLayerPointerEvents }}>
+                    <div
+                        className="map-board__shapes"
+                        style={{ pointerEvents: shapeLayerPointerEvents }}
+                        onPointerDown={(event) => {
+                            if (event.target === event.currentTarget) {
+                                setSelectedShapeId(null);
+                            }
+                        }}
+                    >
                         {mapState.shapes.map((shape) => {
                             const display =
                                 dragPreview && dragPreview.kind === 'shape' && dragPreview.id === shape.id
@@ -3556,10 +3723,12 @@ function MapTab({ game, me }) {
                                 height: `${heightPercent}%`,
                                 transform: `translate(-50%, -50%) rotate(${display.rotation}deg)`,
                             };
+                            const isSelected = isDM && tool === 'shape' && selectedShapeId === shape.id;
                             const className = [
                                 'map-shape',
                                 `map-shape--${display.type}`,
                                 isDM && tool === 'shape' ? 'is-editing' : '',
+                                isSelected ? 'is-selected' : '',
                             ]
                                 .filter(Boolean)
                                 .join(' ');
@@ -3583,6 +3752,34 @@ function MapTab({ game, me }) {
                                             />
                                         ) : (
                                             <span className="map-shape__empty">Set image URL</span>
+                                        )}
+                                        {isSelected && (
+                                            <>
+                                                <div
+                                                    className="map-shape__handle map-shape__handle--scale"
+                                                    role="presentation"
+                                                    onPointerDown={(event) =>
+                                                        handleShapeHandlePointerDown(shape, 'scale', event)
+                                                    }
+                                                    onPointerMove={(event) => handleShapeHandlePointerMove(shape, event)}
+                                                    onPointerUp={(event) => handleShapeHandlePointerUp(shape, event)}
+                                                    onPointerCancel={(event) =>
+                                                        handleShapeHandlePointerUp(shape, event)
+                                                    }
+                                                />
+                                                <div
+                                                    className="map-shape__handle map-shape__handle--rotate"
+                                                    role="presentation"
+                                                    onPointerDown={(event) =>
+                                                        handleShapeHandlePointerDown(shape, 'rotate', event)
+                                                    }
+                                                    onPointerMove={(event) => handleShapeHandlePointerMove(shape, event)}
+                                                    onPointerUp={(event) => handleShapeHandlePointerUp(shape, event)}
+                                                    onPointerCancel={(event) =>
+                                                        handleShapeHandlePointerUp(shape, event)
+                                                    }
+                                                />
+                                            </>
                                         )}
                                     </div>
                                 );
@@ -4169,7 +4366,7 @@ function MapTab({ game, me }) {
                                 {isDM && (
                                     <MapAccordionSection
                                         title="Add overlay image"
-                                        description="Layer supplemental art, grids, or handouts on top of the battlefield."
+                                        description="Layer supplemental art, grids, or handouts on top of the battlefield with on-map controls."
                                     >
                                         <form
                                             className="map-overlay-form"
@@ -4205,74 +4402,177 @@ function MapTab({ game, me }) {
                                                 }
                                                 placeholder="https://example.com/reference.png"
                                             />
-                                            <div className="map-overlay-form__sliders">
-                                                <label>
-                                                    <span className="text-small">
-                                                        Width ({Math.round(overlayForm.width * 100)}%)
-                                                    </span>
-                                                    <input
-                                                        type="range"
-                                                        min="10"
-                                                        max="100"
-                                                        value={Math.round(overlayForm.width * 100)}
-                                                        onChange={(event) =>
-                                                            setOverlayForm((prev) => ({
-                                                                ...prev,
-                                                                width: clamp(Number(event.target.value) / 100, 0.1, 1, prev.width),
-                                                            }))
-                                                        }
-                                                    />
+                                            <p className="text-small text-muted map-overlay-form__hint">
+                                                PNGs or WEBPs with transparent backgrounds work best for overlays.
+                                            </p>
+                                            <div className="map-overlay-form__grid">
+                                                <label className="map-overlay-form__control">
+                                                    <span className="text-small">Width</span>
+                                                    <div className="map-overlay-form__control-inputs">
+                                                        <input
+                                                            type="range"
+                                                            min="10"
+                                                            max="100"
+                                                            value={Math.round(overlayForm.width * 100)}
+                                                            onChange={(event) =>
+                                                                setOverlayForm((prev) => ({
+                                                                    ...prev,
+                                                                    width: clamp(
+                                                                        Number(event.target.value) / 100,
+                                                                        0.1,
+                                                                        1,
+                                                                        prev.width
+                                                                    ),
+                                                                }))
+                                                            }
+                                                        />
+                                                        <input
+                                                            type="number"
+                                                            min="10"
+                                                            max="100"
+                                                            step="1"
+                                                            value={Math.round(overlayForm.width * 100)}
+                                                            onChange={(event) => {
+                                                                const raw = event.target.value;
+                                                                if (raw === '') return;
+                                                                setOverlayForm((prev) => ({
+                                                                    ...prev,
+                                                                    width: clamp(
+                                                                        Number(raw) / 100,
+                                                                        0.1,
+                                                                        1,
+                                                                        prev.width
+                                                                    ),
+                                                                }));
+                                                            }}
+                                                        />
+                                                    </div>
                                                 </label>
-                                                <label>
-                                                    <span className="text-small">
-                                                        Height ({Math.round(overlayForm.height * 100)}%)
-                                                    </span>
-                                                    <input
-                                                        type="range"
-                                                        min="10"
-                                                        max="100"
-                                                        value={Math.round(overlayForm.height * 100)}
-                                                        onChange={(event) =>
-                                                            setOverlayForm((prev) => ({
-                                                                ...prev,
-                                                                height: clamp(Number(event.target.value) / 100, 0.1, 1, prev.height),
-                                                            }))
-                                                        }
-                                                    />
+                                                <label className="map-overlay-form__control">
+                                                    <span className="text-small">Height</span>
+                                                    <div className="map-overlay-form__control-inputs">
+                                                        <input
+                                                            type="range"
+                                                            min="10"
+                                                            max="100"
+                                                            value={Math.round(overlayForm.height * 100)}
+                                                            onChange={(event) =>
+                                                                setOverlayForm((prev) => ({
+                                                                    ...prev,
+                                                                    height: clamp(
+                                                                        Number(event.target.value) / 100,
+                                                                        0.1,
+                                                                        1,
+                                                                        prev.height
+                                                                    ),
+                                                                }))
+                                                            }
+                                                        />
+                                                        <input
+                                                            type="number"
+                                                            min="10"
+                                                            max="100"
+                                                            step="1"
+                                                            value={Math.round(overlayForm.height * 100)}
+                                                            onChange={(event) => {
+                                                                const raw = event.target.value;
+                                                                if (raw === '') return;
+                                                                setOverlayForm((prev) => ({
+                                                                    ...prev,
+                                                                    height: clamp(
+                                                                        Number(raw) / 100,
+                                                                        0.1,
+                                                                        1,
+                                                                        prev.height
+                                                                    ),
+                                                                }));
+                                                            }}
+                                                        />
+                                                    </div>
                                                 </label>
-                                                <label>
-                                                    <span className="text-small">
-                                                        Opacity ({Math.round(overlayForm.opacity * 100)}%)
-                                                    </span>
-                                                    <input
-                                                        type="range"
-                                                        min="10"
-                                                        max="100"
-                                                        value={Math.round(overlayForm.opacity * 100)}
-                                                        onChange={(event) =>
-                                                            setOverlayForm((prev) => ({
-                                                                ...prev,
-                                                                opacity: clamp(Number(event.target.value) / 100, 0.1, 1, prev.opacity),
-                                                            }))
-                                                        }
-                                                    />
+                                                <label className="map-overlay-form__control">
+                                                    <span className="text-small">Opacity</span>
+                                                    <div className="map-overlay-form__control-inputs">
+                                                        <input
+                                                            type="range"
+                                                            min="10"
+                                                            max="100"
+                                                            value={Math.round(overlayForm.opacity * 100)}
+                                                            onChange={(event) =>
+                                                                setOverlayForm((prev) => ({
+                                                                    ...prev,
+                                                                    opacity: clamp(
+                                                                        Number(event.target.value) / 100,
+                                                                        0.1,
+                                                                        1,
+                                                                        prev.opacity
+                                                                    ),
+                                                                }))
+                                                            }
+                                                        />
+                                                        <input
+                                                            type="number"
+                                                            min="10"
+                                                            max="100"
+                                                            step="1"
+                                                            value={Math.round(overlayForm.opacity * 100)}
+                                                            onChange={(event) => {
+                                                                const raw = event.target.value;
+                                                                if (raw === '') return;
+                                                                setOverlayForm((prev) => ({
+                                                                    ...prev,
+                                                                    opacity: clamp(
+                                                                        Number(raw) / 100,
+                                                                        0.1,
+                                                                        1,
+                                                                        prev.opacity
+                                                                    ),
+                                                                }));
+                                                            }}
+                                                        />
+                                                    </div>
                                                 </label>
-                                                <label>
-                                                    <span className="text-small">
-                                                        Rotation ({Math.round(overlayForm.rotation)}°)
-                                                    </span>
-                                                    <input
-                                                        type="range"
-                                                        min="0"
-                                                        max="360"
-                                                        value={Math.round(overlayForm.rotation)}
-                                                        onChange={(event) =>
-                                                            setOverlayForm((prev) => ({
-                                                                ...prev,
-                                                                rotation: clamp(Number(event.target.value), 0, 360, prev.rotation),
-                                                            }))
-                                                        }
-                                                    />
+                                                <label className="map-overlay-form__control">
+                                                    <span className="text-small">Rotation</span>
+                                                    <div className="map-overlay-form__control-inputs">
+                                                        <input
+                                                            type="range"
+                                                            min="0"
+                                                            max="360"
+                                                            value={Math.round(overlayForm.rotation)}
+                                                            onChange={(event) =>
+                                                                setOverlayForm((prev) => ({
+                                                                    ...prev,
+                                                                    rotation: clamp(
+                                                                        Number(event.target.value),
+                                                                        0,
+                                                                        360,
+                                                                        prev.rotation
+                                                                    ),
+                                                                }))
+                                                            }
+                                                        />
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            max="360"
+                                                            step="1"
+                                                            value={Math.round(overlayForm.rotation)}
+                                                            onChange={(event) => {
+                                                                const raw = event.target.value;
+                                                                if (raw === '') return;
+                                                                setOverlayForm((prev) => ({
+                                                                    ...prev,
+                                                                    rotation: clamp(
+                                                                        Number(raw),
+                                                                        0,
+                                                                        360,
+                                                                        prev.rotation
+                                                                    ),
+                                                                }));
+                                                            }}
+                                                        />
+                                                    </div>
                                                 </label>
                                             </div>
                                             <div className="map-overlay-form__actions">
@@ -4280,7 +4580,9 @@ function MapTab({ game, me }) {
                                                     Add overlay
                                                 </button>
                                                 <p className="text-small text-muted">
-                                                    Use the Shapes tool to drag overlays into position.
+                                                    Select the Shapes tool, then click an overlay to drag it, resize with the
+                                                    corner handle, or rotate with the halo handle. Hold Shift while resizing to
+                                                    lock the aspect ratio.
                                                 </p>
                                             </div>
                                         </form>
@@ -4288,7 +4590,7 @@ function MapTab({ game, me }) {
                                 )}
                                 <MapAccordionSection
                                     title="Overlay images"
-                                    description="Manage existing overlays. Drag with the Shapes tool to reposition."
+                                    description="Manage existing overlays. Select one on the map to drag, resize, or rotate."
                                     defaultOpen={imageShapes.length > 0}
                                 >
                                     {imageShapes.length === 0 ? (
@@ -4304,158 +4606,216 @@ function MapTab({ game, me }) {
                                                             <span className="text-muted text-small">Set image URL</span>
                                                         )}
                                                     </div>
-                                                    <div className="map-shape-card__body">
-                                                        <label className="text-small" htmlFor={`map-overlay-url-${shape.id}`}>
-                                                            Image URL
-                                                        </label>
-                                                        <input
-                                                            id={`map-overlay-url-${shape.id}`}
-                                                            type="text"
-                                                            value={shape.url}
-                                                            onChange={(event) => {
-                                                                const value = event.target.value;
-                                                                setMapState((prev) => ({
-                                                                    ...prev,
-                                                                    shapes: prev.shapes.map((entry) =>
-                                                                        entry.id === shape.id ? { ...entry, url: value } : entry
-                                                                    ),
-                                                                }));
-                                                            }}
-                                                            onBlur={(event) => {
-                                                                const trimmed = event.target.value.trim();
-                                                                setMapState((prev) => ({
-                                                                    ...prev,
-                                                                    shapes: prev.shapes.map((entry) =>
-                                                                        entry.id === shape.id ? { ...entry, url: trimmed } : entry
-                                                                    ),
-                                                                }));
-                                                                handleUpdateShape(shape.id, { url: trimmed });
-                                                            }}
-                                                        />
-                                                        <div className="map-shape-card__sliders">
-                                                            <label>
-                                                                <span className="text-small">
-                                                                    Width ({Math.round(shape.width * 100)}%)
-                                                                </span>
+                                                    {(() => {
+                                                        const updateOverlayShape = (patch) => {
+                                                            setMapState((prev) => ({
+                                                                ...prev,
+                                                                shapes: prev.shapes.map((entry) =>
+                                                                    entry.id === shape.id ? { ...entry, ...patch } : entry
+                                                                ),
+                                                            }));
+                                                            handleUpdateShape(shape.id, patch);
+                                                        };
+
+                                                        return (
+                                                            <div className="map-shape-card__body">
+                                                                <label className="text-small" htmlFor={`map-overlay-url-${shape.id}`}>
+                                                                    Image URL
+                                                                </label>
                                                                 <input
-                                                                    type="range"
-                                                                    min="10"
-                                                                    max="100"
-                                                                    value={Math.round(shape.width * 100)}
+                                                                    id={`map-overlay-url-${shape.id}`}
+                                                                    type="text"
+                                                                    value={shape.url}
                                                                     onChange={(event) => {
-                                                                        const value = clamp(
-                                                                            Number(event.target.value) / 100,
-                                                                            0.1,
-                                                                            1,
-                                                                            shape.width,
-                                                                        );
+                                                                        const value = event.target.value;
                                                                         setMapState((prev) => ({
                                                                             ...prev,
                                                                             shapes: prev.shapes.map((entry) =>
-                                                                                entry.id === shape.id
-                                                                                    ? { ...entry, width: value }
-                                                                                    : entry
+                                                                                entry.id === shape.id ? { ...entry, url: value } : entry
                                                                             ),
                                                                         }));
-                                                                        handleUpdateShape(shape.id, { width: value });
                                                                     }}
-                                                                />
-                                                            </label>
-                                                            <label>
-                                                                <span className="text-small">
-                                                                    Height ({Math.round(shape.height * 100)}%)
-                                                                </span>
-                                                                <input
-                                                                    type="range"
-                                                                    min="10"
-                                                                    max="100"
-                                                                    value={Math.round(shape.height * 100)}
-                                                                    onChange={(event) => {
-                                                                        const value = clamp(
-                                                                            Number(event.target.value) / 100,
-                                                                            0.1,
-                                                                            1,
-                                                                            shape.height,
-                                                                        );
+                                                                    onBlur={(event) => {
+                                                                        const trimmed = event.target.value.trim();
                                                                         setMapState((prev) => ({
                                                                             ...prev,
                                                                             shapes: prev.shapes.map((entry) =>
-                                                                                entry.id === shape.id
-                                                                                    ? { ...entry, height: value }
-                                                                                    : entry
+                                                                                entry.id === shape.id ? { ...entry, url: trimmed } : entry
                                                                             ),
                                                                         }));
-                                                                        handleUpdateShape(shape.id, { height: value });
+                                                                        handleUpdateShape(shape.id, { url: trimmed });
                                                                     }}
                                                                 />
-                                                            </label>
-                                                            <label>
-                                                                <span className="text-small">
-                                                                    Rotation ({Math.round(shape.rotation)}°)
-                                                                </span>
-                                                                <input
-                                                                    type="range"
-                                                                    min="0"
-                                                                    max="360"
-                                                                    value={Math.round(shape.rotation)}
-                                                                    onChange={(event) => {
-                                                                        const value = clamp(
-                                                                            Number(event.target.value),
-                                                                            0,
-                                                                            360,
-                                                                            shape.rotation,
-                                                                        );
-                                                                        setMapState((prev) => ({
-                                                                            ...prev,
-                                                                            shapes: prev.shapes.map((entry) =>
-                                                                                entry.id === shape.id
-                                                                                    ? { ...entry, rotation: value }
-                                                                                    : entry
-                                                                            ),
-                                                                        }));
-                                                                        handleUpdateShape(shape.id, { rotation: value });
-                                                                    }}
-                                                                />
-                                                            </label>
-                                                            <label>
-                                                                <span className="text-small">
-                                                                    Opacity ({Math.round(shape.opacity * 100)}%)
-                                                                </span>
-                                                                <input
-                                                                    type="range"
-                                                                    min="10"
-                                                                    max="100"
-                                                                    value={Math.round(shape.opacity * 100)}
-                                                                    onChange={(event) => {
-                                                                        const value = clamp(
-                                                                            Number(event.target.value) / 100,
-                                                                            0.1,
-                                                                            1,
-                                                                            shape.opacity,
-                                                                        );
-                                                                        setMapState((prev) => ({
-                                                                            ...prev,
-                                                                            shapes: prev.shapes.map((entry) =>
-                                                                                entry.id === shape.id
-                                                                                    ? { ...entry, opacity: value }
-                                                                                    : entry
-                                                                            ),
-                                                                        }));
-                                                                        handleUpdateShape(shape.id, { opacity: value });
-                                                                    }}
-                                                                />
-                                                            </label>
-                                                        </div>
-                                                        <div className="map-shape-card__actions">
-                                                            <button
-                                                                type="button"
-                                                                className="btn ghost btn-small"
-                                                                onClick={() => handleRemoveShape(shape.id)}
-                                                            >
-                                                                Remove overlay
-                                                            </button>
-                                                        </div>
-                                                    </div>
+                                                                <p className="map-shape-card__hint text-small text-muted">
+                                                                    Drag the overlay directly on the board or use the corner and rotation handles
+                                                                    for precision edits.
+                                                                </p>
+                                                                <div className="map-shape-card__controls">
+                                                                    <div className="map-shape-card__control">
+                                                                        <span className="text-small">Width</span>
+                                                                        <div className="map-shape-card__control-inputs">
+                                                                            <input
+                                                                                type="range"
+                                                                                min="10"
+                                                                                max="100"
+                                                                                value={Math.round(shape.width * 100)}
+                                                                                onChange={(event) => {
+                                                                                    const value = clamp(
+                                                                                        Number(event.target.value) / 100,
+                                                                                        0.1,
+                                                                                        1,
+                                                                                        shape.width,
+                                                                                    );
+                                                                                    updateOverlayShape({ width: value });
+                                                                                }}
+                                                                            />
+                                                                            <input
+                                                                                type="number"
+                                                                                min="10"
+                                                                                max="100"
+                                                                                step="1"
+                                                                                value={Math.round(shape.width * 100)}
+                                                                                onChange={(event) => {
+                                                                                    const raw = event.target.value;
+                                                                                    if (raw === '') return;
+                                                                                    const value = clamp(
+                                                                                        Number(raw) / 100,
+                                                                                        0.1,
+                                                                                        1,
+                                                                                        shape.width,
+                                                                                    );
+                                                                                    updateOverlayShape({ width: value });
+                                                                                }}
+                                                                            />
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="map-shape-card__control">
+                                                                        <span className="text-small">Height</span>
+                                                                        <div className="map-shape-card__control-inputs">
+                                                                            <input
+                                                                                type="range"
+                                                                                min="10"
+                                                                                max="100"
+                                                                                value={Math.round(shape.height * 100)}
+                                                                                onChange={(event) => {
+                                                                                    const value = clamp(
+                                                                                        Number(event.target.value) / 100,
+                                                                                        0.1,
+                                                                                        1,
+                                                                                        shape.height,
+                                                                                    );
+                                                                                    updateOverlayShape({ height: value });
+                                                                                }}
+                                                                            />
+                                                                            <input
+                                                                                type="number"
+                                                                                min="10"
+                                                                                max="100"
+                                                                                step="1"
+                                                                                value={Math.round(shape.height * 100)}
+                                                                                onChange={(event) => {
+                                                                                    const raw = event.target.value;
+                                                                                    if (raw === '') return;
+                                                                                    const value = clamp(
+                                                                                        Number(raw) / 100,
+                                                                                        0.1,
+                                                                                        1,
+                                                                                        shape.height,
+                                                                                    );
+                                                                                    updateOverlayShape({ height: value });
+                                                                                }}
+                                                                            />
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="map-shape-card__control">
+                                                                        <span className="text-small">Rotation</span>
+                                                                        <div className="map-shape-card__control-inputs">
+                                                                            <input
+                                                                                type="range"
+                                                                                min="0"
+                                                                                max="360"
+                                                                                value={Math.round(shape.rotation)}
+                                                                                onChange={(event) => {
+                                                                                    const value = clamp(
+                                                                                        Number(event.target.value),
+                                                                                        0,
+                                                                                        360,
+                                                                                        shape.rotation,
+                                                                                    );
+                                                                                    updateOverlayShape({ rotation: value });
+                                                                                }}
+                                                                            />
+                                                                            <input
+                                                                                type="number"
+                                                                                min="0"
+                                                                                max="360"
+                                                                                step="1"
+                                                                                value={Math.round(shape.rotation)}
+                                                                                onChange={(event) => {
+                                                                                    const raw = event.target.value;
+                                                                                    if (raw === '') return;
+                                                                                    const value = clamp(
+                                                                                        Number(raw),
+                                                                                        0,
+                                                                                        360,
+                                                                                        shape.rotation,
+                                                                                    );
+                                                                                    updateOverlayShape({ rotation: value });
+                                                                                }}
+                                                                            />
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="map-shape-card__control">
+                                                                        <span className="text-small">Opacity</span>
+                                                                        <div className="map-shape-card__control-inputs">
+                                                                            <input
+                                                                                type="range"
+                                                                                min="10"
+                                                                                max="100"
+                                                                                value={Math.round(shape.opacity * 100)}
+                                                                                onChange={(event) => {
+                                                                                    const value = clamp(
+                                                                                        Number(event.target.value) / 100,
+                                                                                        0.1,
+                                                                                        1,
+                                                                                        shape.opacity,
+                                                                                    );
+                                                                                    updateOverlayShape({ opacity: value });
+                                                                                }}
+                                                                            />
+                                                                            <input
+                                                                                type="number"
+                                                                                min="10"
+                                                                                max="100"
+                                                                                step="1"
+                                                                                value={Math.round(shape.opacity * 100)}
+                                                                                onChange={(event) => {
+                                                                                    const raw = event.target.value;
+                                                                                    if (raw === '') return;
+                                                                                    const value = clamp(
+                                                                                        Number(raw) / 100,
+                                                                                        0.1,
+                                                                                        1,
+                                                                                        shape.opacity,
+                                                                                    );
+                                                                                    updateOverlayShape({ opacity: value });
+                                                                                }}
+                                                                            />
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                                <div className="map-shape-card__actions">
+                                                                    <button
+                                                                        type="button"
+                                                                        className="btn ghost btn-small"
+                                                                        onClick={() => handleRemoveShape(shape.id)}
+                                                                    >
+                                                                        Remove overlay
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })()}
                                                 </div>
                                             ))}
                                         </div>
