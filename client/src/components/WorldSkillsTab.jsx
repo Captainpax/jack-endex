@@ -1333,116 +1333,105 @@ function WorldSkillsTab({ game, me, onUpdate }) {
                                     : "Everything is hidden. Use “Show hidden” to bring skills back."}
                             </div>
                         ) : (
-                            <div className="sheet-table-wrapper">
-                                <table className="sheet-table skill-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Skill</th>
-                                            <th>Ability</th>
-                                            <th>Ability mod</th>
-                                            <th>Ranks</th>
-                                            <th>Misc</th>
-                                            <th>Total</th>
-                                            {isDM && <th aria-label="Actions" />}
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {plannerSkillRows.map((row) => {
-                                            const isFavorite = favoriteSkillIds.has(row.id);
-                                            return (
-                                                <tr key={row.key}>
-                                                    <th scope="row">
-                                                        <div className="skill-table__header">
-                                                            <span className="skill-name">{row.label}</span>
-                                                            <div className="skill-table__header-actions">
-                                                                <button
-                                                                    type="button"
-                                                                    className={`skill-card__icon-btn skill-card__icon-btn--star${
-                                                                        isFavorite ? " is-active" : ""
-                                                                    }`}
-                                                                    onClick={() => toggleFavoriteSkill(row.id)}
-                                                                    aria-pressed={isFavorite}
-                                                                    aria-label={
-                                                                        isFavorite
-                                                                            ? `Unstar ${row.label}`
-                                                                            : `Star ${row.label}`
-                                                                    }
-                                                                    title={
-                                                                        isFavorite
-                                                                            ? "Unstar to remove from the pinned list"
-                                                                            : "Star to pin this skill to the top"
-                                                                    }
-                                                                >
-                                                                    {isFavorite ? "★" : "☆"}
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    className="skill-card__icon-btn"
-                                                                    onClick={() => {
-                                                                        hideSkillFromView(row.id);
-                                                                        setShowHiddenSkills(true);
-                                                                    }}
-                                                                    aria-label={`Hide ${row.label}`}
-                                                                    title="Hide this skill from the table"
-                                                                >
-                                                                    Hide
-                                                                </button>
-                                                            </div>
-                                                        </div>
-                                                    </th>
-                                                <td>{row.ability}</td>
-                                                <td>
+                            <div className="world-skill-grid world-skill-grid--planner">
+                                {plannerSkillRows.map((row) => {
+                                    const abilityInfo = abilityDetails[row.ability] || null;
+                                    const isFavorite = favoriteSkillIds.has(row.id);
+                                    const rowKey = row.id || row.key || row.label;
+                                    return (
+                                        <div
+                                            key={rowKey}
+                                            className={`world-skill-card world-skill-rank-card${
+                                                isFavorite ? " is-favorite" : ""
+                                            }`}
+                                        >
+                                            <div className="world-skill-card__header">
+                                                <span className="world-skill-card__badge">{row.ability}</span>
+                                                <div className="skill-card__toolbar">
+                                                    <button
+                                                        type="button"
+                                                        className={`skill-card__icon-btn skill-card__icon-btn--star${
+                                                            isFavorite ? " is-active" : ""
+                                                        }`}
+                                                        onClick={() => toggleFavoriteSkill(row.id)}
+                                                        aria-pressed={isFavorite}
+                                                        aria-label={
+                                                            isFavorite
+                                                                ? `Unstar ${row.label}`
+                                                                : `Star ${row.label}`
+                                                        }
+                                                        title={
+                                                            isFavorite
+                                                                ? "Unstar to remove from the pinned list"
+                                                                : "Star to pin this skill to the top"
+                                                        }
+                                                    >
+                                                        {isFavorite ? "★" : "☆"}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="skill-card__icon-btn"
+                                                        onClick={() => {
+                                                            hideSkillFromView(row.id);
+                                                            setShowHiddenSkills(true);
+                                                        }}
+                                                        aria-label={`Hide ${row.label}`}
+                                                        title="Hide this skill from the planner"
+                                                    >
+                                                        Hide
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div className="world-skill-card__body world-skill-rank-card__body">
+                                                <div className="world-skill-rank-card__heading">
+                                                    <h4>{row.label}</h4>
+                                                    {abilityInfo?.label && (
+                                                        <span className="text-muted text-small">
+                                                            {abilityInfo.label}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="world-skill-rank-card__summary">
                                                     <span className="pill light">
-                                                        {formatModifier(row.abilityMod)}
+                                                        Ability mod {formatModifier(row.abilityMod)}
                                                     </span>
-                                                </td>
-                                                <td>
+                                                    <span className="world-skill-rank-card__total">
+                                                        Total
+                                                        <span className="skill-total">{formatModifier(row.total)}</span>
+                                                    </span>
+                                                </div>
+                                                <div className="world-skill-rank-card__fields">
                                                     <MathField
                                                         label="Ranks"
                                                         value={row.ranks}
-                                                        onCommit={(val) =>
-                                                            updateSkill(row.key, "ranks", val)
-                                                        }
+                                                        onCommit={(val) => updateSkill(row.key, "ranks", val)}
                                                         className="math-inline"
                                                         disabled={disableInputs}
                                                     />
-                                                </td>
-                                                <td>
                                                     <MathField
                                                         label="Misc"
                                                         value={row.misc}
-                                                        onCommit={(val) =>
-                                                            updateSkill(row.key, "misc", val)
-                                                        }
+                                                        onCommit={(val) => updateSkill(row.key, "misc", val)}
                                                         className="math-inline"
                                                         disabled={disableInputs}
                                                     />
-                                                </td>
-                                                <td>
-                                                    <span className="skill-total">
-                                                        {formatModifier(row.total)}
-                                                    </span>
-                                                </td>
+                                                </div>
                                                 {isDM && (
-                                                    <td>
-                                                        <button
-                                                            type="button"
-                                                            className="btn btn-small danger"
-                                                            onClick={() => handleTakeAwaySkill(row.key, row.label)}
-                                                            disabled={
-                                                                disableInputs ||
-                                                                (row.ranks === 0 && row.misc === 0)
-                                                            }
-                                                        >
-                                                            Take away
-                                                        </button>
-                                                    </td>
+                                                    <button
+                                                        type="button"
+                                                        className="btn btn-small danger world-skill-rank-card__take-away"
+                                                        onClick={() => handleTakeAwaySkill(row.key, row.label)}
+                                                        disabled={
+                                                            disableInputs || (row.ranks === 0 && row.misc === 0)
+                                                        }
+                                                    >
+                                                        Take away
+                                                    </button>
                                                 )}
-                                            </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         )}
 

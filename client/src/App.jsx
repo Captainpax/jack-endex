@@ -41,7 +41,6 @@ import {
     computeCombatSkillDamage,
     formatModifier,
     getDemonSkillList,
-    makeCustomSkillId,
     NEW_COMBAT_SKILL_ID,
     NEW_WORLD_SKILL_ID,
     normalizeCombatCategoryValue,
@@ -5396,16 +5395,6 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
         });
     }, [worldSkills]);
 
-    const abilityDefault = ABILITY_DEFS[0]?.key || "INT";
-    const [customDraft, setCustomDraft] = useState({ label: "", ability: abilityDefault });
-
-    useEffect(() => {
-        setCustomDraft((prev) => ({
-            label: prev.label,
-            ability: ABILITY_KEY_SET.has(prev.ability) ? prev.ability : abilityDefault,
-        }));
-    }, [abilityDefault]);
-
     const getPlayerLabel = useCallback((player) => {
         if (!player) return "Unnamed player";
         const charName = typeof player.character?.name === "string" ? player.character.name.trim() : "";
@@ -5460,7 +5449,6 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
         profile: false,
         resources: false,
         abilities: false,
-        worldSkills: false,
     }));
     const toggleSection = useCallback((key) => {
         setCollapsedSections((prev) => ({
@@ -5471,7 +5459,6 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     const profileSectionId = useId();
     const resourcesSectionId = useId();
     const abilitySectionId = useId();
-    const worldSkillsSectionId = useId();
 
     const abilityInfo = useMemo(() => {
         const stats = ch?.stats || {};
@@ -5519,6 +5506,8 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     const suggestedTP = Math.max(0, Math.ceil(7 + getMod("DEX") + getMod("CON") / 2));
     const suggestedSP = Math.max(0, Math.ceil((5 + getMod("INT")) * 2 + getMod("CHA")));
 
+    const maxSkillRank = Math.max(4, level * 2 + 2);
+
     const resourceSuggestions = useMemo(() => {
         const rows = [
             {
@@ -5545,106 +5534,39 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
             {
                 key: "rank",
                 label: "Max skill rank",
-                value: Math.max(4, level * 2 + 2),
+                value: maxSkillRank,
                 detail: "(Level × 2) + 2",
             },
         ];
         return rows;
-    }, [hp, level, mp, resourceMode, spValue, suggestedHP, suggestedMP, suggestedSP, suggestedTP, tp]);
-
-    const skillRows = useMemo(() => {
-        const skills = ch?.skills || {};
-        return worldSkills.map((skill) => {
-            const ranks = clampNonNegative(get(skills, `${skill.key}.ranks`));
-            const miscRaw = Number(get(skills, `${skill.key}.misc`));
-            const misc = Number.isFinite(miscRaw) ? miscRaw : 0;
-            const abilityMod = getMod(skill.ability);
-            const total = abilityMod + ranks + misc;
-            return { ...skill, ranks, misc, abilityMod, total };
-        });
-    }, [ch?.skills, getMod, worldSkills]);
-
-    const customSkillRows = useMemo(() => {
-        const list = Array.isArray(ch?.customSkills) ? ch.customSkills : [];
-        return list.map((entry, index) => {
-            const ranks = clampNonNegative(entry.ranks);
-            const miscRaw = Number(entry.misc);
-            const misc = Number.isFinite(miscRaw) ? miscRaw : 0;
-            const ability = ABILITY_KEY_SET.has(entry.ability) ? entry.ability : abilityDefault;
-            const abilityMod = getMod(ability);
-            const total = abilityMod + ranks + misc;
-            return { ...entry, index, ability, ranks, misc, abilityMod, total };
-        });
-    }, [abilityDefault, ch?.customSkills, getMod]);
+    }, [
+        hp,
+        maxSkillRank,
+        mp,
+        resourceMode,
+        spValue,
+        suggestedHP,
+        suggestedMP,
+        suggestedSP,
+        suggestedTP,
+        tp,
+    ]);
 
     const spentSP = useMemo(() => {
-        const base = skillRows.reduce((sum, row) => sum + row.ranks, 0);
-        const extras = customSkillRows.reduce((sum, row) => sum + row.ranks, 0);
+        const skills = ch?.skills || {};
+        const base = worldSkills.reduce((sum, skill) => {
+            const ranks = clampNonNegative(get(skills, `${skill.key}.ranks`));
+            return sum + ranks;
+        }, 0);
+        const extras = Array.isArray(ch?.customSkills)
+            ? ch.customSkills.reduce((sum, entry) => sum + clampNonNegative(entry?.ranks), 0)
+            : 0;
         return base + extras;
-    }, [customSkillRows, skillRows]);
+    }, [ch?.customSkills, ch?.skills, worldSkills]);
     const availableSP =
         spRaw === undefined || spRaw === null || spRaw === ""
             ? suggestedSP
             : spValue;
-    const maxSkillRank = Math.max(4, level * 2 + 2);
-    const overSpent = spentSP > availableSP;
-    const rankIssues = useMemo(() => {
-        const standard = skillRows.filter((row) => row.ranks > maxSkillRank).map((row) => row.label);
-        const extras = customSkillRows
-            .filter((row) => row.ranks > maxSkillRank)
-            .map((row) => row.label);
-        return [...standard, ...extras];
-    }, [customSkillRows, maxSkillRank, skillRows]);
-
-    const updateCustomSkillField = useCallback(
-        (index, field, value) => {
-            if (field === 'ranks') {
-                const num = Number(value);
-                const sanitized = Math.min(clampNonNegative(num), maxSkillRank);
-                set(`customSkills.${index}.ranks`, sanitized);
-                return;
-            }
-            if (field === 'misc') {
-                const num = Number(value);
-                set(`customSkills.${index}.misc`, Number.isFinite(num) ? num : 0);
-                return;
-            }
-            set(`customSkills.${index}.${field}`, value);
-        },
-        [maxSkillRank, set]
-    );
-
-    const removeCustomSkill = useCallback(
-        (index) => {
-            setCh((prev) => {
-                const next = deepClone(prev || {});
-                if (!Array.isArray(next.customSkills)) return prev;
-                next.customSkills.splice(index, 1);
-                return normalizeCharacter(next, worldSkills);
-            });
-        },
-        [setCh, worldSkills]
-    );
-
-    const addCustomSkill = useCallback(() => {
-        const label = customDraft.label.trim();
-        if (!label) return;
-        const abilityRaw =
-            typeof customDraft.ability === 'string'
-                ? customDraft.ability.trim().toUpperCase()
-                : abilityDefault;
-        const ability = ABILITY_KEY_SET.has(abilityRaw) ? abilityRaw : abilityDefault;
-        setCh((prev) => {
-            const next = deepClone(prev || {});
-            if (!Array.isArray(next.customSkills)) next.customSkills = [];
-            const ids = new Set(next.customSkills.map((entry) => entry.id));
-            const id = makeCustomSkillId(label, ids);
-            next.customSkills.push({ id, label, ability, ranks: 0, misc: 0 });
-            return normalizeCharacter(next, worldSkills);
-        });
-        setCustomDraft({ label: '', ability });
-    }, [abilityDefault, customDraft, setCh, worldSkills]);
-
     const saveRows = useMemo(() => {
         const saves = ch?.resources?.saves || {};
         return SAVE_DEFS.map((save) => {
@@ -5751,22 +5673,6 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                 disabled={disableInputs || props.disabled}
             />
         </label>
-    );
-
-    const updateSkill = useCallback(
-        (skillKey, field, value) => {
-            const max = field === "ranks" ? maxSkillRank : undefined;
-            const raw = Number(value);
-            const sanitized =
-                field === "misc"
-                    ? Number.isFinite(raw)
-                        ? raw
-                        : 0
-                    : clampNonNegative(raw);
-            const finalValue = max !== undefined ? Math.min(sanitized, max) : sanitized;
-            set(`skills.${skillKey}.${field}`, finalValue);
-        },
-        [maxSkillRank, set]
     );
 
     return (
@@ -5889,7 +5795,7 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                             </div>
                         </div>
                         <div className="sheet-spotlight__notes text-muted text-small">
-                            Use the panels below to record everything else—gear, saves, and world skills. Suggested
+                            Use the panels below to record everything else—gear, saves, and background notes. Suggested
                             totals stay pinned on the right for quick reference.
                         </div>
                     </div>
@@ -6153,235 +6059,6 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                                     ))}
                                 </div>
                             </div>
-                        )}
-                    </section>
-
-                    <section
-                        className={`sheet-section${collapsedSections.worldSkills ? " is-collapsed" : ""}`}
-                    >
-                        <button
-                            type="button"
-                            className="section-header"
-                            onClick={() => toggleSection("worldSkills")}
-                            aria-expanded={!collapsedSections.worldSkills}
-                            aria-controls={worldSkillsSectionId}
-                        >
-                            <div className="section-header__text">
-                                <h4>World skills</h4>
-                                <p className="text-muted text-small" style={{ margin: 0 }}>
-                                    Spend SP immediately. Max rank at level {level} is {maxSkillRank}.
-                                </p>
-                            </div>
-                            <span className="section-header__icon" aria-hidden="true">
-                                {collapsedSections.worldSkills ? "▸" : "▾"}
-                            </span>
-                        </button>
-                        {!collapsedSections.worldSkills && (
-                            <div className="section-body" id={worldSkillsSectionId}>
-                                <div className={`sp-summary${overSpent ? " warn" : ""}`}>
-                            <span>SP spent: {spentSP}</span>
-                            <span>Suggested pool: {availableSP}</span>
-                            <span>Max rank: {maxSkillRank}</span>
-                            {rankIssues.length > 0 && (
-                                <span className="sp-summary__warning">
-                                    Over cap: {rankIssues.join(", ")}
-                                </span>
-                            )}
-                        </div>
-                        <div className="sheet-table-wrapper">
-                            <table className="sheet-table skill-table">
-                                <thead>
-                                    <tr>
-                                        <th>Skill</th>
-                                        <th>Ability</th>
-                                        <th>Ability mod</th>
-                                        <th>Ranks</th>
-                                        <th>Misc</th>
-                                        <th>Total</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {skillRows.map((row) => (
-                                        <tr key={row.key}>
-                                            <th scope="row">
-                                                <span className="skill-name">{row.label}</span>
-                                            </th>
-                                            <td>{row.ability}</td>
-                                            <td>
-                                                <span className="pill light">{formatModifier(row.abilityMod)}</span>
-                                            </td>
-                                            <td>
-                                                <MathField
-                                                    label="Ranks"
-                                                    value={row.ranks}
-                                                    onCommit={(val) => updateSkill(row.key, "ranks", val)}
-                                                    className="math-inline"
-                                                    disabled={disableInputs}
-                                                />
-                                            </td>
-                                            <td>
-                                                <MathField
-                                                    label="Misc"
-                                                    value={row.misc}
-                                                    onCommit={(val) => updateSkill(row.key, "misc", val)}
-                                                    className="math-inline"
-                                                    disabled={disableInputs}
-                                                />
-                                            </td>
-                                            <td>
-                                                <span className="skill-total">{formatModifier(row.total)}</span>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-
-                        <div style={{ marginTop: 16, display: "grid", gap: 8 }}>
-                            <div>
-                                <h5 style={{ margin: 0 }}>Custom skills</h5>
-                                <p className="text-muted text-small" style={{ margin: 0 }}>
-                                    Unique proficiencies unlocked through play. Managed by the DM.
-                                </p>
-                            </div>
-                            {customSkillRows.length === 0 ? (
-                                <div className="text-muted">No custom skills recorded.</div>
-                            ) : (
-                                <div className="sheet-table-wrapper">
-                                    <table className="sheet-table skill-table">
-                                        <thead>
-                                            <tr>
-                                                <th>Skill</th>
-                                                <th>Ability</th>
-                                                <th>Ability mod</th>
-                                                <th>Ranks</th>
-                                                <th>Misc</th>
-                                                <th>Total</th>
-                                                {canEditSheet && <th aria-label="Actions" />}
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {customSkillRows.map((row) => (
-                                                <tr key={row.id || row.index}>
-                                                    <th scope="row">
-                                                        <input
-                                                            type="text"
-                                                            value={row.label}
-                                                            onChange={(e) =>
-                                                                updateCustomSkillField(row.index, 'label', e.target.value)
-                                                            }
-                                                            disabled={disableInputs}
-                                                            placeholder="Skill name"
-                                                            style={{ width: '100%' }}
-                                                        />
-                                                    </th>
-                                                    <td>
-                                                        <select
-                                                            value={row.ability}
-                                                            onChange={(e) =>
-                                                                updateCustomSkillField(
-                                                                    row.index,
-                                                                    'ability',
-                                                                    e.target.value
-                                                                )
-                                                            }
-                                                            disabled={disableInputs}
-                                                        >
-                                                            {ABILITY_DEFS.map((ability) => (
-                                                                <option key={ability.key} value={ability.key}>
-                                                                    {ability.key} · {ability.label}
-                                                                </option>
-                                                            ))}
-                                                        </select>
-                                                    </td>
-                                                    <td>
-                                                        <span className="pill light">{formatModifier(row.abilityMod)}</span>
-                                                    </td>
-                                                    <td>
-                                                        <MathField
-                                                            label="Ranks"
-                                                            value={row.ranks}
-                                                            onCommit={(val) =>
-                                                                updateCustomSkillField(row.index, 'ranks', val)
-                                                            }
-                                                            className="math-inline"
-                                                            disabled={disableInputs}
-                                                        />
-                                                    </td>
-                                                    <td>
-                                                        <MathField
-                                                            label="Misc"
-                                                            value={row.misc}
-                                                            onCommit={(val) =>
-                                                                updateCustomSkillField(row.index, 'misc', val)
-                                                            }
-                                                            className="math-inline"
-                                                            disabled={disableInputs}
-                                                        />
-                                                    </td>
-                                                    <td>
-                                                        <span className="skill-total">{formatModifier(row.total)}</span>
-                                                    </td>
-                                                    {canEditSheet && (
-                                                        <td>
-                                                            <button
-                                                                className="btn ghost"
-                                                                onClick={() => removeCustomSkill(row.index)}
-                                                                disabled={disableInputs}
-                                                            >
-                                                                Remove
-                                                            </button>
-                                                        </td>
-                                                    )}
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            )}
-
-                            {canEditSheet && (
-                                <div
-                                    className="row"
-                                    style={{ gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}
-                                >
-                                    <input
-                                        placeholder="Add new custom skill"
-                                        value={customDraft.label}
-                                        onChange={(e) => setCustomDraft((prev) => ({ ...prev, label: e.target.value }))}
-                                        style={{ flex: 2, minWidth: 200 }}
-                                        disabled={disableInputs}
-                                    />
-                                    <label className="field" style={{ minWidth: 160 }}>
-                                        <span className="field__label">Ability</span>
-                                        <select
-                                            value={customDraft.ability}
-                                            onChange={(e) =>
-                                                setCustomDraft((prev) => ({
-                                                    ...prev,
-                                                    ability: e.target.value,
-                                                }))
-                                            }
-                                            disabled={disableInputs}
-                                        >
-                                            {ABILITY_DEFS.map((ability) => (
-                                                <option key={ability.key} value={ability.key}>
-                                                    {ability.key} · {ability.label}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </label>
-                                    <button
-                                        className="btn"
-                                        onClick={addCustomSkill}
-                                        disabled={disableInputs || !customDraft.label.trim()}
-                                    >
-                                        Add custom skill
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-                    </div>
                         )}
                     </section>
 
