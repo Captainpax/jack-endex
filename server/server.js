@@ -22,6 +22,7 @@ import Item from './models/Item.js';
 import { loadDemonEntries } from './lib/demonImport.js';
 import { loadItemEntries, parseHealingEffect } from './lib/itemImport.js';
 import { DEFAULT_WORLD_SKILLS } from '../shared/worldSkills.js';
+import { findCombatSkillById, findCombatSkillByName } from '../shared/combatSkills.js';
 import { MUSIC_TRACKS, getMusicTrack } from '../shared/music/index.js';
 import { FUSE_ARCANA_KEY_BY_LABEL, FUSE_ARCANA_ORDER } from '../shared/fusionArcana.js';
 
@@ -1509,17 +1510,40 @@ function slugifyCombatSkillLabel(label) {
     return base || `combat-${uuid().slice(0, 8)}`;
 }
 
+function resolveCombatGlossaryEntry({ label, glossaryId }) {
+    if (typeof glossaryId === 'string' && glossaryId.trim()) {
+        const matchById = findCombatSkillById(glossaryId.trim());
+        if (matchById) return matchById;
+    }
+    if (typeof label === 'string' && label.trim()) {
+        const matchByName = findCombatSkillByName(label.trim());
+        if (matchByName) return matchByName;
+    }
+    return null;
+}
+
 function normalizeCombatSkillEntry(entry, seen) {
     if (!entry || typeof entry !== 'object') return null;
     const label = sanitizeText(entry.label ?? entry.name).trim();
     if (!label) return null;
     const abilityRaw = typeof entry.ability === 'string' ? entry.ability.trim().toUpperCase() : '';
-    const ability = ABILITY_CODES.has(abilityRaw) ? abilityRaw : 'STR';
+    const glossary = resolveCombatGlossaryEntry({ label, glossaryId: entry.glossaryId });
+    const ability = ABILITY_CODES.has(abilityRaw)
+        ? abilityRaw
+        : glossary?.ability && ABILITY_CODES.has(glossary.ability)
+        ? glossary.ability
+        : 'STR';
     const tierRaw = typeof entry.tier === 'string' ? entry.tier.trim().toUpperCase() : '';
-    const tier = COMBAT_TIER_ORDER.includes(tierRaw) ? tierRaw : COMBAT_TIER_ORDER[0];
-    const category = normalizeCombatCategory(entry.category ?? entry.type);
-    const cost = sanitizeText(entry.cost ?? entry.resource ?? '').trim();
-    const notes = sanitizeText(entry.notes ?? entry.description ?? '').trim();
+    const tier = COMBAT_TIER_ORDER.includes(tierRaw)
+        ? tierRaw
+        : glossary?.tier && COMBAT_TIER_ORDER.includes(glossary.tier)
+        ? glossary.tier
+        : COMBAT_TIER_ORDER[0];
+    const category = normalizeCombatCategory(entry.category ?? entry.type ?? glossary?.category);
+    const rawCost = entry.cost ?? entry.resource ?? glossary?.cost ?? '';
+    const cost = sanitizeText(rawCost).trim();
+    const providedNotes = sanitizeText(entry.notes ?? entry.description ?? '').trim();
+    const notes = providedNotes || (glossary?.notes ? sanitizeText(glossary.notes).trim() : '');
     let id = typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : null;
     if (!id && typeof entry.key === 'string' && entry.key.trim()) id = entry.key.trim();
     if (!id) id = slugifyCombatSkillLabel(label);
@@ -1530,7 +1554,13 @@ function normalizeCombatSkillEntry(entry, seen) {
         unique = `${id}-${attempt}`;
     }
     seen.add(unique);
-    return { id: unique, key: unique, label, ability, tier, category, cost, notes };
+    const normalized = { id: unique, key: unique, label, ability, tier, category, cost, notes };
+    if (glossary?.id) {
+        normalized.glossaryId = glossary.id;
+    } else if (typeof entry.glossaryId === 'string' && entry.glossaryId.trim()) {
+        normalized.glossaryId = entry.glossaryId.trim();
+    }
+    return normalized;
 }
 
 function ensureCombatSkills(game) {
@@ -4707,6 +4737,8 @@ app.put('/api/games/:id/combat-skills/:skillId', requireAuth, async (req, res) =
     const payload = req.body?.skill || req.body || {};
     const target = list[idx];
     let changed = false;
+    let glossaryUpdate = undefined;
+    let glossaryEntry = null;
 
     const hasLabelField =
         Object.prototype.hasOwnProperty.call(payload, 'label') ||
@@ -4771,6 +4803,89 @@ app.put('/api/games/:id/combat-skills/:skillId', requireAuth, async (req, res) =
         if (nextNotes !== (target.notes || '')) {
             target.notes = nextNotes;
             changed = true;
+        }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(payload, 'glossaryId')) {
+        const rawGlossary = typeof payload.glossaryId === 'string' ? payload.glossaryId.trim() : '';
+        if (rawGlossary) {
+            const match = findCombatSkillById(rawGlossary);
+            if (!match) {
+                return res.status(400).json({ error: 'invalid_glossary' });
+            }
+            glossaryUpdate = match.id;
+            glossaryEntry = match;
+        } else {
+            glossaryUpdate = null;
+        }
+    }
+
+    if (glossaryUpdate === undefined && hasLabelField) {
+        const matched = findCombatSkillByName(target.label);
+        if (matched) {
+            glossaryUpdate = matched.id;
+            glossaryEntry = matched;
+        } else if (target.glossaryId) {
+            glossaryUpdate = null;
+        }
+    }
+
+    if (glossaryUpdate !== undefined) {
+        const currentGlossaryId = target.glossaryId || null;
+        if (glossaryUpdate !== currentGlossaryId) {
+            if (glossaryUpdate) {
+                target.glossaryId = glossaryUpdate;
+            } else {
+                delete target.glossaryId;
+            }
+            changed = true;
+        }
+    }
+
+    if (!glossaryEntry && (glossaryUpdate || target.glossaryId)) {
+        glossaryEntry = findCombatSkillById(glossaryUpdate || target.glossaryId);
+    }
+
+    if (glossaryEntry) {
+        if (!Object.prototype.hasOwnProperty.call(payload, 'ability') && ABILITY_CODES.has(glossaryEntry.ability)) {
+            if (target.ability !== glossaryEntry.ability) {
+                target.ability = glossaryEntry.ability;
+                changed = true;
+            }
+        }
+        if (!Object.prototype.hasOwnProperty.call(payload, 'tier') && COMBAT_TIER_ORDER.includes(glossaryEntry.tier)) {
+            if (target.tier !== glossaryEntry.tier) {
+                target.tier = glossaryEntry.tier;
+                changed = true;
+            }
+        }
+        const providedCategory =
+            Object.prototype.hasOwnProperty.call(payload, 'category') ||
+            Object.prototype.hasOwnProperty.call(payload, 'type');
+        if (!providedCategory && glossaryEntry.category) {
+            const nextCategory = normalizeCombatCategory(glossaryEntry.category);
+            if (nextCategory !== target.category) {
+                target.category = nextCategory;
+                changed = true;
+            }
+        }
+        if (
+            !Object.prototype.hasOwnProperty.call(payload, 'cost') &&
+            !Object.prototype.hasOwnProperty.call(payload, 'resource') &&
+            typeof glossaryEntry.cost === 'string'
+        ) {
+            const nextCost = sanitizeText(glossaryEntry.cost).trim();
+            if (nextCost !== (target.cost || '')) {
+                target.cost = nextCost;
+                changed = true;
+            }
+        }
+        if (!Object.prototype.hasOwnProperty.call(payload, 'notes') && typeof glossaryEntry.notes === 'string') {
+            const nextNotes = sanitizeText(glossaryEntry.notes).trim();
+            if (nextNotes !== (target.notes || '')) {
+                target.notes = nextNotes;
+                changed = true;
+            }
         }
     }
 
