@@ -202,7 +202,7 @@ function MusicProvider({ children }) {
             return {
                 id: track.id,
                 title: track.title,
-                subtitle: track.subtitle,
+                info: track.info,
                 src: track.src,
                 loop: track.loop !== false,
                 updatedAt: track.updatedAt || null,
@@ -1298,8 +1298,8 @@ function GameView({
                                 {currentMusicTrack ? (
                                     <>
                                         <strong>{currentMusicTrack.title}</strong>
-                                        {currentMusicTrack.subtitle && (
-                                            <span className="text-muted"> · {currentMusicTrack.subtitle}</span>
+                                        {currentMusicTrack.info && (
+                                            <span className="text-muted"> · {currentMusicTrack.info}</span>
                                         )}
                                     </>
                                 ) : (
@@ -5564,7 +5564,7 @@ function DMOverview({ game, onInspectPlayer }) {
                                 {tracks.map((track) => (
                                     <option key={track.id} value={track.id}>
                                         {track.title}
-                                        {track.subtitle ? ` — ${track.subtitle}` : ""}
+                                        {track.info ? ` — ${track.info}` : ""}
                                     </option>
                                 ))}
                                 {!hasTracks && <option value="">No tracks available</option>}
@@ -5588,8 +5588,8 @@ function DMOverview({ game, onInspectPlayer }) {
                             <p className="text-small dm-broadcast__now-playing">
                                 Now playing:{" "}
                                 <strong>{currentMusic.title}</strong>
-                                {currentMusic.subtitle && (
-                                    <span className="text-muted"> · {currentMusic.subtitle}</span>
+                                {currentMusic.info && (
+                                    <span className="text-muted"> · {currentMusic.info}</span>
                                 )}
                             </p>
                         )}
@@ -5824,7 +5824,7 @@ function SharedMediaDisplay({ isDM }) {
                 {track ? (
                     <p className="shared-media__track">
                         Now playing: <strong>{track.title}</strong>
-                        {track.subtitle && <span className="text-muted"> · {track.subtitle}</span>}
+                        {track.info && <span className="text-muted"> · {track.info}</span>}
                     </p>
                 ) : (
                     <p>No track is currently selected.</p>
