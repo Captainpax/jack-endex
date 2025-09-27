@@ -3400,6 +3400,30 @@ function normalizeCount(value, fallback = 0) {
     return rounded < 0 ? 0 : rounded;
 }
 
+function normalizeCurrency(value, fallback = 0) {
+    if (value === undefined || value === null || value === '') return fallback;
+    const num = Number(value);
+    if (!Number.isFinite(num)) return fallback;
+    const rounded = Math.round(num);
+    if (!Number.isFinite(rounded)) return fallback;
+    const MAX = 1_000_000_000;
+    if (rounded < 0) return 0;
+    if (rounded > MAX) return MAX;
+    return rounded;
+}
+
+function normalizeCurrencyDelta(value) {
+    if (value === undefined || value === null || value === '') return NaN;
+    const num = Number(value);
+    if (!Number.isFinite(num)) return NaN;
+    const rounded = Math.round(num);
+    if (!Number.isFinite(rounded)) return NaN;
+    const MAX = 1_000_000_000;
+    if (rounded > MAX) return MAX;
+    if (rounded < -MAX) return -MAX;
+    return rounded;
+}
+
 /**
  * Validate a Discord snowflake identifier.
  *
@@ -5128,6 +5152,48 @@ app.delete('/api/games/:id/items/custom/:itemId', requireAuth, async (req, res) 
     game.items.custom = next;
     await persistGame(db, game);
     res.json({ ok: true });
+});
+
+app.post('/api/games/:id/players/:playerId/macca', requireAuth, async (req, res) => {
+    const { id, playerId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const target = findPlayer(game, playerId);
+    if (!target) return res.status(404).json({ error: 'player_not_found' });
+    if ((target.role || '').toLowerCase() === 'dm') {
+        return res.status(400).json({ error: 'dm_has_no_inventory' });
+    }
+
+    const deltaRaw =
+        req.body?.delta ?? req.body?.amount ?? req.body?.value ?? req.body ?? null;
+    const delta = normalizeCurrencyDelta(deltaRaw);
+    if (!Number.isFinite(delta) || delta === 0) {
+        return res.status(400).json({ error: 'invalid_delta' });
+    }
+
+    const character = target.character && typeof target.character === 'object' ? target.character : null;
+    if (!character) {
+        return res.status(400).json({ error: 'no_character' });
+    }
+    const resources =
+        character.resources && typeof character.resources === 'object'
+            ? character.resources
+            : {};
+    character.resources = resources;
+
+    const before = normalizeCurrency(resources.macca, 0);
+    const after = normalizeCurrency(before + delta, 0);
+    resources.macca = after;
+
+    await persistGame(db, game, { reason: 'macca:adjust', actorId: req.session.userId });
+    res.json({ ok: true, before, after, delta: after - before });
 });
 
 app.post('/api/games/:id/players/:playerId/items', requireAuth, async (req, res) => {
