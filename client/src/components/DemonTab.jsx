@@ -1279,6 +1279,7 @@ function DemonTab({ game, me, onUpdate }) {
                                             loading="lazy"
                                             decoding="async"
                                             className="demon-card__portrait"
+                                            enablePreview
                                         />
                                     )}
                                     <div className="demon-card__info">
@@ -1537,6 +1538,7 @@ function DemonTab({ game, me, onUpdate }) {
                                 loading="lazy"
                                 decoding="async"
                                 className="demon-editor__preview-image"
+                                enablePreview
                             />
                         )}
                         <div className="demon-editor__preview-meta">

@@ -3584,6 +3584,53 @@ label {
     font-size: 0.85rem;
 }
 
+.demon-image--interactive {
+    cursor: zoom-in;
+    transition: transform var(--trans-fast);
+}
+
+.demon-image--interactive:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 3px;
+}
+
+.demon-image-lightbox {
+    position: fixed;
+    inset: 0;
+    background: rgba(12, 14, 20, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    z-index: 45;
+}
+
+.demon-image-lightbox__body {
+    background: var(--surface);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-md);
+    padding: 16px;
+    display: grid;
+    gap: 12px;
+    max-width: min(720px, 92vw);
+    max-height: min(90vh, 720px);
+}
+
+.demon-image-lightbox__image {
+    max-height: calc(90vh - 96px);
+    max-width: calc(min(720px, 92vw) - 32px);
+    width: auto;
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    object-fit: contain;
+    justify-self: center;
+}
+
+.demon-image-lightbox__close {
+    justify-self: end;
+}
+
 @media (max-width: 720px) {
     .demon-card__body { grid-template-columns: 1fr; }
     .demon-card__actions { align-items: flex-start; flex-direction: column; }
