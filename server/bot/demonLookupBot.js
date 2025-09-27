@@ -78,10 +78,45 @@ const ABILITY_KEYS = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'];
 const RESIST_KEYS = [
     ['weak', 'Weak'],
     ['resist', 'Resist'],
-    ['null', 'Null'],
-    ['absorb', 'Absorb'],
+    ['block', 'Block'],
+    ['drain', 'Drain'],
     ['reflect', 'Reflect'],
 ];
+
+const RESISTANCE_ALIAS_MAP = {
+    weak: ['weak', 'weaks'],
+    resist: ['resist', 'resists'],
+    block: ['block', 'blocks', 'null', 'nullify', 'nullifies'],
+    drain: ['drain', 'drains', 'absorb', 'absorbs'],
+    reflect: ['reflect', 'reflects'],
+};
+
+function getResistanceValues(demon, key) {
+    if (!demon) return [];
+    const aliases = RESISTANCE_ALIAS_MAP[key] || [key];
+    const values = new Set();
+    for (const alias of aliases) {
+        const list = demon.resistances?.[alias];
+        if (Array.isArray(list)) {
+            for (const entry of list) {
+                if (!entry) continue;
+                values.add(entry);
+            }
+        } else if (typeof list === 'string' && list.trim()) {
+            values.add(list.trim());
+        }
+        const fallback = demon[alias];
+        if (Array.isArray(fallback)) {
+            for (const entry of fallback) {
+                if (!entry) continue;
+                values.add(entry);
+            }
+        } else if (typeof fallback === 'string' && fallback.trim()) {
+            values.add(fallback.trim());
+        }
+    }
+    return Array.from(values);
+}
 
 function truncate(text, max = 1024) {
     if (!text) return '';
@@ -98,7 +133,7 @@ function formatDemonResponse(demon) {
     const stats = ABILITY_KEYS.map((key) => `${key} ${demon.stats?.[key] ?? 0}`).join(' · ');
     lines.push(`Stats: ${stats}`);
     const resistParts = RESIST_KEYS.map(([key, label]) => {
-        const values = Array.isArray(demon.resistances?.[key]) ? demon.resistances[key] : [];
+        const values = getResistanceValues(demon, key);
         return `${label}: ${values.length ? values.join(', ') : '—'}`;
     });
     lines.push(resistParts.join(' · '));

@@ -4,8 +4,8 @@ const resistanceSchema = new mongoose.Schema(
     {
         weak: { type: [String], default: [] },
         resist: { type: [String], default: [] },
-        null: { type: [String], default: [] },
-        absorb: { type: [String], default: [] },
+        block: { type: [String], default: [] },
+        drain: { type: [String], default: [] },
         reflect: { type: [String], default: [] },
     },
     { _id: false, minimize: false },

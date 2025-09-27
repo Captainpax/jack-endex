@@ -7,6 +7,7 @@ import {
     COMBAT_CATEGORY_LABELS,
     COMBAT_TIER_LABELS,
     DEMON_RESISTANCE_SORTS,
+    RESISTANCE_FIELDS,
     abilityModifier,
     collectResistanceTerms,
     createAbilityMap,
@@ -14,7 +15,9 @@ import {
     formatResistanceList,
     getDemonSkillList,
     getResistanceCount,
+    getResistanceValues,
     normalizeCombatSkillDefs,
+    normalizeStringList,
     resolveAbilityState,
 } from "../constants/gameData";
 import { EMPTY_ARRAY, EMPTY_OBJECT } from "../utils/constants";
@@ -502,12 +505,13 @@ function DemonFusionPlanner({ game, onUsePersona, onRefresh }) {
     }, []);
 
     const resultStats = useMemo(() => resolveAbilityState(resultDemon?.stats), [resultDemon]);
-    const resultResistances = useMemo(
-        () => (resultDemon?.resistances && typeof resultDemon.resistances === "object"
-            ? resultDemon.resistances
-            : EMPTY_OBJECT),
-        [resultDemon],
-    );
+    const resultResistances = useMemo(() => {
+        const map = {};
+        for (const field of RESISTANCE_FIELDS) {
+            map[field.key] = getResistanceValues(resultDemon, field.key);
+        }
+        return map;
+    }, [resultDemon]);
     const resultSkills = useMemo(() => {
         if (!Array.isArray(resultDemon?.skills)) return EMPTY_ARRAY;
         return resultDemon.skills
@@ -535,19 +539,18 @@ function DemonFusionPlanner({ game, onUsePersona, onRefresh }) {
         if (!resultDemon) return;
         try {
             setBusyAdd(true);
+            const resistancePayload = RESISTANCE_FIELDS.reduce((acc, field) => {
+                const values = resultResistances[field.key];
+                acc[field.key] = Array.isArray(values) ? values : [];
+                return acc;
+            }, {});
             const payload = {
                 name: resultDemon.name,
                 arcana: resultDemon.arcana,
                 alignment: resultDemon.alignment,
                 level: Number(resultDemon.level) || 0,
                 stats: resolveAbilityState(resultDemon.stats),
-                resistances: {
-                    weak: Array.isArray(resultResistances.weak) ? resultResistances.weak : [],
-                    resist: Array.isArray(resultResistances.resist) ? resultResistances.resist : [],
-                    null: Array.isArray(resultResistances.null) ? resultResistances.null : [],
-                    absorb: Array.isArray(resultResistances.absorb) ? resultResistances.absorb : [],
-                    reflect: Array.isArray(resultResistances.reflect) ? resultResistances.reflect : [],
-                },
+                resistances: resistancePayload,
                 skills: Array.isArray(resultDemon.skills)
                     ? resultDemon.skills
                         .map((skill) => (typeof skill === "string" ? skill : skill?.name))
@@ -678,11 +681,12 @@ function DemonFusionPlanner({ game, onUsePersona, onRefresh }) {
                                         ))}
                                     </div>
                                     <div className="demon-fusion__result-resist text-small">
-                                        <div><strong>Weak:</strong> {formatResistanceList(resultResistances.weak)}</div>
-                                        <div><strong>Resist:</strong> {formatResistanceList(resultResistances.resist)}</div>
-                                        <div><strong>Null:</strong> {formatResistanceList(resultResistances.null)}</div>
-                                        <div><strong>Absorb:</strong> {formatResistanceList(resultResistances.absorb)}</div>
-                                        <div><strong>Reflect:</strong> {formatResistanceList(resultResistances.reflect)}</div>
+                                        {RESISTANCE_FIELDS.map((field) => (
+                                            <div key={field.key}>
+                                                <strong>{field.label}:</strong>{" "}
+                                                {formatResistanceList(resultResistances[field.key])}
+                                            </div>
+                                        ))}
                                     </div>
                                     {resultSkills.length > 0 && (
                                         <div className="demon-fusion__result-skills">
@@ -785,7 +789,7 @@ function DemonTab({ game, me, onUpdate }) {
     const [align, setAlign] = useState("");
     const [level, setLevel] = useState(1);
     const [stats, setStats] = useState(() => createAbilityMap(0));
-    const [resist, setResist] = useState({ weak: "", resist: "", null: "", absorb: "", reflect: "" });
+    const [resist, setResist] = useState({ weak: "", resist: "", block: "", drain: "", reflect: "" });
     const [skills, setSkills] = useState("");
     const [notes, setNotes] = useState("");
     const [image, setImage] = useState("");
@@ -837,7 +841,7 @@ function DemonTab({ game, me, onUpdate }) {
         setAlign("");
         setLevel(1);
         setStats(createAbilityMap(0));
-        setResist({ weak: "", resist: "", null: "", absorb: "", reflect: "" });
+        setResist({ weak: "", resist: "", block: "", drain: "", reflect: "" });
         setSkills("");
         setNotes("");
         setImage("");
@@ -1049,20 +1053,12 @@ function DemonTab({ game, me, onUpdate }) {
             setAlign(p.alignment || "");
             setLevel(p.level || 1);
             setStats(resolveAbilityState(p.stats ?? p));
-            const resist = p.resistances || {};
-            const formatList = (value, fallback) => {
-                const list = value ?? fallback;
-                if (Array.isArray(list)) return list.join(', ');
-                if (typeof list === 'string') return list;
-                return '';
-            };
-            setResist({
-                weak: formatList(resist.weak, p.weak),
-                resist: formatList(resist.resist, p.resists),
-                null: formatList(resist.null, p.nullifies),
-                absorb: formatList(resist.absorb, p.absorbs),
-                reflect: formatList(resist.reflect, p.reflects),
-            });
+            const resistanceText = RESISTANCE_FIELDS.reduce((acc, field) => {
+                const values = getResistanceValues(p, field.key);
+                acc[field.key] = values.length > 0 ? values.join(', ') : '';
+                return acc;
+            }, {});
+            setResist(resistanceText);
             setSkills(Array.isArray(p.skills) ? p.skills.join('\n') : "");
             setNotes(p.description || "");
             setImage(p.image || "");
@@ -1097,17 +1093,12 @@ function DemonTab({ game, me, onUpdate }) {
         setAlign(demon.alignment || "");
         setLevel(demon.level ?? 0);
         setStats(resolveAbilityState(demon.stats));
-        const listToText = (primary, fallback) => {
-            const formatted = formatResistanceList(primary, fallback);
-            return formatted === '—' ? '' : formatted;
-        };
-        setResist({
-            weak: listToText(demon.resistances?.weak, demon.weak),
-            resist: listToText(demon.resistances?.resist, demon.resists),
-            null: listToText(demon.resistances?.null, demon.nullifies),
-            absorb: listToText(demon.resistances?.absorb, demon.absorbs),
-            reflect: listToText(demon.resistances?.reflect, demon.reflects),
-        });
+        const resistanceText = RESISTANCE_FIELDS.reduce((acc, field) => {
+            const values = getResistanceValues(demon, field.key);
+            acc[field.key] = values.length > 0 ? values.join(', ') : '';
+            return acc;
+        }, {});
+        setResist(resistanceText);
         setSkills(Array.isArray(demon.skills) ? demon.skills.join('\n') : "");
         setNotes(demon.notes || "");
         setImage(demon.image || "");
@@ -1167,8 +1158,8 @@ function DemonTab({ game, me, onUpdate }) {
                         <option value="skillCount">Skill count</option>
                         <option value="resist:weak">Weak resist count</option>
                         <option value="resist:resist">Resist count</option>
-                        <option value="resist:null">Null resist count</option>
-                        <option value="resist:absorb">Absorb resist count</option>
+                        <option value="resist:block">Block resist count</option>
+                        <option value="resist:drain">Drain resist count</option>
                         <option value="resist:reflect">Reflect resist count</option>
                         {ABILITY_DEFS.map((ability) => (
                             <option key={ability.key} value={`stat:${ability.key}`}>
@@ -1267,26 +1258,14 @@ function DemonTab({ game, me, onUpdate }) {
                                             })}
                                         </div>
                                         <div className="demon-card__resist-grid">
-                                            <div className="demon-card__resist">
-                                                <span className="demon-card__resist-label">Weak</span>
-                                                <span className="demon-card__resist-values">{formatResistanceList(d.resistances?.weak, d.weak)}</span>
-                                            </div>
-                                            <div className="demon-card__resist">
-                                                <span className="demon-card__resist-label">Resist</span>
-                                                <span className="demon-card__resist-values">{formatResistanceList(d.resistances?.resist, d.resists)}</span>
-                                            </div>
-                                            <div className="demon-card__resist">
-                                                <span className="demon-card__resist-label">Null</span>
-                                                <span className="demon-card__resist-values">{formatResistanceList(d.resistances?.null, d.nullifies)}</span>
-                                            </div>
-                                            <div className="demon-card__resist">
-                                                <span className="demon-card__resist-label">Absorb</span>
-                                                <span className="demon-card__resist-values">{formatResistanceList(d.resistances?.absorb, d.absorbs)}</span>
-                                            </div>
-                                            <div className="demon-card__resist">
-                                                <span className="demon-card__resist-label">Reflect</span>
-                                                <span className="demon-card__resist-values">{formatResistanceList(d.resistances?.reflect, d.reflects)}</span>
-                                            </div>
+                                            {RESISTANCE_FIELDS.map((field) => (
+                                                <div key={field.key} className="demon-card__resist">
+                                                    <span className="demon-card__resist-label">{field.label}</span>
+                                                    <span className="demon-card__resist-values">
+                                                        {formatResistanceList(getResistanceValues(d, field.key))}
+                                                    </span>
+                                                </div>
+                                            ))}
                                         </div>
                                         <div className="demon-card__skills">
                                             <span className="demon-card__section-label">Skills</span>
@@ -1372,11 +1351,16 @@ function DemonTab({ game, me, onUpdate }) {
     const previewLevel = Number.isFinite(level) ? level : selected?.level ?? 0;
     const previewDescription = notes || selected?.description || "";
     const previewSlug = selected?.slug || selected?.query || "";
-    const weakText = formatResistanceList(resist.weak, selected?.resistances?.weak ?? selected?.weak);
-    const resistText = formatResistanceList(resist.resist, selected?.resistances?.resist ?? selected?.resists);
-    const nullText = formatResistanceList(resist.null, selected?.resistances?.null ?? selected?.nullifies);
-    const absorbText = formatResistanceList(resist.absorb, selected?.resistances?.absorb ?? selected?.absorbs);
-    const reflectText = formatResistanceList(resist.reflect, selected?.resistances?.reflect ?? selected?.reflects);
+    const previewResistanceText = useMemo(() => {
+        const source = selected || editing;
+        const map = {};
+        for (const field of RESISTANCE_FIELDS) {
+            const typed = normalizeStringList(resist[field.key]);
+            const fallback = getResistanceValues(source, field.key);
+            map[field.key] = formatResistanceList(typed, fallback);
+        }
+        return map;
+    }, [editing, resist, selected]);
     const hasPreview = Boolean(previewImage || previewName || previewDescription || selected);
 
     const editorContent = (
@@ -1471,20 +1455,16 @@ function DemonTab({ game, me, onUpdate }) {
             <div className="demon-editor__section">
                 <span className="field__label">Resistances</span>
                 <div className="demon-editor__resist-grid">
-                    {[
-                        ["weak", "Weak"],
-                        ["resist", "Resist"],
-                        ["null", "Null"],
-                        ["absorb", "Absorb"],
-                        ["reflect", "Reflect"],
-                    ].map(([key, label]) => (
-                        <label key={key} className="field demon-editor__resist-field">
-                            <span className="field__label">{label}</span>
+                    {RESISTANCE_FIELDS.map((field) => (
+                        <label key={field.key} className="field demon-editor__resist-field">
+                            <span className="field__label">{field.label}</span>
                             <textarea
                                 rows={2}
-                                value={resist[key]}
+                                value={resist[field.key]}
                                 placeholder="Comma or newline separated"
-                                onChange={(event) => setResist((prev) => ({ ...prev, [key]: event.target.value }))}
+                                onChange={(event) =>
+                                    setResist((prev) => ({ ...prev, [field.key]: event.target.value }))
+                                }
                             />
                         </label>
                     ))}
@@ -1536,11 +1516,11 @@ function DemonTab({ game, me, onUpdate }) {
                                 ))}
                             </div>
                             <div className="demon-editor__preview-resists text-small">
-                                <div><b>Weak:</b> {weakText}</div>
-                                <div><b>Resist:</b> {resistText}</div>
-                                <div><b>Null:</b> {nullText}</div>
-                                <div><b>Absorb:</b> {absorbText}</div>
-                                <div><b>Reflect:</b> {reflectText}</div>
+                                {RESISTANCE_FIELDS.map((field) => (
+                                    <div key={field.key}>
+                                        <b>{field.label}:</b> {previewResistanceText[field.key] ?? '—'}
+                                    </div>
+                                ))}
                             </div>
                         </div>
                     </div>

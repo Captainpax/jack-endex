@@ -5335,6 +5335,40 @@ function normalizeArray(value) {
         .filter(Boolean);
 }
 
+const RESISTANCE_ALIAS_MAP = {
+    weak: ['weak', 'weaks'],
+    resist: ['resist', 'resists'],
+    block: ['block', 'blocks', 'null', 'nullify', 'nullifies'],
+    drain: ['drain', 'drains', 'absorb', 'absorbs'],
+    reflect: ['reflect', 'reflects'],
+};
+
+function readResistanceValues(source, key) {
+    if (!source || typeof source !== 'object') return null;
+    const aliases = RESISTANCE_ALIAS_MAP[key] || [key];
+    const values = new Set();
+    let found = false;
+    for (const alias of aliases) {
+        if (!Object.prototype.hasOwnProperty.call(source, alias)) continue;
+        const raw = source[alias];
+        if (raw === undefined) continue;
+        found = true;
+        for (const entry of normalizeArray(raw)) {
+            values.add(entry);
+        }
+    }
+    return found ? Array.from(values) : null;
+}
+
+function resolveResistanceField(sources, key) {
+    const list = Array.isArray(sources) ? sources : [sources];
+    for (const source of list) {
+        const values = readResistanceValues(source, key);
+        if (values !== null) return values;
+    }
+    return [];
+}
+
 app.post('/api/games/:id/demons', requireAuth, async (req, res) => {
     const { id } = req.params || {};
     const db = await readDB();
@@ -5348,6 +5382,7 @@ app.post('/api/games/:id/demons', requireAuth, async (req, res) => {
 
     const body = req.body || {};
     const stats = convertLegacyStats(body.stats);
+    const resistanceInput = body.resistances || {};
     const demon = {
         id: uuid(),
         name: sanitizeText(body.name),
@@ -5357,11 +5392,11 @@ app.post('/api/games/:id/demons', requireAuth, async (req, res) => {
         stats,
         mods: deriveAbilityMods(stats),
         resistances: {
-            weak: normalizeArray(body.resistances?.weak),
-            resist: normalizeArray(body.resistances?.resist),
-            null: normalizeArray(body.resistances?.null),
-            absorb: normalizeArray(body.resistances?.absorb),
-            reflect: normalizeArray(body.resistances?.reflect),
+            weak: resolveResistanceField(resistanceInput, 'weak'),
+            resist: resolveResistanceField(resistanceInput, 'resist'),
+            block: resolveResistanceField(resistanceInput, 'block'),
+            drain: resolveResistanceField(resistanceInput, 'drain'),
+            reflect: resolveResistanceField(resistanceInput, 'reflect'),
         },
         skills: normalizeArray(body.skills),
         notes: sanitizeText(body.notes || ''),
@@ -5397,6 +5432,13 @@ app.put('/api/games/:id/demons/:demonId', requireAuth, async (req, res) => {
             ? normalizeAbilityScores(convertLegacyStats(body.stats), baseStats)
             : baseStats;
 
+    const resistanceUpdate = body.resistances || {};
+    const resolveUpdate = (key) => {
+        const override = readResistanceValues(resistanceUpdate, key);
+        if (override !== null) return override;
+        return resolveResistanceField([current.resistances, current], key);
+    };
+
     const updated = {
         ...current,
         name: sanitizeText(body.name ?? current.name),
@@ -5406,11 +5448,11 @@ app.put('/api/games/:id/demons/:demonId', requireAuth, async (req, res) => {
         stats,
         mods: deriveAbilityMods(stats),
         resistances: {
-            weak: body.resistances?.weak !== undefined ? normalizeArray(body.resistances?.weak) : (current.resistances?.weak || []),
-            resist: body.resistances?.resist !== undefined ? normalizeArray(body.resistances?.resist) : (current.resistances?.resist || []),
-            null: body.resistances?.null !== undefined ? normalizeArray(body.resistances?.null) : (current.resistances?.null || []),
-            absorb: body.resistances?.absorb !== undefined ? normalizeArray(body.resistances?.absorb) : (current.resistances?.absorb || []),
-            reflect: body.resistances?.reflect !== undefined ? normalizeArray(body.resistances?.reflect) : (current.resistances?.reflect || []),
+            weak: resolveUpdate('weak'),
+            resist: resolveUpdate('resist'),
+            block: resolveUpdate('block'),
+            drain: resolveUpdate('drain'),
+            reflect: resolveUpdate('reflect'),
         },
         skills: body.skills !== undefined ? normalizeArray(body.skills) : (current.skills || []),
         notes: sanitizeText(body.notes ?? current.notes ?? ''),

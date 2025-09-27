@@ -65,13 +65,27 @@ function buildSearchTerms(entry) {
     );
 }
 
+function collectResistanceValues(source, keys) {
+    const values = [];
+    for (const key of keys) {
+        const entry = source?.[key];
+        if (!entry && entry !== 0) continue;
+        if (Array.isArray(entry)) {
+            values.push(...entry);
+        } else {
+            values.push(entry);
+        }
+    }
+    return uniqueStrings(values);
+}
+
 function normalizeResistanceBlock(source = {}) {
     return {
-        weak: uniqueStrings(source.weak || source.weaks || []),
-        resist: uniqueStrings(source.resist || source.resists || []),
-        null: uniqueStrings(source.null || source.nullify || []),
-        absorb: uniqueStrings(source.absorb || source.absorbs || []),
-        reflect: uniqueStrings(source.reflect || source.reflects || []),
+        weak: collectResistanceValues(source, ['weak', 'weaks']),
+        resist: collectResistanceValues(source, ['resist', 'resists']),
+        block: collectResistanceValues(source, ['block', 'blocks', 'null', 'nullify', 'nullifies']),
+        drain: collectResistanceValues(source, ['drain', 'drains', 'absorb', 'absorbs']),
+        reflect: collectResistanceValues(source, ['reflect', 'reflects']),
     };
 }
 

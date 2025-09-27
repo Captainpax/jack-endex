@@ -245,6 +245,40 @@ export function summarizeDemon(demon) {
     if (!demon) return null;
     const stats = demon.stats || {};
     const resist = demon.resistances || {};
+    const aliasMap = {
+        weak: ['weak', 'weaks'],
+        resist: ['resist', 'resists'],
+        block: ['block', 'blocks', 'null', 'nullify', 'nullifies'],
+        drain: ['drain', 'drains', 'absorb', 'absorbs'],
+        reflect: ['reflect', 'reflects'],
+    };
+    const collect = (...keys) => {
+        const values = new Set();
+        for (const key of keys) {
+            const aliases = aliasMap[key] || [key];
+            for (const alias of aliases) {
+                const primary = resist?.[alias];
+                if (Array.isArray(primary)) {
+                    for (const entry of primary) {
+                        if (!entry) continue;
+                        values.add(entry);
+                    }
+                } else if (typeof primary === 'string' && primary.trim()) {
+                    values.add(primary.trim());
+                }
+                const fallback = demon?.[alias];
+                if (Array.isArray(fallback)) {
+                    for (const entry of fallback) {
+                        if (!entry) continue;
+                        values.add(entry);
+                    }
+                } else if (typeof fallback === 'string' && fallback.trim()) {
+                    values.add(fallback.trim());
+                }
+            }
+        }
+        return Array.from(values);
+    };
     return {
         name: demon.name,
         arcana: demon.arcana || '',
@@ -255,11 +289,11 @@ export function summarizeDemon(demon) {
         stats,
         mods: demon.mods || {},
         resistances: {
-            weak: Array.isArray(resist.weak) ? resist.weak : [],
-            resist: Array.isArray(resist.resist) ? resist.resist : [],
-            null: Array.isArray(resist.null) ? resist.null : [],
-            absorb: Array.isArray(resist.absorb) ? resist.absorb : [],
-            reflect: Array.isArray(resist.reflect) ? resist.reflect : [],
+            weak: collect('weak'),
+            resist: collect('resist'),
+            block: collect('block', 'null'),
+            drain: collect('drain', 'absorb'),
+            reflect: collect('reflect'),
         },
         skills: Array.isArray(demon.skills) ? demon.skills : [],
         slug: demon.slug,
