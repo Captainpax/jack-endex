@@ -9679,6 +9679,7 @@ function CombatSkillCalculator({ skill, playerOptions }) {
     );
     const [playerId, setPlayerId] = useState(options[0]?.value || "");
     const [modInput, setModInput] = useState("");
+    const [modIsManual, setModIsManual] = useState(false);
     const [rollInput, setRollInput] = useState("");
     const [bonusInput, setBonusInput] = useState("");
     const [buffInput, setBuffInput] = useState("1");
@@ -9692,6 +9693,15 @@ function CombatSkillCalculator({ skill, playerOptions }) {
 
     const selected = options.find((option) => option.value === playerId) || options[0];
     const autoMod = selected && selected.value ? selected.mods?.[skill.ability] ?? 0 : 0;
+
+    useEffect(() => {
+        if (!selected?.value) return;
+        if (modIsManual) return;
+        const nextValue = String(autoMod ?? 0);
+        if (modInput !== nextValue) {
+            setModInput(nextValue);
+        }
+    }, [selected?.value, autoMod, modIsManual, modInput]);
 
     const manualModRaw = modInput.trim();
     const manualModValue = Number(modInput);
@@ -9725,6 +9735,7 @@ function CombatSkillCalculator({ skill, playerOptions }) {
 
     const handleReset = () => {
         setModInput("");
+        setModIsManual(false);
         setRollInput("");
         setBonusInput("");
         setBuffInput("1");
@@ -9736,7 +9747,14 @@ function CombatSkillCalculator({ skill, playerOptions }) {
             {playerOptions.length > 0 && (
                 <label className="text-small">
                     Acting player
-                    <select value={playerId} onChange={(e) => setPlayerId(e.target.value)}>
+                    <select
+                        value={playerId}
+                        onChange={(e) => {
+                            const nextId = e.target.value;
+                            setPlayerId(nextId);
+                            setModIsManual(nextId === "" ? modInput.trim() !== "" : false);
+                        }}
+                    >
                         {options.map((option) => (
                             <option key={option.value || "__manual"} value={option.value}>
                                 {option.label}
@@ -9752,7 +9770,11 @@ function CombatSkillCalculator({ skill, playerOptions }) {
                         type="number"
                         value={modInput}
                         placeholder={String(autoMod)}
-                        onChange={(e) => setModInput(e.target.value)}
+                        onChange={(e) => {
+                            const value = e.target.value;
+                            setModInput(value);
+                            setModIsManual(value.trim() !== "");
+                        }}
                         className={manualModValid ? undefined : "input-error"}
                     />
                 </label>
