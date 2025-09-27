@@ -740,6 +740,60 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     background: rgba(15, 23, 42, 0.4);
 }
 
+.map-shape.is-selected {
+    box-shadow: 0 10px 26px rgba(15, 23, 42, 0.45);
+    overflow: visible;
+}
+
+.map-shape.is-selected::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    border: 2px solid color-mix(in oklab, var(--brand) 70%, #fff 30%);
+    pointer-events: none;
+    box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.35);
+}
+
+.map-shape__handle {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    border: 2px solid #fff;
+    background: color-mix(in oklab, var(--brand) 75%, #fff 25%);
+    box-shadow: 0 6px 12px rgba(15, 23, 42, 0.35);
+    pointer-events: auto;
+    touch-action: none;
+    display: block;
+    z-index: 2;
+}
+
+.map-shape__handle::after {
+    content: "";
+    position: absolute;
+    inset: 3px;
+    border-radius: inherit;
+    background: color-mix(in oklab, var(--brand) 55%, #0f172a 45%);
+}
+
+.map-shape__handle--scale {
+    right: -16px;
+    bottom: -16px;
+    cursor: nwse-resize;
+}
+
+.map-shape__handle--rotate {
+    top: -34px;
+    left: 50%;
+    transform: translate(-50%, 0);
+    cursor: grab;
+}
+
+.map-shape__handle--rotate:active {
+    cursor: grabbing;
+}
+
 .map-token {
     position: absolute;
     transform: translate(-50%, -50%);
@@ -1061,14 +1115,41 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     gap: 12px;
 }
 
-.map-overlay-form__sliders {
-    display: grid;
-    gap: 8px;
+.map-overlay-form__hint {
+    margin: 0;
 }
 
-.map-overlay-form__sliders label {
+.map-overlay-form__grid {
     display: grid;
-    gap: 4px;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.map-overlay-form__control {
+    display: grid;
+    gap: 6px;
+}
+
+.map-overlay-form__control-inputs {
+    display: grid;
+    grid-template-columns: 1fr minmax(60px, 80px);
+    gap: 8px;
+    align-items: center;
+}
+
+.map-overlay-form__control-inputs input[type='number'] {
+    width: 100%;
+    padding: 6px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    font-size: 0.85rem;
+}
+
+.map-overlay-form__control-inputs input[type='number']:focus-visible {
+    outline: none;
+    box-shadow: var(--focus);
+    border-color: color-mix(in oklab, var(--border) 30%, var(--brand) 70%);
 }
 
 .map-overlay-form__actions {
@@ -1129,20 +1210,47 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     gap: 12px;
 }
 
+.map-shape-card__hint {
+    margin: 0;
+}
+
 .map-shape-card__colors {
     display: flex;
     gap: 12px;
     flex-wrap: wrap;
 }
 
-.map-shape-card__sliders {
+.map-shape-card__controls {
     display: grid;
-    gap: 8px;
+    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
-.map-shape-card__sliders label {
+.map-shape-card__control {
     display: grid;
-    gap: 4px;
+    gap: 6px;
+}
+
+.map-shape-card__control-inputs {
+    display: grid;
+    grid-template-columns: 1fr minmax(60px, 80px);
+    gap: 8px;
+    align-items: center;
+}
+
+.map-shape-card__control-inputs input[type='number'] {
+    width: 100%;
+    padding: 6px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    font-size: 0.85rem;
+}
+
+.map-shape-card__control-inputs input[type='number']:focus-visible {
+    outline: none;
+    box-shadow: var(--focus);
+    border-color: color-mix(in oklab, var(--border) 30%, var(--brand) 70%);
 }
 
 .map-shape-card__actions {
