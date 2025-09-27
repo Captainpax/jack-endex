@@ -3284,6 +3284,14 @@ label {
     font-size: 0.9rem;
 }
 
+.demon-fusion__summary-note {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid color-mix(in oklab, var(--brand) 28%, var(--border));
+    background: color-mix(in oklab, var(--brand) 10%, var(--surface-1));
+}
+
 .demon-fusion__result-card {
     display: grid;
     gap: 12px;
@@ -3325,7 +3333,7 @@ label {
     background: transparent;
     border: none;
     border-bottom: 1px solid var(--border);
-    cursor: pointer;
+    cursor: default;
     text-align: left;
     font-size: 0.9rem;
 }
@@ -3341,6 +3349,34 @@ label {
 .demon-fusion__candidate.is-active {
     background: color-mix(in oklab, var(--brand) 18%, transparent);
     font-weight: 600;
+}
+
+.demon-fusion__history {
+    display: grid;
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.demon-fusion__history-list {
+    display: grid;
+    gap: 10px;
+}
+
+.demon-fusion__history-entry {
+    display: grid;
+    gap: 6px;
+    padding: 10px 12px;
+    border-radius: var(--radius);
+    border: 1px solid color-mix(in oklab, var(--brand) 18%, var(--border));
+    background: color-mix(in oklab, var(--brand) 6%, var(--surface));
+    box-shadow: var(--shadow-sm);
+}
+
+.demon-fusion__history-header-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: baseline;
 }
 
 @media (max-width: 720px) {
