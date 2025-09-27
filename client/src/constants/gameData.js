@@ -594,7 +594,21 @@ export function normalizeCombatSkillDefs(raw) {
                 : typeof entry.description === "string"
                 ? entry.description.trim()
                 : "";
-        normalized.push({ id, key: id, label: labelValue, ability, tier, category, cost, notes });
+        const glossaryId =
+            typeof entry.glossaryId === "string" && entry.glossaryId.trim()
+                ? entry.glossaryId.trim()
+                : "";
+        normalized.push({
+            id,
+            key: id,
+            label: labelValue,
+            ability,
+            tier,
+            category,
+            cost,
+            notes,
+            ...(glossaryId ? { glossaryId } : {}),
+        });
     }
     return normalized;
 }

@@ -55,6 +55,7 @@ import { createEmptySkillViewPrefs, sanitizeSkillViewPrefs } from "./utils/skill
 import { deepClone, normalizeCharacter, normalizeSkills } from "./utils/character";
 import { get } from "./utils/object";
 import { getAvailableTracks, getMainMenuTrack, getTrackById } from "./utils/music";
+import { COMBAT_SKILL_LIBRARY, findCombatSkillById, findCombatSkillByName } from "@shared/combatSkills.js";
 
 function normalizePrimaryBot(primaryBot) {
     if (!primaryBot || typeof primaryBot !== "object") {
@@ -9645,10 +9646,13 @@ function CombatSkillsTab({ game, me, onUpdate }) {
         category: DEFAULT_COMBAT_CATEGORY,
         cost: "",
         notes: "",
+        glossaryId: "",
     });
     const [activePane, setActivePane] = useState("library");
     const [busy, setBusy] = useState(false);
     const [rowBusy, setRowBusy] = useState(null);
+    const [importBusyId, setImportBusyId] = useState(null);
+    const skillLibraryDatalistId = "combat-skill-library-options";
     const viewPrefKey = useMemo(
         () => `combat-skill-view:${game.id || "game"}:${me.id || "user"}`,
         [game.id, me.id]
@@ -9668,6 +9672,7 @@ function CombatSkillsTab({ game, me, onUpdate }) {
             category: DEFAULT_COMBAT_CATEGORY,
             cost: "",
             notes: "",
+            glossaryId: "",
         });
         setActivePane("library");
         setShowHiddenSkills(false);
@@ -9737,6 +9742,10 @@ function CombatSkillsTab({ game, me, onUpdate }) {
                 category: normalizeCombatCategoryValue(editingSkill.category),
                 cost: editingSkill.cost || "",
                 notes: editingSkill.notes || "",
+                glossaryId:
+                    typeof editingSkill.glossaryId === "string" && editingSkill.glossaryId.trim()
+                        ? editingSkill.glossaryId.trim()
+                        : "",
             });
         } else {
             setForm((prev) =>
@@ -9745,7 +9754,8 @@ function CombatSkillsTab({ game, me, onUpdate }) {
                 prev.tier === COMBAT_TIER_ORDER[0] &&
                 prev.category === DEFAULT_COMBAT_CATEGORY &&
                 prev.cost === "" &&
-                prev.notes === ""
+                prev.notes === "" &&
+                prev.glossaryId === ""
                     ? prev
                     : {
                           label: "",
@@ -9754,6 +9764,7 @@ function CombatSkillsTab({ game, me, onUpdate }) {
                           category: DEFAULT_COMBAT_CATEGORY,
                           cost: "",
                           notes: "",
+                          glossaryId: "",
                       }
             );
         }
@@ -9761,6 +9772,10 @@ function CombatSkillsTab({ game, me, onUpdate }) {
 
     const favoriteSkillIds = useMemo(() => new Set(viewPrefs.favorites), [viewPrefs.favorites]);
     const hiddenSkillIds = useMemo(() => new Set(viewPrefs.hidden), [viewPrefs.hidden]);
+    const selectedGlossary = useMemo(() => {
+        if (typeof form.glossaryId !== "string" || !form.glossaryId.trim()) return null;
+        return findCombatSkillById(form.glossaryId.trim()) || null;
+    }, [form.glossaryId]);
 
     const filteredSkills = useMemo(() => {
         const q = skillQuery.trim().toLowerCase();
@@ -9895,6 +9910,7 @@ function CombatSkillsTab({ game, me, onUpdate }) {
             category: DEFAULT_COMBAT_CATEGORY,
             cost: "",
             notes: "",
+            glossaryId: "",
         });
     }, [abilityDefault, canManage]);
 
@@ -9930,6 +9946,9 @@ function CombatSkillsTab({ game, me, onUpdate }) {
             cost: form.cost.trim(),
             notes: form.notes.trim(),
         };
+        if (typeof form.glossaryId === "string" && form.glossaryId.trim()) {
+            payload.glossaryId = form.glossaryId.trim();
+        }
         try {
             if (editingSkillId === NEW_COMBAT_SKILL_ID) {
                 setBusy(true);
@@ -9966,9 +9985,35 @@ function CombatSkillsTab({ game, me, onUpdate }) {
         [canManage, game.id, onUpdate]
     );
 
+    const importGlossarySkill = useCallback(
+        async (entry) => {
+            if (!canManage || !entry || typeof entry.label !== "string") return;
+            const payload = {
+                label: entry.label,
+                ability: ABILITY_KEY_SET.has(entry.ability) ? entry.ability : abilityDefault,
+                tier: COMBAT_TIER_ORDER.includes(entry.tier) ? entry.tier : COMBAT_TIER_ORDER[0],
+                category: normalizeCombatCategoryValue(entry.category),
+                cost: typeof entry.cost === "string" ? entry.cost : "",
+                notes: typeof entry.notes === "string" ? entry.notes : "",
+                glossaryId: entry.id,
+            };
+            try {
+                setImportBusyId(entry.id);
+                await Games.addCombatSkill(game.id, payload);
+                await onUpdate?.();
+            } catch (err) {
+                alert(err?.message || "Failed to import skill");
+            } finally {
+                setImportBusyId(null);
+            }
+        },
+        [abilityDefault, canManage, game.id, onUpdate]
+    );
+
     const renderSkillEditor = (mode) => {
         const disableSubmit = busy || !canManage || (mode === "edit" && rowBusy === editingSkill?.id);
         const submitLabel = mode === "create" ? "Add skill" : "Save changes";
+        const datalistId = `${skillLibraryDatalistId}-${mode}`;
         return (
             <form
                 className="combat-skill-editor"
@@ -9983,9 +10028,53 @@ function CombatSkillsTab({ game, me, onUpdate }) {
                         id={`${mode}-combat-name`}
                         type="text"
                         value={form.label}
-                        onChange={(e) => setForm((prev) => ({ ...prev, label: e.target.value }))}
+                        list={datalistId}
+                        onChange={(e) => {
+                            const nextLabel = e.target.value;
+                            setForm((prev) => {
+                                const trimmed = nextLabel.trim();
+                                const glossary = findCombatSkillByName(trimmed);
+                                if (glossary) {
+                                    return {
+                                        label: glossary.label,
+                                        ability: ABILITY_KEY_SET.has(glossary.ability)
+                                            ? glossary.ability
+                                            : abilityDefault,
+                                        tier: COMBAT_TIER_ORDER.includes(glossary.tier)
+                                            ? glossary.tier
+                                            : COMBAT_TIER_ORDER[0],
+                                        category: normalizeCombatCategoryValue(glossary.category),
+                                        cost: glossary.cost || "",
+                                        notes: glossary.notes || "",
+                                        glossaryId: glossary.id,
+                                    };
+                                }
+                                let glossaryId = prev.glossaryId;
+                                if (glossaryId) {
+                                    const current = findCombatSkillById(glossaryId);
+                                    if (!current || current.label.toLowerCase() !== trimmed.toLowerCase()) {
+                                        glossaryId = "";
+                                    }
+                                }
+                                return { ...prev, label: nextLabel, glossaryId };
+                            });
+                        }}
                         disabled={disableSubmit}
                     />
+                    <datalist id={datalistId}>
+                        {COMBAT_SKILL_LIBRARY.map((entry) => {
+                            const optionLabel = `${entry.ability} · ${
+                                COMBAT_TIER_LABELS[entry.tier] || entry.tier
+                            } · ${COMBAT_CATEGORY_LABELS[entry.category] || entry.category}`;
+                            return <option key={entry.id} value={entry.label} label={optionLabel} />;
+                        })}
+                    </datalist>
+                    {selectedGlossary && form.glossaryId === selectedGlossary.id && (
+                        <p className="text-small text-muted" style={{ marginTop: 4 }}>
+                            Loaded from glossary: {selectedGlossary.label} ({selectedGlossary.ability} ·{' '}
+                            {COMBAT_TIER_LABELS[selectedGlossary.tier] || selectedGlossary.tier})
+                        </p>
+                    )}
                 </label>
                 <div className="row wrap" style={{ gap: 12 }}>
                     <label className="col text-small">
@@ -10363,7 +10452,13 @@ function CombatSkillsTab({ game, me, onUpdate }) {
                         )}
                     </>
                 ) : activePane === "codex" ? (
-                    <CombatSkillCodexPanel demons={demons} skills={combatSkills} />
+                    <CombatSkillCodexPanel
+                        demons={demons}
+                        skills={combatSkills}
+                        onImportSkill={importGlossarySkill}
+                        importBusyId={importBusyId}
+                        canManage={canManage}
+                    />
                 ) : (
                     <CombatSkillReferencePanel reference={BATTLE_MATH_REFERENCE} />
                 )}
@@ -10623,7 +10718,7 @@ function CombatSkillCalculator({ skill, playerOptions }) {
     );
 }
 
-function CombatSkillCodexPanel({ demons, skills }) {
+function CombatSkillCodexPanel({ demons, skills, onImportSkill, importBusyId, canManage }) {
     const demonOptions = useMemo(() => {
         if (!Array.isArray(demons) || demons.length === 0) return EMPTY_ARRAY;
         return demons.map((demon, index) => {
@@ -10663,18 +10758,46 @@ function CombatSkillCodexPanel({ demons, skills }) {
     }, [selectedId]);
 
     const demonSkillList = useMemo(() => getDemonSkillList(activeDemon), [activeDemon]);
-    const demonSkillSet = useMemo(() => {
-        return new Set(demonSkillList.map((name) => name.toLowerCase()));
-    }, [demonSkillList]);
-    const matchedSkills = useMemo(() => {
-        if (!Array.isArray(skills) || skills.length === 0 || demonSkillSet.size === 0) return EMPTY_ARRAY;
-        return skills.filter((skill) => demonSkillSet.has(skill.label.toLowerCase()));
-    }, [demonSkillSet, skills]);
-    const unmatchedSkills = useMemo(() => {
+    const librarySkillMap = useMemo(() => {
+        if (!Array.isArray(skills) || skills.length === 0) return new Map();
+        const map = new Map();
+        for (const skill of skills) {
+            if (!skill || typeof skill.label !== "string") continue;
+            map.set(skill.label.toLowerCase(), skill);
+        }
+        return map;
+    }, [skills]);
+    const glossaryMatches = useMemo(() => {
         if (demonSkillList.length === 0) return EMPTY_ARRAY;
-        const matchedLabels = new Set(matchedSkills.map((skill) => skill.label.toLowerCase()));
-        return demonSkillList.filter((label) => !matchedLabels.has(label.toLowerCase()));
-    }, [demonSkillList, matchedSkills]);
+        const seen = new Set();
+        const matches = [];
+        for (const label of demonSkillList) {
+            if (typeof label !== "string" || !label.trim()) continue;
+            const lower = label.toLowerCase();
+            if (seen.has(lower)) continue;
+            seen.add(lower);
+            const librarySkill = librarySkillMap.get(lower) || null;
+            const glossary = findCombatSkillByName(label);
+            matches.push({ label, lower, librarySkill, glossary });
+        }
+        return matches;
+    }, [demonSkillList, librarySkillMap]);
+    const matchedSkills = useMemo(() => {
+        if (glossaryMatches.length === 0) return EMPTY_ARRAY;
+        return glossaryMatches
+            .map((entry) => entry.librarySkill)
+            .filter((skill) => skill && typeof skill === "object");
+    }, [glossaryMatches]);
+    const glossarySuggestions = useMemo(() => {
+        if (glossaryMatches.length === 0) return EMPTY_ARRAY;
+        return glossaryMatches.filter((entry) => entry.glossary && !entry.librarySkill);
+    }, [glossaryMatches]);
+    const unmatchedSkills = useMemo(() => {
+        if (glossaryMatches.length === 0) return EMPTY_ARRAY;
+        return glossaryMatches
+            .filter((entry) => !entry.librarySkill && !entry.glossary)
+            .map((entry) => entry.label);
+    }, [glossaryMatches]);
     const filteredSkills = useMemo(() => {
         if (matchedSkills.length === 0) return matchedSkills;
         const term = query.trim().toLowerCase();
@@ -10694,6 +10817,27 @@ function CombatSkillCodexPanel({ demons, skills }) {
             );
         });
     }, [matchedSkills, query]);
+    const filteredSuggestions = useMemo(() => {
+        if (glossarySuggestions.length === 0) return EMPTY_ARRAY;
+        const term = query.trim().toLowerCase();
+        if (!term) return glossarySuggestions;
+        return glossarySuggestions.filter((entry) => {
+            const { label, glossary } = entry;
+            if (!glossary) return label.toLowerCase().includes(term);
+            const tierLabel = (COMBAT_TIER_LABELS[glossary.tier] || "").toLowerCase();
+            const categoryLabel = (COMBAT_CATEGORY_LABELS[glossary.category] || "").toLowerCase();
+            const notes = (glossary.notes || "").toLowerCase();
+            const cost = (glossary.cost || "").toLowerCase();
+            return (
+                label.toLowerCase().includes(term) ||
+                glossary.ability.toLowerCase().includes(term) ||
+                tierLabel.includes(term) ||
+                categoryLabel.includes(term) ||
+                notes.includes(term) ||
+                cost.includes(term)
+            );
+        });
+    }, [glossarySuggestions, query]);
 
     if (demonOptions.length === 0) {
         return (
@@ -10719,7 +10863,7 @@ function CombatSkillCodexPanel({ demons, skills }) {
                         ))}
                     </select>
                 </label>
-                {matchedSkills.length > 0 && (
+                {(matchedSkills.length > 0 || glossarySuggestions.length > 0) && (
                     <label className="text-small combat-codex__control">
                         Filter skills
                         <input
@@ -10740,16 +10884,27 @@ function CombatSkillCodexPanel({ demons, skills }) {
                             {activeMeta?.arcana && <span className="pill light">{activeMeta.arcana}</span>}
                             {activeMeta?.alignment && <span className="pill light">{activeMeta.alignment}</span>}
                         </div>
-                        {matchedSkills.length > 0 ? (
-                            <p className="text-small text-muted">
-                                Showing {filteredSkills.length} of {matchedSkills.length} linked skills from the codex.
-                            </p>
-                        ) : demonSkillList.length > 0 ? (
-                            <p className="text-small text-muted">
-                                No combat skills in the codex match these names yet.
-                            </p>
-                        ) : (
+                        {demonSkillList.length === 0 ? (
                             <p className="text-small text-muted">This demon does not list any combat skills yet.</p>
+                        ) : (
+                            <>
+                                {matchedSkills.length > 0 ? (
+                                    <p className="text-small text-muted">
+                                        Showing {filteredSkills.length} of {matchedSkills.length} linked skills from the shared
+                                        library.
+                                    </p>
+                                ) : (
+                                    <p className="text-small text-muted">
+                                        No shared combat skills match these names yet.
+                                    </p>
+                                )}
+                                {glossarySuggestions.length > 0 && (
+                                    <p className="text-small text-muted">
+                                        {glossarySuggestions.length} glossary match
+                                        {glossarySuggestions.length === 1 ? " is" : "es are"} available to import.
+                                    </p>
+                                )}
+                            </>
                         )}
                     </div>
                     {matchedSkills.length > 0 ? (
@@ -10782,9 +10937,65 @@ function CombatSkillCodexPanel({ demons, skills }) {
                                 : "No combat skills in the codex match these names."}
                         </div>
                     )}
+                    {glossarySuggestions.length > 0 && (
+                        <div className="combat-codex__skills combat-codex__skills--suggestions">
+                            <h5 className="text-small" style={{ margin: "12px 0 8px" }}>
+                                Glossary suggestions
+                            </h5>
+                            {filteredSuggestions.length > 0 ? (
+                                filteredSuggestions.map((entry) => {
+                                    const { glossary, label } = entry;
+                                    if (!glossary) return null;
+                                    const importDisabled =
+                                        !canManage || typeof onImportSkill !== "function" || importBusyId === glossary.id;
+                                    return (
+                                        <article key={glossary.id} className="demon-skill-modal__item">
+                                            <div className="demon-skill-modal__item-header">
+                                                <h4>{glossary.label}</h4>
+                                                <div className="demon-skill-modal__badges">
+                                                    <span className="pill">
+                                                        {COMBAT_TIER_LABELS[glossary.tier] || "Tier"}
+                                                    </span>
+                                                    <span className="pill light">{glossary.ability} mod</span>
+                                                    <span className="pill light">
+                                                        {COMBAT_CATEGORY_LABELS[glossary.category] || "Other"}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            {glossary.cost && <div className="text-small">Cost: {glossary.cost}</div>}
+                                            {glossary.notes && <p className="text-small">{glossary.notes}</p>}
+                                            <div className="demon-skill-modal__actions">
+                                                {canManage ? (
+                                                    <button
+                                                        type="button"
+                                                        className="btn ghost btn-small"
+                                                        onClick={() => onImportSkill?.(glossary)}
+                                                        disabled={importDisabled}
+                                                    >
+                                                        {importBusyId === glossary.id ? "Importing…" : "Import skill"}
+                                                    </button>
+                                                ) : (
+                                                    <span className="text-small text-muted">
+                                                        Ask the DM to import this skill.
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="text-small text-muted" style={{ marginTop: 4 }}>
+                                                Listed as {label} in the demon entry.
+                                            </div>
+                                        </article>
+                                    );
+                                })
+                            ) : (
+                                <div className="combat-codex__empty text-small text-muted">
+                                    No glossary suggestions match that filter.
+                                </div>
+                            )}
+                        </div>
+                    )}
                     {unmatchedSkills.length > 0 && (
                         <div className="combat-codex__unmatched text-small">
-                            <strong>Unlinked skills:</strong> {unmatchedSkills.join(", ")}
+                            <strong>Unrecognized skills:</strong> {unmatchedSkills.join(", ")}
                         </div>
                     )}
                 </div>
