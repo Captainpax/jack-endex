@@ -1582,6 +1582,40 @@ const MAP_DEFAULT_SETTINGS = Object.freeze({
 });
 
 const MAP_BRUSH_COLORS = ['#f97316', '#38bdf8', '#a855f7', '#22c55e', '#f472b6'];
+const MAP_BRUSH_STORAGE_KEY = 'battlemap.brushPalette';
+
+function isHexColor(value) {
+    if (typeof value !== 'string') return false;
+    const normalized = value.trim();
+    return /^#[0-9a-f]{6}$/i.test(normalized);
+}
+
+function normalizeBrushPalette(palette) {
+    const defaults = [...MAP_BRUSH_COLORS];
+    if (!Array.isArray(palette)) return defaults;
+    return defaults.map((fallback, index) => {
+        const value = palette[index];
+        if (!isHexColor(value)) return fallback;
+        return value.trim().toLowerCase();
+    });
+}
+
+function loadStoredBrushPalette() {
+    if (typeof window === 'undefined') {
+        return [...MAP_BRUSH_COLORS];
+    }
+    try {
+        const raw = window.localStorage.getItem(MAP_BRUSH_STORAGE_KEY);
+        if (!raw) {
+            return [...MAP_BRUSH_COLORS];
+        }
+        const parsed = JSON.parse(raw);
+        return normalizeBrushPalette(parsed);
+    } catch (err) {
+        console.warn('Failed to load stored brush palette', err);
+        return [...MAP_BRUSH_COLORS];
+    }
+}
 const MAP_ENEMY_DEFAULT_COLOR = '#ef4444';
 const MAP_MAX_POINTS_PER_STROKE = 600;
 const MAP_DEFAULT_BACKGROUND = Object.freeze({
@@ -2271,10 +2305,13 @@ function MapTab({ game, me }) {
     }, [game.id, isDM]);
 
     const [tool, setTool] = useState('select');
-    const [brushColor, setBrushColor] = useState(MAP_BRUSH_COLORS[0]);
+    const [brushPalette, setBrushPalette] = useState(() => loadStoredBrushPalette());
+    const [selectedBrushSlot, setSelectedBrushSlot] = useState(0);
+    const [brushColor, setBrushColor] = useState(() => brushPalette[0] || MAP_BRUSH_COLORS[0]);
     const [brushSize, setBrushSize] = useState(4);
     const [draftStroke, setDraftStroke] = useState(null);
     const [isDrawing, setIsDrawing] = useState(false);
+    const [clearingMap, setClearingMap] = useState(false);
     const canvasRef = useRef(null);
     const boardRef = useRef(null);
     const [boardSize, setBoardSize] = useState({ width: 0, height: 0 });
@@ -2306,6 +2343,16 @@ function MapTab({ game, me }) {
             setTool('select');
         }
     }, [isDM, mapState.paused, mapState.settings.allowPlayerDrawing, tool]);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        try {
+            const normalized = normalizeBrushPalette(brushPalette);
+            window.localStorage.setItem(MAP_BRUSH_STORAGE_KEY, JSON.stringify(normalized));
+        } catch (err) {
+            console.warn('Failed to persist brush palette', err);
+        }
+    }, [brushPalette]);
 
     useEffect(() => {
         const board = boardRef.current;
@@ -3222,6 +3269,42 @@ function MapTab({ game, me }) {
         }
     }, [game.id, mapState.paused]);
 
+    const handleSaveBrushColor = useCallback(() => {
+        const colorToSave = typeof brushColor === 'string' ? brushColor.trim().toLowerCase() : '';
+        if (!isHexColor(colorToSave)) {
+            alert('Pick a color before saving to a slot.');
+            return;
+        }
+        setBrushPalette((prev) => {
+            const base = Array.isArray(prev) && prev.length === MAP_BRUSH_COLORS.length
+                ? [...prev]
+                : normalizeBrushPalette(prev);
+            const index = Math.min(Math.max(selectedBrushSlot, 0), base.length - 1);
+            base[index] = colorToSave;
+            return normalizeBrushPalette(base);
+        });
+        setBrushColor(colorToSave);
+    }, [brushColor, selectedBrushSlot]);
+
+    const handleClearMap = useCallback(async () => {
+        if (!isDM) return;
+        const confirmed = confirm(
+            'Clear the entire battle map? This removes the background, drawings, shapes, and tokens.',
+        );
+        if (!confirmed) return;
+        try {
+            setClearingMap(true);
+            const response = await Games.clearMap(game.id);
+            if (response && typeof response === 'object') {
+                setMapState(normalizeClientMapState(response));
+            }
+        } catch (err) {
+            alert(err.message);
+        } finally {
+            setClearingMap(false);
+        }
+    }, [game.id, isDM]);
+
     return (
         <div className="map-tab">
             <div className="map-toolbar card">
@@ -3288,6 +3371,16 @@ function MapTab({ game, me }) {
                                 Share to story log
                             </button>
                         )}
+                        {isDM && (
+                            <button
+                                type="button"
+                                className="btn btn-small warn"
+                                onClick={handleClearMap}
+                                disabled={clearingMap}
+                            >
+                                {clearingMap ? 'Clearing…' : 'Clear map'}
+                            </button>
+                        )}
                     </div>
                 </div>
                 {canDraw && (
@@ -3295,13 +3388,16 @@ function MapTab({ game, me }) {
                         <div>
                             <span className="text-small">Brush color</span>
                             <div className="map-toolbar__colors">
-                                {MAP_BRUSH_COLORS.map((color) => (
+                                {brushPalette.map((color, index) => (
                                     <button
-                                        key={color}
+                                        key={`${color}-${index}`}
                                         type="button"
                                         className={`map-color${brushColor === color ? ' is-active' : ''}`}
                                         style={{ background: color }}
-                                        onClick={() => setBrushColor(color)}
+                                        onClick={() => {
+                                            setBrushColor(color);
+                                            setSelectedBrushSlot(index);
+                                        }}
                                     />
                                 ))}
                             </div>
@@ -3314,12 +3410,48 @@ function MapTab({ game, me }) {
                                         style={{ backgroundColor: brushColor }}
                                         onChange={(event) => {
                                             const value = event.target.value || brushColor;
-                                            setBrushColor(typeof value === 'string' ? value : brushColor);
+                                            setBrushColor(
+                                                typeof value === 'string' ? value.toLowerCase() : brushColor,
+                                            );
                                         }}
                                     />
                                     <span className="text-muted text-small">{brushColor.toUpperCase()}</span>
                                 </div>
                             </label>
+                            <div className="map-brush-save">
+                                <label className="text-small" htmlFor="map-brush-slot">
+                                    Save color to slot
+                                </label>
+                                <select
+                                    id="map-brush-slot"
+                                    value={selectedBrushSlot}
+                                    onChange={(event) => {
+                                        const raw = Number(event.target.value);
+                                        const maxIndex = brushPalette.length - 1;
+                                        const index = Number.isFinite(raw)
+                                            ? Math.min(Math.max(raw, 0), maxIndex)
+                                            : 0;
+                                        setSelectedBrushSlot(index);
+                                        const nextColor = brushPalette[index];
+                                        if (isHexColor(nextColor)) {
+                                            setBrushColor(nextColor);
+                                        }
+                                    }}
+                                >
+                                    {brushPalette.map((color, index) => (
+                                        <option key={`slot-${index}`} value={index}>
+                                            {`Slot ${index + 1} — ${color.toUpperCase()}`}
+                                        </option>
+                                    ))}
+                                </select>
+                                <button
+                                    type="button"
+                                    className="btn btn-small secondary"
+                                    onClick={handleSaveBrushColor}
+                                >
+                                    Save color
+                                </button>
+                            </div>
                         </div>
                         <label className="map-brush-size">
                             <span className="text-small">Brush size</span>

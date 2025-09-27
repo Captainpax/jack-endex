@@ -526,6 +526,18 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     margin-top: 8px;
 }
 
+.map-brush-save {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+}
+
+.map-brush-save label {
+    min-width: 120px;
+}
+
 .map-color {
     width: 28px;
     height: 28px;

@@ -4289,6 +4289,34 @@ app.delete('/api/games/:id/map/background', requireAuth, async (req, res) => {
     res.json({ ok: true, background: presentMapBackground(map.background) });
 });
 
+app.post('/api/games/:id/map/clear', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const map = ensureMapState(game);
+    map.strokes = [];
+    map.tokens = [];
+    map.shapes = [];
+    map.background = defaultMapBackground();
+    map.background.url = '';
+    map.updatedAt = new Date().toISOString();
+
+    await persistGame(db, game, {
+        reason: 'map:clear',
+        actorId: req.session.userId,
+        broadcast: !map.paused,
+    });
+
+    res.json(presentMapState(map));
+});
+
 app.post('/api/games/:id/map/tokens', requireAuth, async (req, res) => {
     const { id } = req.params || {};
     const db = await readDB();

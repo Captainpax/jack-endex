@@ -647,6 +647,11 @@ export const Games = {
             method: 'DELETE',
             quiet: true,
         }),
+    clearMap: (id) =>
+        api(`/api/games/${encodeURIComponent(id)}/map/clear`, {
+            method: 'POST',
+            quiet: true,
+        }),
     addMapToken: (id, token) =>
         api(`/api/games/${encodeURIComponent(id)}/map/tokens`, {
             method: 'POST',
