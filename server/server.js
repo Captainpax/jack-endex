@@ -23,6 +23,7 @@ import { loadDemonEntries } from './lib/demonImport.js';
 import { loadItemEntries, parseHealingEffect } from './lib/itemImport.js';
 import { DEFAULT_WORLD_SKILLS } from '../shared/worldSkills.js';
 import { MUSIC_TRACKS, getMusicTrack } from '../shared/music/index.js';
+import { FUSE_ARCANA_KEY_BY_LABEL, FUSE_ARCANA_ORDER } from '../shared/fusionArcana.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -38,6 +39,7 @@ const userSockets = new Map();
 const pendingPersonaRequests = new Map();
 const pendingTrades = new Map();
 const storyBroadcastQueue = new Map();
+const FUSION_OVERRIDE_RANDOM = 'none';
 const DISCORD_API_BASE = 'https://discord.com/api/v10';
 const readiness = {
     db: false,
@@ -1101,6 +1103,65 @@ for (const candidate of INDEX_CANDIDATES) {
 }
 
 // --- game helpers ---
+function normalizeFusionArcana(value) {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim().toLowerCase();
+    if (!trimmed) return '';
+    if (FUSE_ARCANA_KEY_BY_LABEL.has(trimmed)) {
+        return FUSE_ARCANA_KEY_BY_LABEL.get(trimmed) || '';
+    }
+    if (FUSE_ARCANA_ORDER.includes(trimmed)) {
+        return trimmed;
+    }
+    return '';
+}
+
+function normalizeFusionPairKey(value) {
+    if (typeof value !== 'string') return '';
+    const parts = value.split('+').map((part) => normalizeFusionArcana(part));
+    if (parts.length !== 2) return '';
+    const [a, b] = parts;
+    if (!a || !b) return '';
+    return [a, b].sort().join('+');
+}
+
+function normalizeFusionOverrideValue(value) {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    if (!trimmed) return '';
+    const lower = trimmed.toLowerCase();
+    if (lower === FUSION_OVERRIDE_RANDOM) return FUSION_OVERRIDE_RANDOM;
+    return normalizeFusionArcana(lower);
+}
+
+function normalizeFusionOverrides(raw) {
+    if (!raw || typeof raw !== 'object') return {};
+    const map = {};
+    for (const [pair, result] of Object.entries(raw)) {
+        const key = normalizeFusionPairKey(pair);
+        if (!key) continue;
+        const normalizedValue = normalizeFusionOverrideValue(String(result || ''));
+        if (!normalizedValue) continue;
+        map[key] = normalizedValue;
+    }
+    return map;
+}
+
+function ensureFusionChart(game) {
+    const raw = game && typeof game.fusionChart === 'object' ? game.fusionChart : {};
+    const overrides = normalizeFusionOverrides(raw.overrides);
+    const chart = { overrides };
+    game.fusionChart = chart;
+    return chart;
+}
+
+function presentFusionChart(chart) {
+    if (!chart || typeof chart !== 'object') {
+        return { overrides: {} };
+    }
+    return { overrides: normalizeFusionOverrides(chart.overrides) };
+}
+
 function ensureGameShape(game) {
     if (!game || typeof game !== 'object') return null;
     if (Array.isArray(game.players)) {
@@ -1147,6 +1208,7 @@ function ensureGameShape(game) {
     game.music = ensureMusicState(game);
     game.map = ensureMapState(game);
     game.mapLibrary = ensureMapLibrary(game);
+    game.fusionChart = ensureFusionChart(game);
     return game;
 }
 
@@ -1163,6 +1225,7 @@ function presentGame(game, { includeSecrets = false } = {}) {
             return { ...player, online };
         })
         : [];
+    const fusionChart = ensureFusionChart(normalized);
     return {
         id: normalized.id,
         name: normalized.name,
@@ -1174,6 +1237,7 @@ function presentGame(game, { includeSecrets = false } = {}) {
         demonPool: normalized.demonPool,
         fuseSeed: normalized.fuseSeed,
         permissions: normalized.permissions,
+        fusionChart: presentFusionChart(fusionChart),
         invites: normalized.invites,
         story: presentStoryConfig(story, { includeSecrets }),
         worldSkills,
@@ -5484,6 +5548,25 @@ app.delete('/api/games/:id/demons/:demonId', requireAuth, async (req, res) => {
     game.demons = next;
     await persistGame(db, game);
     res.json({ ok: true });
+});
+
+app.put('/api/games/:id/fusion-chart', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const overrides = normalizeFusionOverrides(req.body?.overrides);
+    const chart = ensureFusionChart(game);
+    chart.overrides = overrides;
+
+    await persistGame(db, game);
+    res.json({ fusionChart: presentFusionChart(chart) });
 });
 
 app.get('/api/games/:id/story-log', requireAuth, async (req, res) => {
