@@ -7,6 +7,48 @@ import {
     FUSION_ARCANA_METADATA,
 } from "../constants/fusionChart";
 
+/**
+ * @typedef {{ key: string, label: string }} ArcanaOption
+ * @typedef {{
+ *   value: string,
+ *   label: string,
+ * }} MoonPhaseOption
+ * @typedef {{
+ *   value: number,
+ *   sides: number,
+ *   isCriticalHigh: boolean,
+ *   isCriticalLow: boolean,
+ * }} FusionRoll
+ * @typedef {{
+ *   type: "ceil" | "floor",
+ *   shift: number,
+ *   label: string,
+ * }} FusionRounding
+ * @typedef {{
+ *   pairKey: string,
+ *   arcanaA: string,
+ *   arcanaB: string,
+ *   baseSeed: string,
+ *   moonPhase: string,
+ *   roll: FusionRoll | null,
+ *   notifications: string[],
+ *   arcanaSource: "chart" | "random",
+ *   arcanaCandidates: string[],
+ *   baseArcana: string | null,
+ *   rounding: FusionRounding,
+ * }} FusionPlan
+ * @typedef {{
+ *   arcanaKey: string,
+ *   arcanaLabel: string,
+ *   demon: any,
+ *   averageLevel: number | null,
+ *   rounding: FusionRounding,
+ *   targetLevel: number | null,
+ *   tieCount: number,
+ *   selectedIndex: number,
+ * }} FusionResult
+ */
+
 const BASE_ARCANA_KEYS = ARCANA_DATA.map((entry) => entry.key);
 const EXTRA_ARCANA_KEYS = FUSE_ARCANA_ORDER.filter((key) => !BASE_ARCANA_KEYS.includes(key));
 const ARCANA_KEYS = [...BASE_ARCANA_KEYS, ...EXTRA_ARCANA_KEYS];
@@ -29,11 +71,23 @@ for (const [alias, key] of FUSE_ARCANA_KEY_BY_LABEL.entries()) {
 
 const FUSION_RULE_OVERRIDES = new Map();
 
+/**
+ * Create a deterministic key for a pair of identifiers regardless of order.
+ * @param {string} a
+ * @param {string} b
+ * @returns {string}
+ */
 function buildPairKey(a, b) {
     const list = [a, b].map((value) => value || "").sort();
     return list.join("+");
 }
 
+/**
+ * Resolve a demon identifier suitable for seeding RNG calculations.
+ * Falls back to commonly available fields such as id/slug/name.
+ * @param {any} demon
+ * @returns {string}
+ */
 function resolveFusionIdentifier(demon) {
     if (!demon || typeof demon !== "object") return "";
     const candidates = ["id", "slug", "query", "name"];
@@ -44,6 +98,11 @@ function resolveFusionIdentifier(demon) {
     return "";
 }
 
+/**
+ * Normalize user-provided arcana strings into canonical keys used by the fusion chart.
+ * @param {string} value
+ * @returns {string}
+ */
 export function normalizeArcanaKey(value) {
     if (typeof value !== "string") return "";
     const trimmed = value.trim();
@@ -61,6 +120,11 @@ export function normalizeArcanaKey(value) {
     return "";
 }
 
+/**
+ * Look up a human-friendly label for an arcana key.
+ * @param {string} key
+ * @returns {string}
+ */
 export function getArcanaLabel(key) {
     const normalized = normalizeArcanaKey(key);
     if (!normalized) return "";
@@ -73,14 +137,28 @@ export function getArcanaLabel(key) {
     return normalized;
 }
 
+/**
+ * List base arcana options suitable for populating select inputs.
+ * @returns {ArcanaOption[]}
+ */
 export function listArcanaOptions() {
     return ARCANA_DATA.map((entry) => ({ key: entry.key, label: entry.label }));
 }
 
+/**
+ * List bonus arcana options only available through fusion rules.
+ * @returns {ArcanaOption[]}
+ */
 export function listFusionArcanaOptions() {
     return FUSION_ARCANA_METADATA.map((entry) => ({ key: entry.key, label: entry.label }));
 }
 
+/**
+ * Lookup the resulting arcana from the fusion chart for a pair of inputs.
+ * @param {string} arcanaA
+ * @param {string} arcanaB
+ * @returns {string | null}
+ */
 export function resolveChartArcana(arcanaA, arcanaB) {
     const keyA = normalizeArcanaKey(arcanaA);
     const keyB = normalizeArcanaKey(arcanaB);
@@ -92,6 +170,12 @@ export function resolveChartArcana(arcanaA, arcanaB) {
     return null;
 }
 
+/**
+ * Suggest an arcana for fusion, honoring overrides and randomization rules.
+ * @param {string} arcanaA
+ * @param {string} arcanaB
+ * @returns {string | null}
+ */
 export function suggestFusionArcana(arcanaA, arcanaB) {
     const keyA = normalizeArcanaKey(arcanaA);
     const keyB = normalizeArcanaKey(arcanaB);
@@ -105,6 +189,12 @@ export function suggestFusionArcana(arcanaA, arcanaB) {
     return chartArc || null;
 }
 
+/**
+ * Generate a user-facing label describing a fusion pair.
+ * @param {string} arcanaA
+ * @param {string} arcanaB
+ * @returns {string}
+ */
 export function describeFusionPair(arcanaA, arcanaB) {
     const keyA = normalizeArcanaKey(arcanaA);
     const keyB = normalizeArcanaKey(arcanaB);
@@ -114,18 +204,31 @@ export function describeFusionPair(arcanaA, arcanaB) {
     return `${labelA} × ${labelB}`;
 }
 
+/**
+ * Canonical moon phase keys that influence fusion behavior.
+ * @type {{ FULL: "full", NEW: "new", OTHER: "other" }}
+ */
 export const MOON_PHASES = Object.freeze({
     FULL: "full",
     NEW: "new",
     OTHER: "other",
 });
 
+/**
+ * User-facing moon phase select options.
+ * @type {MoonPhaseOption[]}
+ */
 export const MOON_PHASE_OPTIONS = [
     { value: MOON_PHASES.FULL, label: "Full Moon" },
     { value: MOON_PHASES.NEW, label: "New Moon" },
     { value: MOON_PHASES.OTHER, label: "Other" },
 ];
 
+/**
+ * Normalize arbitrary moon phase strings to the supported set.
+ * @param {string} value
+ * @returns {string}
+ */
 export function normalizeMoonPhase(value) {
     const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
     if (raw === MOON_PHASES.FULL) return MOON_PHASES.FULL;
@@ -133,12 +236,23 @@ export function normalizeMoonPhase(value) {
     return MOON_PHASES.OTHER;
 }
 
+/**
+ * Resolve a human-friendly label for a moon phase key.
+ * @param {string} phase
+ * @returns {string}
+ */
 export function formatMoonPhaseLabel(phase) {
     const normalized = normalizeMoonPhase(phase);
     const option = MOON_PHASE_OPTIONS.find((entry) => entry.value === normalized);
     return option ? option.label : "Other";
 }
 
+/**
+ * Create a deterministic pseudo-random number generator seeded by a string.
+ * Implementation based on cyrb53; returns values in the range [0, 1).
+ * @param {string | number} seed
+ * @returns {() => number}
+ */
 export function createSeededRng(seed) {
     const str = typeof seed === "string" ? seed : String(seed ?? "");
     let h = 1779033703 ^ str.length;
@@ -156,6 +270,11 @@ export function createSeededRng(seed) {
     };
 }
 
+/**
+ * Roll a deterministic d20 using the seeded RNG to support narrative flavor.
+ * @param {string} seed
+ * @returns {FusionRoll}
+ */
 function rollD20(seed) {
     const rng = createSeededRng(`${seed}|d20`);
     const value = Math.floor(rng() * 20) + 1;
@@ -167,6 +286,11 @@ function rollD20(seed) {
     };
 }
 
+/**
+ * Build a randomized arcana order seeded by fusion metadata.
+ * @param {string} seed
+ * @returns {string[]}
+ */
 function buildRandomArcanaOrder(seed) {
     const rng = createSeededRng(`${seed}|arcana`);
     const start = Math.floor(rng() * FUSE_ARCANA_ORDER.length);
@@ -176,6 +300,11 @@ function buildRandomArcanaOrder(seed) {
     ];
 }
 
+/**
+ * Determine the rounding rule applied to average demon levels during fusion.
+ * @param {string} moonPhase
+ * @returns {FusionRounding}
+ */
 function computeRounding(moonPhase) {
     switch (moonPhase) {
         case MOON_PHASES.FULL:
@@ -187,6 +316,11 @@ function computeRounding(moonPhase) {
     }
 }
 
+/**
+ * Construct a deterministic fusion plan containing arcana candidates and metadata.
+ * @param {{ demonA: any, demonB: any, fuseSeed: string, moonPhase: string }} params
+ * @returns {FusionPlan | null}
+ */
 export function createFusionPlan({ demonA, demonB, fuseSeed, moonPhase }) {
     const seed = typeof fuseSeed === "string" ? fuseSeed.trim() : "";
     if (!seed || !demonA || !demonB) return null;
@@ -246,6 +380,12 @@ export function createFusionPlan({ demonA, demonB, fuseSeed, moonPhase }) {
     };
 }
 
+/**
+ * Choose the resulting demon from a fusion plan given the available demon list.
+ * Applies rounding, tie-breaking, and seeded randomness to make decisions repeatable.
+ * @param {{ plan: FusionPlan | null, demons: any[], arcanaKey: string, arcanaLabel: string, demonA?: any, demonB?: any }} options
+ * @returns {FusionResult | null}
+ */
 export function resolveFusionResult({ plan, demons, arcanaKey, arcanaLabel, demonA, demonB }) {
     if (!plan || !Array.isArray(demons) || demons.length === 0) {
         return null;

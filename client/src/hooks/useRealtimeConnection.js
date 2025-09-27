@@ -4,6 +4,47 @@ import { EMPTY_ARRAY } from "../utils/constants";
 import { resolveRealtimeUrl } from "../api";
 import { getTrackById } from "../utils/music";
 
+/**
+ * @typedef {{ trackId: string, updatedAt: string }} MusicSnapshot
+ * @typedef {{ id: string, message: string, senderName: string, issuedAt: string, senderId: string | null }} AlertEntry
+ * @typedef {{
+ *   start(partnerId: string, note?: string): void,
+ *   respond(tradeId: string, accept: boolean): void,
+ *   updateOffer(tradeId: string, items: any[]): void,
+ *   confirm(tradeId: string): void,
+ *   unconfirm(tradeId: string): void,
+ *   cancel(tradeId: string): void,
+ *   dismiss(tradeId: string): void,
+ * }} TradeActions
+ * @typedef {{
+ *   status: "idle" | "connecting" | "connected" | "disconnected",
+ *   connected: boolean,
+ *   subscribeStory: (handler: (snapshot: any) => void) => () => void,
+ *   requestPersona: (targetUserId: string, content: any) => Promise<any>,
+ *   respondPersona: (requestId: string, approve: boolean) => void,
+ *   personaPrompts: any[],
+ *   personaStatuses: Record<string, any>,
+ *   tradeSessions: any[],
+ *   tradeActions: TradeActions,
+ *   onlineUsers: Record<string, boolean>,
+ *   musicState: MusicSnapshot | null,
+ *   musicError: string | null,
+ *   syncMusic: (snapshot: any) => void,
+ *   playMusic: (trackId: string) => void,
+ *   stopMusic: () => void,
+ *   alerts: AlertEntry[],
+ *   alertError: string | null,
+ *   sendAlert: (message: string) => void,
+ *   dismissAlert: (alertId: string) => void,
+ * }} UseRealtimeConnection
+ */
+
+/**
+ * Validate a raw music snapshot received from the websocket layer.
+ * Ensures the referenced track exists before returning a simplified payload.
+ * @param {any} snapshot
+ * @returns {MusicSnapshot | null}
+ */
 function normalizeMusicSnapshot(snapshot) {
     if (!snapshot || typeof snapshot !== "object") return null;
     const trackId = typeof snapshot.trackId === "string" ? snapshot.trackId.trim() : "";
@@ -12,6 +53,11 @@ function normalizeMusicSnapshot(snapshot) {
     return { trackId, updatedAt };
 }
 
+/**
+ * Normalize alert payloads so the UI receives consistent identifiers and timestamps.
+ * @param {any} entry
+ * @returns {AlertEntry | null}
+ */
 function normalizeAlertEntry(entry) {
     if (!entry || typeof entry !== "object") return null;
     const id = typeof entry.id === "string" ? entry.id : null;
@@ -24,7 +70,12 @@ function normalizeAlertEntry(entry) {
     return { id, message, senderName, issuedAt, senderId: entry.senderId || null };
 }
 
-
+/**
+ * Establish and manage the realtime websocket connection for a game session.
+ * Handles subscription lifecycles, queued refreshes, persona/trade helpers, and music/alert channels.
+ * @param {{ gameId: string | null, refreshGame?: () => Promise<any> | any, onGameDeleted?: (payload: any) => any }} params
+ * @returns {UseRealtimeConnection}
+ */
 export default function useRealtimeConnection({ gameId, refreshGame, onGameDeleted }) {
     const [connectionState, setConnectionState] = useState("idle");
     const socketRef = useRef(null);
@@ -54,6 +105,9 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
         gameDeletedRef.current = onGameDeleted;
     }, [onGameDeleted]);
 
+    /**
+     * Queue a game refresh call, consolidating concurrent requests into a single execution.
+     */
     const requestGameRefresh = useCallback(() => {
         const execute = () => {
             const fn = refreshRef.current;
@@ -83,6 +137,10 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
         execute();
     }, []);
 
+    /**
+     * Send a JSON payload to the websocket, asserting the connection is open.
+     * @param {Record<string, any>} payload
+     */
     const sendMessage = useCallback((payload) => {
         const ws = socketRef.current;
         if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -91,6 +149,11 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
         ws.send(JSON.stringify(payload));
     }, []);
 
+    /**
+     * Register a listener for story updates, replaying the latest snapshot immediately.
+     * @param {(snapshot: any) => void} handler
+     * @returns {() => void}
+     */
     const subscribeStory = useCallback(
         (handler) => {
             if (typeof handler !== "function") return () => {};
@@ -109,6 +172,10 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
         []
     );
 
+    /**
+     * Track persona generation status updates so the UI can reflect progress.
+     * @param {any} message
+     */
     const updatePersonaStatus = useCallback((message) => {
         if (!message?.requestId) return;
         setPersonaStatuses((prev) => ({
@@ -120,6 +187,11 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
         }
     }, []);
 
+    /**
+     * Merge an incoming trade snapshot into local state.
+     * @param {any} trade
+     * @param {Record<string, any>} [extras]
+     */
     const updateTradeSession = useCallback((trade, extras = {}) => {
         if (!trade || !trade.id) return;
         setTradeSessions((prev) => ({
@@ -128,6 +200,10 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
         }));
     }, []);
 
+    /**
+     * Remove a trade session from state, typically after completion or dismissal.
+     * @param {string} tradeId
+     */
     const removeTradeSession = useCallback((tradeId) => {
         setTradeSessions((prev) => {
             if (!prev[tradeId]) return prev;
@@ -389,6 +465,12 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
         };
     }, [gameId, requestGameRefresh, updatePersonaStatus, updateTradeSession]);
 
+    /**
+     * Request that another player respond in-character via the persona system.
+     * @param {string} targetUserId
+     * @param {any} content
+     * @returns {Promise<any>}
+     */
     const requestPersona = useCallback(
         (targetUserId, content) =>
             new Promise((resolve, reject) => {
@@ -419,6 +501,11 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
         [gameId, sendMessage]
     );
 
+    /**
+     * Respond to an outstanding persona request with approval/denial.
+     * @param {string} requestId
+     * @param {boolean} approve
+     */
     const respondPersona = useCallback(
         (requestId, approve) => {
             try {
@@ -430,6 +517,10 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
         [sendMessage]
     );
 
+    /**
+     * Curated helpers for interacting with the realtime trade system.
+     * @returns {TradeActions}
+     */
     const tradeActions = useMemo(
         () => ({
             start(partnerId, note) {
@@ -484,11 +575,19 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
 
     const tradeList = useMemo(() => Object.values(tradeSessions), [tradeSessions]);
 
+    /**
+     * Manually synchronize the music state from an external source.
+     * @param {any} snapshot
+     */
     const syncMusic = useCallback((snapshot) => {
         setMusicState(normalizeMusicSnapshot(snapshot));
         setMusicError(null);
     }, []);
 
+    /**
+     * Request playback of a track for the active game.
+     * @param {string} trackId
+     */
     const playMusic = useCallback(
         (trackId) => {
             if (!gameId) throw new Error("missing_game");
@@ -500,12 +599,19 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
         [gameId, sendMessage]
     );
 
+    /**
+     * Stop the currently playing music for the active game.
+     */
     const stopMusic = useCallback(() => {
         if (!gameId) return;
         setMusicError(null);
         sendMessage({ type: "music.stop", gameId });
     }, [gameId, sendMessage]);
 
+    /**
+     * Broadcast an alert message to all connected players.
+     * @param {string} message
+     */
     const sendAlertMessage = useCallback(
         (message) => {
             if (!gameId) throw new Error("missing_game");
@@ -517,6 +623,10 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
         [gameId, sendMessage]
     );
 
+    /**
+     * Remove an alert from the UI and clear any auto-dismiss timers.
+     * @param {string} alertId
+     */
     const dismissAlert = useCallback((alertId) => {
         if (!alertId) return;
         setAlerts((prev) => prev.filter((entry) => entry.id !== alertId));

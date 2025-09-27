@@ -1,11 +1,25 @@
+/**
+ * Keywords used to detect if an item belongs to a gear category.
+ * @type {readonly string[]}
+ */
 export const GEAR_TYPE_KEYWORDS = ["weapon", "armor", "accessory"];
 const GEAR_TYPE_PATTERNS = GEAR_TYPE_KEYWORDS.map((keyword) => new RegExp(`\\b${keyword}\\b`, "i"));
 
+/**
+ * Determine whether a type string references a gear category.
+ * @param {string} type
+ * @returns {boolean}
+ */
 export function isGearCategory(type) {
     if (typeof type !== "string") return false;
     return GEAR_TYPE_PATTERNS.some((pattern) => pattern.test(type));
 }
 
+/**
+ * Convert a healing payload into a compact human-readable description.
+ * @param {{ revive?: "full"|"partial", hpPercent?: number, hp?: number, mpPercent?: number, mp?: number }} healing
+ * @returns {string}
+ */
 export function formatHealingEffect(healing) {
     if (!healing || typeof healing !== "object") return "";
     const parts = [];
