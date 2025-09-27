@@ -1583,6 +1583,7 @@ const MAP_DEFAULT_SETTINGS = Object.freeze({
 
 const MAP_BRUSH_COLORS = ['#f97316', '#38bdf8', '#a855f7', '#22c55e', '#f472b6'];
 const MAP_BRUSH_STORAGE_KEY = 'battlemap.brushPalette';
+const MAP_UNDO_STACK_LIMIT = 5;
 
 function isHexColor(value) {
     if (typeof value !== 'string') return false;
@@ -1627,6 +1628,7 @@ const MAP_DEFAULT_BACKGROUND = Object.freeze({
     opacity: 1,
     color: '#0f172a',
 });
+const MAP_DEFAULT_DRAWER = Object.freeze({ userId: null, assignedAt: null });
 const MAP_SHAPE_TYPES = ['rectangle', 'circle', 'line', 'diamond', 'triangle', 'cone', 'image'];
 const MAP_STANDARD_SHAPE_TYPES = MAP_SHAPE_TYPES.filter((type) => type !== 'image');
 const MAP_SHAPE_LABELS = {
@@ -1641,10 +1643,10 @@ const MAP_SHAPE_LABELS = {
 const ENEMY_TOOLTIP_PREFIX = '__enemy__v1:';
 const ENEMY_TOOLTIP_MAX_LENGTH = 480;
 const MAP_SIDEBAR_TABS = [
-    { key: 'tokens', label: 'Tokens' },
-    { key: 'overlays', label: 'Overlays' },
-    { key: 'shapes', label: 'Shapes' },
-    { key: 'library', label: 'Library' },
+    { key: 'tokens', label: 'Tokens', description: 'Manage player, demon, and enemy markers.' },
+    { key: 'overlays', label: 'Overlays', description: 'Add images and fog layers to the board.' },
+    { key: 'shapes', label: 'Shapes', description: 'Create tactical shapes and zones.' },
+    { key: 'library', label: 'Library', description: 'Save and load prepared battle maps.' },
 ];
 
 function mapClamp01(value) {
@@ -1692,6 +1694,8 @@ function normalizeClientMapStroke(stroke) {
     const color = typeof stroke.color === 'string' && stroke.color ? stroke.color : MAP_BRUSH_COLORS[0];
     const widthRaw = Number(stroke.size);
     const size = Number.isFinite(widthRaw) ? Math.min(32, Math.max(1, widthRaw)) : 3;
+    const modeRaw = typeof stroke.mode === 'string' ? stroke.mode.toLowerCase() : 'draw';
+    const mode = modeRaw === 'erase' ? 'erase' : 'draw';
     const source = Array.isArray(stroke.points) ? stroke.points : [];
     const points = [];
     for (const point of source) {
@@ -1707,6 +1711,8 @@ function normalizeClientMapStroke(stroke) {
         size,
         points,
         createdAt: typeof stroke.createdAt === 'string' ? stroke.createdAt : null,
+        createdBy: typeof stroke.createdBy === 'string' ? stroke.createdBy : null,
+        mode,
     };
 }
 
@@ -2141,6 +2147,7 @@ function normalizeClientMapState(map) {
             paused: false,
             background: { ...MAP_DEFAULT_BACKGROUND },
             updatedAt: null,
+            drawer: { ...MAP_DEFAULT_DRAWER },
         };
     }
     const strokes = Array.isArray(map.strokes)
@@ -2152,6 +2159,15 @@ function normalizeClientMapState(map) {
     const shapes = Array.isArray(map.shapes)
         ? map.shapes.map((shape) => normalizeClientMapShape(shape)).filter(Boolean)
         : [];
+    const drawer = (() => {
+        if (!map.drawer || typeof map.drawer !== 'object') return { ...MAP_DEFAULT_DRAWER };
+        const userId = typeof map.drawer.userId === 'string' ? map.drawer.userId : null;
+        const assignedAt = typeof map.drawer.assignedAt === 'string' ? map.drawer.assignedAt : null;
+        return {
+            userId,
+            assignedAt: userId ? assignedAt : null,
+        };
+    })();
     return {
         strokes,
         tokens,
@@ -2169,6 +2185,7 @@ function normalizeClientMapState(map) {
         paused: mapReadBoolean(map.paused),
         background: normalizeClientMapBackground(map.background),
         updatedAt: typeof map.updatedAt === 'string' ? map.updatedAt : null,
+        drawer,
     };
 }
 
@@ -2334,18 +2351,19 @@ function MapTab({ game, me }) {
         opacity: 1,
         rotation: 0,
     });
+    const [undoStack, setUndoStack] = useState([]);
+    const [undoInFlight, setUndoInFlight] = useState(false);
+    const [drawerUpdating, setDrawerUpdating] = useState(false);
     const resetEnemyForm = useCallback(() => {
         setEnemyForm(createEnemyFormState());
         setEnemyDemonChoice('');
     }, []);
 
     useEffect(() => {
-        if (!isDM && tool === 'draw' && (!mapState.settings.allowPlayerDrawing || mapState.paused)) {
-            setTool('select');
-        } else if (!isDM && tool === 'background') {
-            setTool('select');
+        if (!MAP_SIDEBAR_TABS.some((tab) => tab.key === sidebarTab)) {
+            setSidebarTab(MAP_SIDEBAR_TABS[0]?.key || 'tokens');
         }
-    }, [isDM, mapState.paused, mapState.settings.allowPlayerDrawing, tool]);
+    }, [sidebarTab]);
 
     useEffect(() => {
         if (!isDM || tool !== 'shape') {
@@ -2389,15 +2407,44 @@ function MapTab({ game, me }) {
         return () => observer.disconnect();
     }, []);
 
-    const canDraw = isDM || (!mapState.paused && mapState.settings.allowPlayerDrawing);
-    const canPaint = canDraw && tool === 'draw';
+    const activeDrawerId = mapState.drawer?.userId || game.dmId || null;
+    const isActiveDrawer = activeDrawerId === me.id;
+    const canDraw =
+        isActiveDrawer && (isDM || (!mapState.paused && mapState.settings.allowPlayerDrawing));
+    const isDrawTool = tool === 'draw';
+    const isEraserTool = tool === 'erase';
     const isBackgroundTool = tool === 'background';
     const isShapeTool = tool === 'shape';
     const isBucketTool = tool === 'bucket';
+    const isFreehandTool = isDrawTool || isEraserTool;
+    const canPaint = canDraw && isFreehandTool;
     const tokenLayerPointerEvents =
         canPaint || isBackgroundTool || isBucketTool || (isDM && isShapeTool) ? 'none' : 'auto';
     const shapeLayerPointerEvents = isDM && isShapeTool ? 'auto' : 'none';
     const canvasPointerEvents = isBackgroundTool || isShapeTool ? 'none' : 'auto';
+
+    useEffect(() => {
+        if (!canDraw && (tool === 'draw' || tool === 'erase')) {
+            setTool('select');
+        } else if (!isDM && tool === 'background') {
+            setTool('select');
+        }
+    }, [canDraw, isDM, tool]);
+
+    useEffect(() => {
+        if (activeDrawerId !== me.id) {
+            setUndoStack([]);
+        }
+    }, [activeDrawerId, me.id]);
+
+    useEffect(() => {
+        setUndoStack((prev) => {
+            const filtered = prev.filter((stroke) =>
+                mapState.strokes.some((entry) => entry.id === stroke.id),
+            );
+            return filtered.length === prev.length ? prev : filtered;
+        });
+    }, [mapState.strokes]);
     const backgroundDisplay = useMemo(() => {
         const base = mapState.background || MAP_DEFAULT_BACKGROUND;
         if (dragPreview && dragPreview.kind === 'background') {
@@ -2420,6 +2467,55 @@ function MapTab({ game, me }) {
         }
         return map;
     }, [game.players]);
+
+    const drawerOptions = useMemo(() => {
+        const options = [];
+        if (game.dmId) {
+            options.push({
+                id: game.dmId,
+                label: `Dungeon Master${game.dmId === me.id ? ' (you)' : ''}`,
+            });
+        }
+        if (Array.isArray(game.players)) {
+            for (const player of game.players) {
+                if (!player || !player.userId) continue;
+                if ((player.role || '').toLowerCase() === 'dm') continue;
+                options.push({
+                    id: player.userId,
+                    label:
+                        player.userId === me.id
+                            ? `${describePlayerName(player)} (you)`
+                            : describePlayerName(player),
+                });
+            }
+        }
+        return options;
+    }, [game.dmId, game.players, me.id]);
+
+    const activeDrawerLabel = useMemo(() => {
+        if (!activeDrawerId || activeDrawerId === game.dmId) {
+            return isDM ? 'You (Dungeon Master)' : 'Dungeon Master';
+        }
+        const drawerPlayer = playerMap.get(activeDrawerId);
+        if (drawerPlayer) {
+            const name = describePlayerName(drawerPlayer);
+            if (activeDrawerId === me.id) {
+                return `${name} (you)`;
+            }
+            return name;
+        }
+        if (activeDrawerId === me.id) {
+            return 'You';
+        }
+        return 'Guest drawer';
+    }, [activeDrawerId, game.dmId, isDM, me.id, playerMap]);
+
+    const canUndo = isActiveDrawer && undoStack.length > 0 && !undoInFlight;
+    const drawerSelectValue = activeDrawerId || game.dmId || '';
+    const activeSidebarTab = useMemo(
+        () => MAP_SIDEBAR_TABS.find((entry) => entry.key === sidebarTab) || MAP_SIDEBAR_TABS[0],
+        [sidebarTab],
+    );
 
     const demonMap = useMemo(() => {
         const map = new Map();
@@ -2692,14 +2788,22 @@ function MapTab({ game, me }) {
                     setMapState((prev) => ({
                         ...prev,
                         strokes: prev.strokes.concat(normalized),
-                        updatedAt: response?.createdAt || prev.updatedAt,
+                        updatedAt: normalized.createdAt || response?.createdAt || prev.updatedAt,
                     }));
+                    if (normalized.createdBy === me.id) {
+                        setUndoStack((prev) => {
+                            const next = prev.concat(normalized);
+                            return next.length > MAP_UNDO_STACK_LIMIT
+                                ? next.slice(next.length - MAP_UNDO_STACK_LIMIT)
+                                : next;
+                        });
+                    }
                 }
             } catch (err) {
                 alert(err.message);
             }
         },
-        [game.id]
+        [game.id, me.id]
     );
 
     const completeStroke = useCallback(() => {
@@ -2712,11 +2816,30 @@ function MapTab({ game, me }) {
                 color: current.color,
                 size: current.size,
                 points: current.points,
+                mode: current.mode || 'draw',
             });
             setIsDrawing(false);
             return null;
         });
     }, [sendStroke]);
+
+    const handleUndo = useCallback(async () => {
+        if (!isActiveDrawer || undoStack.length === 0 || undoInFlight) return;
+        const target = undoStack[undoStack.length - 1];
+        setUndoInFlight(true);
+        try {
+            await Games.deleteMapStroke(game.id, target.id);
+            setMapState((prev) => ({
+                ...prev,
+                strokes: prev.strokes.filter((stroke) => stroke.id !== target.id),
+            }));
+            setUndoStack((prev) => prev.slice(0, -1));
+        } catch (err) {
+            alert(err.message);
+        } finally {
+            setUndoInFlight(false);
+        }
+    }, [game.id, isActiveDrawer, undoInFlight, undoStack]);
 
     const handleCanvasPointerDown = useCallback(
         (event) => {
@@ -2745,9 +2868,10 @@ function MapTab({ game, me }) {
             const { x, y } = getPointerPosition(event);
             setDraftStroke({
                 id: `draft-${Date.now()}`,
-                color: brushColor,
+                color: isEraserTool ? '#000000' : brushColor,
                 size: brushSize,
                 points: [{ x, y }],
+                mode: isEraserTool ? 'erase' : 'draw',
             });
             setIsDrawing(true);
             const canvas = canvasRef.current;
@@ -2759,7 +2883,16 @@ function MapTab({ game, me }) {
                 }
             }
         },
-        [brushColor, brushSize, canPaint, getPointerPosition, handleUpdateBackground, isBucketTool, isDM]
+        [
+            brushColor,
+            brushSize,
+            canPaint,
+            getPointerPosition,
+            handleUpdateBackground,
+            isBucketTool,
+            isDM,
+            isEraserTool,
+        ]
     );
 
     const handleCanvasPointerMove = useCallback(
@@ -2818,7 +2951,13 @@ function MapTab({ game, me }) {
         for (const stroke of strokes) {
             if (!stroke || stroke.points.length < 2) continue;
             ctx.beginPath();
-            ctx.strokeStyle = stroke.color || MAP_BRUSH_COLORS[0];
+            if (stroke.mode === 'erase') {
+                ctx.globalCompositeOperation = 'destination-out';
+                ctx.strokeStyle = 'rgba(0, 0, 0, 1)';
+            } else {
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.strokeStyle = stroke.color || MAP_BRUSH_COLORS[0];
+            }
             ctx.lineWidth = stroke.size || 3;
             ctx.lineJoin = 'round';
             ctx.lineCap = 'round';
@@ -2830,6 +2969,7 @@ function MapTab({ game, me }) {
             }
             ctx.stroke();
         }
+        ctx.globalCompositeOperation = 'source-over';
         ctx.restore();
     }, [boardSize.height, boardSize.width, draftStroke, mapState.strokes]);
 
@@ -3458,6 +3598,57 @@ function MapTab({ game, me }) {
         }
     }, [game.id, mapState.paused]);
 
+    const handleDrawerChange = useCallback(
+        async (nextUserId) => {
+            if (!isDM) return;
+            const desired = nextUserId || game.dmId || '';
+            const current = mapState.drawer?.userId || game.dmId || '';
+            if (desired === current) return;
+            setDrawerUpdating(true);
+            try {
+                const updated = await Games.updateMapSettings(game.id, { drawerUserId: desired });
+                setMapState(normalizeClientMapState(updated));
+            } catch (err) {
+                alert(err.message);
+            } finally {
+                setDrawerUpdating(false);
+            }
+        },
+        [game.dmId, game.id, isDM, mapState.drawer?.userId],
+    );
+
+    const handleSidebarTabKeyDown = useCallback(
+        (event, index) => {
+            const total = MAP_SIDEBAR_TABS.length;
+            if (total === 0) return;
+            let nextIndex = index;
+            switch (event.key) {
+                case 'ArrowRight':
+                case 'ArrowDown':
+                    nextIndex = (index + 1) % total;
+                    break;
+                case 'ArrowLeft':
+                case 'ArrowUp':
+                    nextIndex = (index - 1 + total) % total;
+                    break;
+                case 'Home':
+                    nextIndex = 0;
+                    break;
+                case 'End':
+                    nextIndex = total - 1;
+                    break;
+                default:
+                    return;
+            }
+            event.preventDefault();
+            const nextTab = MAP_SIDEBAR_TABS[nextIndex];
+            if (nextTab) {
+                setSidebarTab(nextTab.key);
+            }
+        },
+        [setSidebarTab],
+    );
+
     const handleSaveBrushColor = useCallback(() => {
         const colorToSave = typeof brushColor === 'string' ? brushColor.trim().toLowerCase() : '';
         if (!isHexColor(colorToSave)) {
@@ -3516,6 +3707,14 @@ function MapTab({ game, me }) {
                             >
                                 Draw
                             </button>
+                            <button
+                                type="button"
+                                className={`btn btn-small${tool === 'erase' ? ' is-active' : ' secondary'}`}
+                                onClick={() => setTool('erase')}
+                                disabled={!canDraw}
+                            >
+                                Eraser
+                            </button>
                             {isDM && (
                                 <button
                                     type="button"
@@ -3544,6 +3743,54 @@ function MapTab({ game, me }) {
                                 </button>
                             )}
                         </div>
+                        <div className="map-toolbar__utilities">
+                            <button
+                                type="button"
+                                className="btn btn-small ghost"
+                                onClick={handleUndo}
+                                disabled={!canUndo}
+                                title="Undo the most recent stroke (stores up to five)."
+                            >
+                                {undoInFlight ? 'Undoing…' : 'Undo'}
+                            </button>
+                        </div>
+                    </div>
+                    <div className="map-toolbar__drawer">
+                        {isDM ? (
+                            <>
+                                <label className="text-small" htmlFor="map-drawer-control">
+                                    Active drawer
+                                </label>
+                                <select
+                                    id="map-drawer-control"
+                                    value={drawerSelectValue}
+                                    onChange={(event) => handleDrawerChange(event.target.value)}
+                                    disabled={drawerUpdating}
+                                    aria-busy={drawerUpdating}
+                                >
+                                    {drawerOptions.map((option) => (
+                                        <option key={option.id || 'dm'} value={option.id || ''}>
+                                            {option.label}
+                                        </option>
+                                    ))}
+                                </select>
+                                <span className="text-muted text-small">
+                                    {drawerUpdating
+                                        ? 'Assigning drawer…'
+                                        : 'Only the selected user can sketch freehand.'}
+                                </span>
+                            </>
+                        ) : (
+                            <>
+                                <span className="text-small">Active drawer</span>
+                                <div className="map-toolbar__drawer-status" role="status" aria-live="polite">
+                                    <span className="map-toolbar__drawer-name">{activeDrawerLabel}</span>
+                                    <span className={`pill ${isActiveDrawer ? 'success' : 'light'}`}>
+                                        {isActiveDrawer ? 'You can draw' : 'View only'}
+                                    </span>
+                                </div>
+                            </>
+                        )}
                     </div>
                     <div className="map-toolbar__status">
                         <span className={`pill ${mapState.paused ? 'warn' : 'success'}`}>
@@ -3856,19 +4103,36 @@ function MapTab({ game, me }) {
                     )}
                 </div>
                 <aside className="map-sidebar">
-                    <div className="map-sidebar__tabs">
-                        {MAP_SIDEBAR_TABS.map((tab) => (
-                            <button
-                                key={tab.key}
-                                type="button"
-                                className={`map-sidebar__tab${sidebarTab === tab.key ? ' is-active' : ''}`}
-                                onClick={() => setSidebarTab(tab.key)}
-                            >
-                                {tab.label}
-                            </button>
-                        ))}
+                    <div className="map-sidebar__tabs" role="tablist" aria-label="Battle map sections">
+                        {MAP_SIDEBAR_TABS.map((tab, index) => {
+                            const tabId = `map-tab-${tab.key}`;
+                            const panelId = `map-tabpanel-${tab.key}`;
+                            const isSelected = sidebarTab === tab.key;
+                            return (
+                                <button
+                                    key={tab.key}
+                                    type="button"
+                                    id={tabId}
+                                    role="tab"
+                                    aria-selected={isSelected}
+                                    aria-controls={panelId}
+                                    tabIndex={isSelected ? 0 : -1}
+                                    className={`map-sidebar__tab${isSelected ? ' is-active' : ''}`}
+                                    onClick={() => setSidebarTab(tab.key)}
+                                    onKeyDown={(event) => handleSidebarTabKeyDown(event, index)}
+                                    title={tab.description}
+                                >
+                                    {tab.label}
+                                </button>
+                            );
+                        })}
                     </div>
-                    <div className="map-sidebar__content">
+                    <div
+                        className="map-sidebar__content"
+                        role="tabpanel"
+                        id={`map-tabpanel-${activeSidebarTab.key}`}
+                        aria-labelledby={`map-tab-${activeSidebarTab.key}`}
+                    >
                         {sidebarTab === 'tokens' && (
                             <div className="stack">
                                 <MapAccordionSection

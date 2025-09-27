@@ -79,6 +79,7 @@ const DEFAULT_BACKGROUND_OPACITY = 1;
 const DEFAULT_BACKGROUND_COLOR = '#0f172a';
 const MAP_SHAPE_TYPES = new Set(['rectangle', 'circle', 'line', 'diamond', 'triangle', 'cone', 'image']);
 const MIN_SHAPE_SIZE = 0.02;
+const DEFAULT_MAP_DRAWER = Object.freeze({ userId: null, assignedAt: null });
 const DEFAULT_DB_PATH = path.join(__dirname, 'data', 'db.json');
 let legacySeedPromise = null;
 
@@ -724,6 +725,7 @@ function captureMapSnapshot(game) {
         shapes: map.shapes.map((shape) => ({ ...shape })),
         background: { ...(map.background || defaultMapBackground()) },
         settings: { ...(map.settings || {}) },
+        drawer: { ...(map.drawer || DEFAULT_MAP_DRAWER) },
     };
 }
 
@@ -736,6 +738,7 @@ function normalizeMapSnapshot(snapshot, game) {
         shapes: map.shapes.map((shape) => ({ ...shape })),
         background: { ...(map.background || defaultMapBackground()) },
         settings: { ...(map.settings || {}) },
+        drawer: { ...(map.drawer || DEFAULT_MAP_DRAWER) },
     };
 }
 
@@ -811,6 +814,7 @@ function applyMapSnapshot(game, snapshot) {
         settings: { ...(normalized.settings || {}) },
         paused: current.paused,
         updatedAt: timestamp,
+        drawer: { ...(normalized.drawer || DEFAULT_MAP_DRAWER) },
     };
     return game.map;
 }
@@ -841,6 +845,9 @@ function normalizeMapStroke(entry, extras = {}) {
     const id = typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : uuid();
     const widthRaw = Number(entry.size);
     const size = Number.isFinite(widthRaw) ? Math.min(32, Math.max(1, widthRaw)) : 3;
+    const modeRaw = typeof entry.mode === 'string' ? entry.mode.trim().toLowerCase() : 'draw';
+    const allowedModes = new Set(['draw', 'erase']);
+    const mode = allowedModes.has(modeRaw) ? modeRaw : 'draw';
     const color = sanitizeColor(entry.color, DEFAULT_STROKE_COLOR);
     const points = [];
     const sourcePoints = Array.isArray(entry.points) ? entry.points : [];
@@ -853,7 +860,7 @@ function normalizeMapStroke(entry, extras = {}) {
     if (points.length < 2) return null;
     const createdAt = typeof entry.createdAt === 'string' ? entry.createdAt : new Date().toISOString();
     const createdBy = typeof entry.createdBy === 'string' ? entry.createdBy : extras.createdBy || null;
-    return { id, size, color, points, createdAt, createdBy };
+    return { id, size, color, points, createdAt, createdBy, mode };
 }
 
 function buildPlayerTooltip(player) {
@@ -936,6 +943,7 @@ function presentMapStroke(stroke) {
               .filter(Boolean)
         : [];
     if (points.length < 2) return null;
+    const mode = typeof stroke.mode === 'string' ? stroke.mode.trim().toLowerCase() : 'draw';
     return {
         id: stroke.id,
         size: Number(stroke.size) || 3,
@@ -943,6 +951,7 @@ function presentMapStroke(stroke) {
         points,
         createdAt: typeof stroke.createdAt === 'string' ? stroke.createdAt : null,
         createdBy: typeof stroke.createdBy === 'string' ? stroke.createdBy : null,
+        mode: mode === 'erase' ? 'erase' : 'draw',
     };
 }
 
@@ -1002,6 +1011,22 @@ function ensureMapState(game) {
         shapes = shapes.slice(-MAX_MAP_SHAPES);
     }
     const updatedAt = typeof raw.updatedAt === 'string' ? raw.updatedAt : new Date().toISOString();
+    const drawerRaw = raw.drawer && typeof raw.drawer === 'object' ? raw.drawer : {};
+    let drawerUserId = typeof drawerRaw.userId === 'string' ? drawerRaw.userId : null;
+    if (drawerUserId && drawerUserId !== game.dmId) {
+        const drawerPlayer = findPlayer(game, drawerUserId);
+        if (!drawerPlayer) {
+            drawerUserId = null;
+        }
+    }
+    if (!drawerUserId) {
+        drawerUserId = game.dmId || null;
+    }
+    let drawerAssignedAt = typeof drawerRaw.assignedAt === 'string' ? drawerRaw.assignedAt : null;
+    if (!drawerUserId || drawerUserId === game.dmId) {
+        drawerAssignedAt = null;
+    }
+
     const mapState = {
         strokes,
         tokens,
@@ -1013,6 +1038,10 @@ function ensureMapState(game) {
         paused: toBoolean(raw.paused, false),
         background: presentMapBackground(raw.background),
         updatedAt,
+        drawer: {
+            userId: drawerUserId || null,
+            assignedAt: drawerAssignedAt,
+        },
     };
     game.map = mapState;
     return mapState;
@@ -1039,6 +1068,11 @@ function presentMapState(map) {
     const shapes = Array.isArray(map.shapes)
         ? map.shapes.map((shape) => presentMapShape(shape)).filter(Boolean)
         : [];
+    const drawerRaw = map.drawer && typeof map.drawer === 'object' ? map.drawer : {};
+    const drawerUserId = typeof drawerRaw.userId === 'string' ? drawerRaw.userId : null;
+    const drawerAssignedAt =
+        typeof drawerRaw.assignedAt === 'string' && drawerUserId ? drawerRaw.assignedAt : null;
+
     return {
         strokes,
         tokens,
@@ -1050,16 +1084,27 @@ function presentMapState(map) {
         paused: toBoolean(map.paused, false),
         background: presentMapBackground(map.background),
         updatedAt: typeof map.updatedAt === 'string' ? map.updatedAt : null,
+        drawer: {
+            userId: drawerUserId || null,
+            assignedAt: drawerAssignedAt,
+        },
     };
 }
 
 function canDrawOnMap(game, userId) {
     if (!userId) return false;
-    if (isDM(game, userId)) return true;
-    if (!isMember(game, userId)) return false;
     const map = ensureMapState(game);
+    const activeDrawerId = map.drawer?.userId || game?.dmId || null;
+    if (!activeDrawerId || activeDrawerId !== userId) {
+        return false;
+    }
+    if (isDM(game, userId)) {
+        return true;
+    }
+    if (!isMember(game, userId)) return false;
     if (map.paused) return false;
-    return !!map.settings?.allowPlayerDrawing;
+    if (!map.settings?.allowPlayerDrawing) return false;
+    return true;
 }
 
 function canMoveMapToken(game, userId, token) {
@@ -4042,6 +4087,25 @@ app.put('/api/games/:id/map/settings', requireAuth, async (req, res) => {
             changed = true;
         }
     }
+    if (Object.prototype.hasOwnProperty.call(payload, 'drawerUserId')) {
+        const requested = typeof payload.drawerUserId === 'string' ? payload.drawerUserId.trim() : '';
+        let nextDrawerId = requested || game.dmId || null;
+        if (nextDrawerId && nextDrawerId !== game.dmId) {
+            const player = findPlayer(game, nextDrawerId);
+            if (!player) {
+                nextDrawerId = game.dmId || null;
+            }
+        }
+        const currentDrawerId = map.drawer?.userId || game.dmId || null;
+        if (currentDrawerId !== nextDrawerId) {
+            map.drawer = {
+                userId: nextDrawerId,
+                assignedAt:
+                    nextDrawerId && nextDrawerId !== game.dmId ? new Date().toISOString() : null,
+            };
+            changed = true;
+        }
+    }
 
     if (!changed) {
         return res.json(presentMapState(map));
@@ -4116,11 +4180,13 @@ app.delete('/api/games/:id/map/strokes/:strokeId', requireAuth, async (req, res)
     if (!game || !isMember(game, req.session.userId)) {
         return res.status(404).json({ error: 'not_found' });
     }
-    if (!isDM(game, req.session.userId)) {
-        return res.status(403).json({ error: 'forbidden' });
-    }
 
     const map = ensureMapState(game);
+    const activeDrawerId = map.drawer?.userId || game.dmId || null;
+    const isDmUser = isDM(game, req.session.userId);
+    if (!isDmUser && req.session.userId !== activeDrawerId) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
     const before = map.strokes.length;
     map.strokes = map.strokes.filter((stroke) => stroke && stroke.id !== strokeId);
     if (map.strokes.length === before) {
@@ -4332,6 +4398,7 @@ app.post('/api/games/:id/map/clear', requireAuth, async (req, res) => {
     map.shapes = [];
     map.background = defaultMapBackground();
     map.background.url = '';
+    map.drawer = { userId: game.dmId || null, assignedAt: null };
     map.updatedAt = new Date().toISOString();
 
     await persistGame(db, game, {

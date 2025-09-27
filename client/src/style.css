@@ -482,7 +482,7 @@ p  { margin: 0 0 .75rem; color: var(--text); }
 .map-toolbar__row {
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: flex-start;
     flex-wrap: wrap;
     gap: 12px;
 }
@@ -490,11 +490,42 @@ p  { margin: 0 0 .75rem; color: var(--text); }
 .map-toolbar__tools {
     display: grid;
     gap: 6px;
+    flex: 1 1 280px;
 }
 
 .map-toolbar__buttons {
     display: flex;
     gap: 8px;
+}
+
+.map-toolbar__utilities {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+}
+
+.map-toolbar__drawer {
+    display: grid;
+    gap: 6px;
+    min-width: 220px;
+    flex: 1 1 220px;
+}
+
+.map-toolbar__drawer select {
+    width: 100%;
+    min-height: 32px;
+}
+
+.map-toolbar__drawer-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.map-toolbar__drawer-name {
+    font-weight: 600;
 }
 
 .map-toolbar .btn.is-active {
@@ -952,6 +983,12 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     cursor: pointer;
     transition: background var(--trans-fast), border-color var(--trans-fast), color var(--trans-fast),
         box-shadow var(--trans-fast);
+}
+
+.map-sidebar__tab:focus-visible {
+    outline: none;
+    border-color: var(--brand);
+    box-shadow: var(--focus);
 }
 
 .map-sidebar__tab:hover {
