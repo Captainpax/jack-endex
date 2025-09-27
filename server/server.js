@@ -76,6 +76,7 @@ const DEFAULT_SHAPE_STROKE_WIDTH = 2;
 const DEFAULT_SHAPE_OPACITY = 0.6;
 const DEFAULT_BACKGROUND_SCALE = 1;
 const DEFAULT_BACKGROUND_OPACITY = 1;
+const DEFAULT_BACKGROUND_COLOR = '#0f172a';
 const MAP_SHAPE_TYPES = new Set(['rectangle', 'circle', 'line', 'diamond', 'triangle', 'cone', 'image']);
 const MIN_SHAPE_SIZE = 0.02;
 const DEFAULT_DB_PATH = path.join(__dirname, 'data', 'db.json');
@@ -463,6 +464,7 @@ function defaultMapBackground() {
         scale: DEFAULT_BACKGROUND_SCALE,
         rotation: 0,
         opacity: DEFAULT_BACKGROUND_OPACITY,
+        color: DEFAULT_BACKGROUND_COLOR,
     };
 }
 
@@ -481,7 +483,8 @@ function normalizeMapBackground(entry) {
     const rotation = normalizeRotation(entry.rotation);
     const opacityRaw = Number(entry.opacity);
     const opacity = Number.isFinite(opacityRaw) ? Math.min(1, Math.max(0.05, opacityRaw)) : defaults.opacity;
-    return { url, x, y, scale, rotation, opacity };
+    const color = sanitizeColor(entry.color, defaults.color);
+    return { url, x, y, scale, rotation, opacity, color };
 }
 
 function presentMapBackground(background) {
@@ -693,6 +696,13 @@ function applyBackgroundUpdate(map, payload) {
         const value = Number.isFinite(raw) ? Math.min(1, Math.max(0.05, raw)) : target.opacity;
         if (target.opacity !== value) {
             target.opacity = value;
+            changed = true;
+        }
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'color')) {
+        const value = sanitizeColor(payload.color, target.color || DEFAULT_BACKGROUND_COLOR);
+        if (target.color !== value) {
+            target.color = value;
             changed = true;
         }
     }

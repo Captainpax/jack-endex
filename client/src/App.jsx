@@ -1625,6 +1625,7 @@ const MAP_DEFAULT_BACKGROUND = Object.freeze({
     scale: 1,
     rotation: 0,
     opacity: 1,
+    color: '#0f172a',
 });
 const MAP_SHAPE_TYPES = ['rectangle', 'circle', 'line', 'diamond', 'triangle', 'cone', 'image'];
 const MAP_STANDARD_SHAPE_TYPES = MAP_SHAPE_TYPES.filter((type) => type !== 'image');
@@ -2110,7 +2111,8 @@ function normalizeClientMapBackground(background) {
     const rotationRaw = Number(background.rotation);
     const rotation = Number.isFinite(rotationRaw) ? ((rotationRaw % 360) + 360) % 360 : MAP_DEFAULT_BACKGROUND.rotation;
     const opacity = clamp(background.opacity, 0.05, 1, MAP_DEFAULT_BACKGROUND.opacity);
-    return { url, x, y, scale, rotation, opacity };
+    const color = isHexColor(background.color) ? background.color.trim().toLowerCase() : MAP_DEFAULT_BACKGROUND.color;
+    return { url, x, y, scale, rotation, opacity, color };
 }
 
 function normalizeMapLibraryEntry(entry) {
@@ -2376,7 +2378,9 @@ function MapTab({ game, me }) {
     const canPaint = canDraw && tool === 'draw';
     const isBackgroundTool = tool === 'background';
     const isShapeTool = tool === 'shape';
-    const tokenLayerPointerEvents = canPaint || isBackgroundTool || (isDM && isShapeTool) ? 'none' : 'auto';
+    const isBucketTool = tool === 'bucket';
+    const tokenLayerPointerEvents =
+        canPaint || isBackgroundTool || isBucketTool || (isDM && isShapeTool) ? 'none' : 'auto';
     const shapeLayerPointerEvents = isDM && isShapeTool ? 'auto' : 'none';
     const canvasPointerEvents = isBackgroundTool || isShapeTool ? 'none' : 'auto';
     const backgroundDisplay = useMemo(() => {
@@ -2386,6 +2390,10 @@ function MapTab({ game, me }) {
         }
         return base;
     }, [dragPreview, mapState.background]);
+    const boardStyle = useMemo(
+        () => ({ '--map-board-color': mapState.background?.color || MAP_DEFAULT_BACKGROUND.color }),
+        [mapState.background?.color]
+    );
 
     const playerMap = useMemo(() => {
         const map = new Map();
@@ -2573,6 +2581,7 @@ function MapTab({ game, me }) {
                 if (Math.abs(target.scale - base.scale) > 0.001) patch.scale = target.scale;
                 if (Math.abs(target.rotation - base.rotation) > 0.5) patch.rotation = target.rotation;
                 if (Math.abs(target.opacity - base.opacity) > 0.01) patch.opacity = target.opacity;
+                if ((target.color || '') !== (base.color || '')) patch.color = target.color;
                 if (Object.keys(patch).length === 0) return;
                 handleUpdateBackground(patch);
             }, 200);
@@ -2696,6 +2705,26 @@ function MapTab({ game, me }) {
 
     const handleCanvasPointerDown = useCallback(
         (event) => {
+            if (isBucketTool) {
+                if (!isDM) return;
+                event.preventDefault();
+                const normalized = isHexColor(brushColor)
+                    ? brushColor.trim().toLowerCase()
+                    : MAP_DEFAULT_BACKGROUND.color;
+                setMapState((prev) => {
+                    const previousBackground = prev.background || MAP_DEFAULT_BACKGROUND;
+                    return {
+                        ...prev,
+                        background: { ...previousBackground, color: normalized },
+                    };
+                });
+                setBackgroundDraft((prev) => ({
+                    ...(prev || MAP_DEFAULT_BACKGROUND),
+                    color: normalized,
+                }));
+                handleUpdateBackground({ color: normalized });
+                return;
+            }
             if (!canPaint) return;
             event.preventDefault();
             const { x, y } = getPointerPosition(event);
@@ -2715,7 +2744,7 @@ function MapTab({ game, me }) {
                 }
             }
         },
-        [brushColor, brushSize, canPaint, getPointerPosition]
+        [brushColor, brushSize, canPaint, getPointerPosition, handleUpdateBackground, isBucketTool, isDM]
     );
 
     const handleCanvasPointerMove = useCallback(
@@ -2737,6 +2766,7 @@ function MapTab({ game, me }) {
 
     const handleCanvasPointerFinish = useCallback(
         (event) => {
+            if (isBucketTool) return;
             if (canvasRef.current?.releasePointerCapture) {
                 try {
                     canvasRef.current.releasePointerCapture(event.pointerId);
@@ -2748,7 +2778,7 @@ function MapTab({ game, me }) {
                 completeStroke();
             }
         },
-        [completeStroke, draftStroke, isDrawing]
+        [completeStroke, draftStroke, isBucketTool, isDrawing]
     );
 
     useEffect(() => {
@@ -3330,6 +3360,15 @@ function MapTab({ game, me }) {
                             {isDM && (
                                 <button
                                     type="button"
+                                    className={`btn btn-small${tool === 'bucket' ? ' is-active' : ' secondary'}`}
+                                    onClick={() => setTool('bucket')}
+                                >
+                                    Bucket
+                                </button>
+                            )}
+                            {isDM && (
+                                <button
+                                    type="button"
                                     className={`btn btn-small${tool === 'background' ? ' is-active' : ' secondary'}`}
                                     onClick={() => setTool('background')}
                                 >
@@ -3467,7 +3506,7 @@ function MapTab({ game, me }) {
                 )}
             </div>
             <div className="map-layout">
-                <div className="map-board card" ref={boardRef}>
+                <div className="map-board card" ref={boardRef} style={boardStyle}>
                     <div
                         className="map-board__background"
                         style={{ pointerEvents: isDM && isBackgroundTool ? 'auto' : 'none' }}
