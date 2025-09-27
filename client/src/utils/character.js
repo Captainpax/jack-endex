@@ -5,11 +5,37 @@ import {
     normalizeCustomSkills,
 } from "../constants/gameData";
 
+/**
+ * @typedef {{ key: string, label: string }} WorldSkill
+ * @typedef {{ ranks?: number, misc?: number, label?: string, ability?: string }} RawSkillEntry
+ * @typedef {{ ranks: number, misc: number }} NormalizedSkill
+ * @typedef {{
+ *   name: string,
+ *   profile: Record<string, any>,
+ *   stats: Record<string, any>,
+ *   resources: { useTP: boolean, [key: string]: any },
+ *   skills: Record<string, NormalizedSkill>,
+ *   customSkills: Array<Record<string, any>>,
+ * }} NormalizedCharacter
+ */
+
+/**
+ * Clone any JSON-serializable value, preferring the native structured clone when available.
+ * @template T
+ * @param {T} value - Value to clone.
+ * @returns {T} A deep copy of the provided value.
+ */
 export function deepClone(value) {
     if (typeof structuredClone === "function") return structuredClone(value);
     return JSON.parse(JSON.stringify(value));
 }
 
+/**
+ * Normalize a skill record to include only ranks/misc values while ensuring defaults for world skills.
+ * @param {Record<string, RawSkillEntry>} raw - Incoming skills map.
+ * @param {WorldSkill[]} worldSkills - Reference list of world skills.
+ * @returns {Record<string, NormalizedSkill>} Sanitized skills keyed by skill id.
+ */
 export function normalizeSkills(raw, worldSkills = DEFAULT_WORLD_SKILLS) {
     const out = {};
     if (raw && typeof raw === "object" && !Array.isArray(raw)) {
@@ -27,6 +53,13 @@ export function normalizeSkills(raw, worldSkills = DEFAULT_WORLD_SKILLS) {
     return out;
 }
 
+/**
+ * Convert loosely-typed character payloads into the canonical structure expected by the app.
+ * Ensures nested objects exist, converts truthy values, and normalizes skill/custom skill collections.
+ * @param {any} raw - Arbitrary character data from the API or storage.
+ * @param {WorldSkill[]} worldSkills - World skill metadata used for defaults.
+ * @returns {NormalizedCharacter} Normalized character object.
+ */
 export function normalizeCharacter(raw, worldSkills = DEFAULT_WORLD_SKILLS) {
     if (!raw || typeof raw !== "object") {
         return {

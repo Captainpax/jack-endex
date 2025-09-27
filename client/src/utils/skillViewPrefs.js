@@ -1,9 +1,22 @@
+/**
+ * Canonical empty skill view preference payload.
+ * @type {{ favorites: readonly string[], hidden: readonly string[] }}
+ */
 export const EMPTY_SKILL_VIEW_PREFS = Object.freeze({ favorites: [], hidden: [] });
 
+/**
+ * Create a mutable clone of the default skill view preferences.
+ * @returns {{ favorites: string[], hidden: string[] }}
+ */
 export function createEmptySkillViewPrefs() {
     return { favorites: [], hidden: [] };
 }
 
+/**
+ * Normalize persisted skill view preferences into a deduplicated structure.
+ * @param {any} raw
+ * @returns {{ favorites: string[], hidden: string[] }}
+ */
 export function sanitizeSkillViewPrefs(raw) {
     if (!raw || typeof raw !== "object") {
         return createEmptySkillViewPrefs();
