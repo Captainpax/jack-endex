@@ -557,6 +557,11 @@ export const Games = {
     addCustomItem: (id, item) => api(`/api/games/${encodeURIComponent(id)}/items/custom`, { method: 'POST', body: { item } }),
     updateCustomItem: (id, itemId, item) => api(`/api/games/${encodeURIComponent(id)}/items/custom/${encodeURIComponent(itemId)}`, { method: 'PUT', body: { item } }),
     deleteCustomItem: (id, itemId) => api(`/api/games/${encodeURIComponent(id)}/items/custom/${encodeURIComponent(itemId)}`, { method: 'DELETE' }),
+    adjustPlayerMacca: (id, playerId, delta) =>
+        api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/macca`, {
+            method: 'POST',
+            body: { delta },
+        }),
     addPlayerItem: (id, playerId, item) => api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/items`, { method: 'POST', body: { item } }),
     updatePlayerItem: (id, playerId, itemId, item) => api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/items/${encodeURIComponent(itemId)}`, { method: 'PUT', body: { item } }),
     deletePlayerItem: (id, playerId, itemId) => api(`/api/games/${encodeURIComponent(id)}/players/${encodeURIComponent(playerId)}/items/${encodeURIComponent(itemId)}`, { method: 'DELETE' }),

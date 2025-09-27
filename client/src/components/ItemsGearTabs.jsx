@@ -543,8 +543,12 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems, 
     const [busyRow, setBusyRow] = useState(null);
     const [busyRowAction, setBusyRowAction] = useState(null);
     const [busyUse, setBusyUse] = useState(null);
+    const [maccaDraft, setMaccaDraft] = useState("");
+    const [maccaBusy, setMaccaBusy] = useState(false);
+    const [maccaNotice, setMaccaNotice] = useState(null);
 
     const inventory = Array.isArray(player.inventory) ? player.inventory : [];
+    const playerId = player?.userId || "";
     const available = Array.isArray(libraryItems) ? libraryItems : [];
     const libraryMap = useMemo(() => {
         if (libraryCatalog instanceof Map) {
@@ -560,7 +564,10 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems, 
 
     useEffect(() => {
         resetForm();
-    }, [player.userId, resetForm]);
+        setMaccaDraft("");
+        setMaccaBusy(false);
+        setMaccaNotice(null);
+    }, [playerId, resetForm]);
 
     const parseAmount = useCallback((value, fallback) => {
         if (value === undefined || value === null || value === "") return fallback;
@@ -672,14 +679,14 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems, 
         [canEdit, gameId, onUpdate, player.userId],
     );
 
-    const canUseItems = isDM || currentUserId === player.userId;
+    const canUseItems = isDM || (playerId && currentUserId === playerId);
 
     const handleUse = useCallback(
         async (item) => {
-            if (!canUseItems || !item?.id) return;
+            if (!canUseItems || !item?.id || !playerId) return;
             try {
                 setBusyUse(item.id);
-                const result = await Games.consumePlayerItem(gameId, player.userId, item.id);
+                const result = await Games.consumePlayerItem(gameId, playerId, item.id);
                 if (result?.applied) {
                     const { applied, remaining } = result;
                     const parts = [];
@@ -714,7 +721,51 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems, 
                 setBusyUse(null);
             }
         },
-        [canUseItems, gameId, onUpdate, player.userId],
+        [canUseItems, gameId, onUpdate, playerId],
+    );
+
+    const parseMaccaAmount = useCallback(() => {
+        if (maccaDraft === undefined || maccaDraft === null) return null;
+        const trimmed = String(maccaDraft).trim();
+        if (!trimmed) return null;
+        const num = Number(trimmed);
+        if (!Number.isFinite(num)) return null;
+        const amount = Math.abs(Math.round(num));
+        if (!Number.isFinite(amount) || amount <= 0) return null;
+        return amount;
+    }, [maccaDraft]);
+
+    const handleMaccaAdjust = useCallback(
+        async (mode) => {
+            if (!isDM || !playerId) return;
+            const amount = parseMaccaAmount();
+            if (!amount) {
+                setMaccaNotice({ type: "error", message: "Enter a positive amount" });
+                return;
+            }
+            const delta = mode === "add" ? amount : -amount;
+            try {
+                setMaccaBusy(true);
+                setMaccaNotice(null);
+                const result = await Games.adjustPlayerMacca(gameId, playerId, delta);
+                const total = result && typeof result.after === "number" ? result.after : null;
+                setMaccaDraft("");
+                if (total !== null) {
+                    setMaccaNotice({
+                        type: "success",
+                        message: `Total macca: ${Number(total).toLocaleString()}`,
+                    });
+                } else {
+                    setMaccaNotice({ type: "success", message: "Macca updated." });
+                }
+                await onUpdate?.();
+            } catch (e) {
+                setMaccaNotice({ type: "error", message: e.message || "Failed to adjust macca" });
+            } finally {
+                setMaccaBusy(false);
+            }
+        },
+        [gameId, isDM, onUpdate, parseMaccaAmount, playerId],
     );
 
     const playerLabel = player.character?.name || `Player ${player.userId?.slice?.(0, 6) || ""}`;
@@ -740,6 +791,64 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems, 
                     <span className="pill light">Macca {maccaLabel}</span>
                 </div>
             </div>
+
+            {isDM && (
+                <>
+                    <div
+                        className="row"
+                        style={{
+                            gap: 8,
+                            marginTop: 8,
+                            flexWrap: "wrap",
+                            alignItems: "flex-end",
+                        }}
+                    >
+                        <label className="field" style={{ flex: "1 1 160px", minWidth: 160 }}>
+                            <span className="field__label">Adjust macca</span>
+                            <input
+                                type="number"
+                                inputMode="numeric"
+                                min={0}
+                                step={1}
+                                placeholder="Amount"
+                                value={maccaDraft}
+                                onChange={(e) => {
+                                    setMaccaDraft(e.target.value);
+                                    if (maccaNotice?.type === "error") {
+                                        setMaccaNotice(null);
+                                    }
+                                }}
+                                disabled={maccaBusy}
+                                autoComplete="off"
+                            />
+                        </label>
+                        <button
+                            className="btn"
+                            onClick={() => handleMaccaAdjust("add")}
+                            disabled={!canEdit || maccaBusy}
+                        >
+                            {maccaBusy ? "…" : "Add"}
+                        </button>
+                        <button
+                            className="btn secondary"
+                            onClick={() => handleMaccaAdjust("remove")}
+                            disabled={!canEdit || maccaBusy}
+                        >
+                            {maccaBusy ? "…" : "Remove"}
+                        </button>
+                    </div>
+                    {maccaNotice && (
+                        <div
+                            className={`text-small${
+                                maccaNotice.type === "error" ? " text-error" : " text-muted"
+                            }`}
+                            style={{ marginTop: 4 }}
+                        >
+                            {maccaNotice.message}
+                        </div>
+                    )}
+                </>
+            )}
 
             {canEdit && (
                 <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
