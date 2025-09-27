@@ -1,5 +1,14 @@
 // --- FILE: client/src/App.jsx ---
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+    createContext,
+    useCallback,
+    useContext,
+    useEffect,
+    useId,
+    useMemo,
+    useRef,
+    useState,
+} from "react";
 import { ApiError, Auth, Games, Help, StoryLogs, onApiActivity } from "./api";
 
 import useRealtimeConnection from "./hooks/useRealtimeConnection";
@@ -5446,6 +5455,23 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     const disableInputs = !canEditSheet;
     const disableSave = saving || !canEditSheet;
 
+    const [collapsedSections, setCollapsedSections] = useState(() => ({
+        profile: false,
+        resources: false,
+        abilities: false,
+        worldSkills: false,
+    }));
+    const toggleSection = useCallback((key) => {
+        setCollapsedSections((prev) => ({
+            ...prev,
+            [key]: !prev?.[key],
+        }));
+    }, []);
+    const profileSectionId = useId();
+    const resourcesSectionId = useId();
+    const abilitySectionId = useId();
+    const worldSkillsSectionId = useId();
+
     const abilityInfo = useMemo(() => {
         const stats = ch?.stats || {};
         return ABILITY_DEFS.map((entry) => {
@@ -5867,221 +5893,291 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                         </div>
                     </div>
 
-                    <section className="sheet-section">
-                        <div className="section-header">
-                            <h4>Adventurer profile</h4>
-                            <p className="text-muted text-small">
-                                Capture the essentials, from alignment and arcana to class.
-                            </p>
-                        </div>
-                        <div className="sheet-grid">
-                            {textField("Character name", "name")}
-                            {textField("Player / handler", "profile.player", { placeholder: slot?.username || me.username })}
-                            {textField("Concept / class", "profile.class")}
-                            {selectField(
-                                "Arcana",
-                                "profile.arcana",
-                                ARCANA_DATA.map((opt) => ({ ...opt, value: opt.label }))
-                            )}
-                            {textField("Alignment", "profile.alignment")}
-                            {textField("Race / origin", "profile.race")}
-                            {textField("Age", "profile.age")}
-                            {textField("Gender", "profile.gender")}
-                            {textField("Height", "profile.height")}
-                            {textField("Weight", "profile.weight")}
-                            {textField("Eye colour", "profile.eye")}
-                            {textField("Hair", "profile.hair")}
-                        </div>
-                        <div className="sheet-grid sheet-grid--stretch">
-                            {textareaField("Background & hooks", "profile.background", { rows: 3 })}
-                            {textareaField("Notes", "profile.notes", { rows: 3 })}
-                        </div>
-                    </section>
-
-                    <section className="sheet-section">
-                        <div className="section-header">
-                            <h4>Progress & resources</h4>
-                            <p className="text-muted text-small">
-                                Base formulas assume modifiers: adjust manually if your table uses variants.
-                            </p>
-                        </div>
-                        <div className="sheet-grid sheet-grid--resources">
-                            <MathField
-                                label="Level"
-                                value={get(ch, "resources.level")}
-                                onCommit={(val) => set("resources.level", clampNonNegative(val))}
-                                className="math-inline"
-                                disabled={disableInputs}
-                            />
-                            <MathField
-                                label="EXP"
-                                value={get(ch, "resources.exp")}
-                                onCommit={(val) => set("resources.exp", clampNonNegative(val))}
-                                className="math-inline"
-                                disabled={disableInputs}
-                            />
-                            <MathField
-                                label="HP"
-                                value={hp}
-                                onCommit={(val) => set("resources.hp", clampNonNegative(val))}
-                                className="math-inline"
-                                disabled={disableInputs}
-                            />
-                            <MathField
-                                label="Max HP"
-                                value={maxHP}
-                                onCommit={(val) => set("resources.maxHP", clampNonNegative(val))}
-                                className="math-inline"
-                                disabled={disableInputs}
-                            />
-                            <label className="field">
-                                <span className="field__label">Resource type</span>
-                                <select
-                                    value={resourceMode}
-                                    onChange={(e) => set("resources.useTP", e.target.value === "TP")}
-                                    disabled={disableInputs}
-                                >
-                                    <option value="MP">MP</option>
-                                    <option value="TP">TP</option>
-                                </select>
-                            </label>
-                            {resourceMode === "TP" ? (
-                                <>
-                                    <MathField
-                                        label="TP"
-                                        value={tp}
-                                        onCommit={(val) => set("resources.tp", clampNonNegative(val))}
-                                        className="math-inline"
-                                        disabled={disableInputs}
-                                    />
-                                    <MathField
-                                        label="Max TP"
-                                        value={maxTP}
-                                        onCommit={(val) => set("resources.maxTP", clampNonNegative(val))}
-                                        className="math-inline"
-                                        disabled={disableInputs}
-                                    />
-                                </>
-                            ) : (
-                                <>
-                                    <MathField
-                                        label="MP"
-                                        value={mp}
-                                        onCommit={(val) => set("resources.mp", clampNonNegative(val))}
-                                        className="math-inline"
-                                        disabled={disableInputs}
-                                    />
-                                    <MathField
-                                        label="Max MP"
-                                        value={maxMP}
-                                        onCommit={(val) => set("resources.maxMP", clampNonNegative(val))}
-                                        className="math-inline"
-                                        disabled={disableInputs}
-                                    />
-                                </>
-                            )}
-                            <MathField
-                                label="SP (earned)"
-                                value={get(ch, "resources.sp")}
-                                onCommit={(val) => set("resources.sp", clampNonNegative(val))}
-                                className="math-inline"
-                                disabled={disableInputs}
-                            />
-                            <MathField
-                                label="Macca"
-                                value={get(ch, "resources.macca")}
-                                onCommit={(val) => set("resources.macca", clampNonNegative(val))}
-                                className="math-inline"
-                                disabled={disableInputs}
-                            />
-                            <MathField
-                                label="Initiative bonus"
-                                value={get(ch, "resources.initiative")}
-                                onCommit={(val) => set("resources.initiative", Number(val))}
-                                className="math-inline"
-                                disabled={disableInputs}
-                            />
-                        </div>
-                        <div className="sheet-hints">
-                            {resourceSuggestions.map((row) => {
-                                const mismatched =
-                                    row.actual !== undefined && Number(row.actual) !== row.value;
-                                return (
-                                    <div
-                                        key={row.key}
-                                        className={`sheet-hint${mismatched ? " warn" : ""}`}
-                                    >
-                                        <span className="sheet-hint__label">{row.label}</span>
-                                        <span className="sheet-hint__value">{row.value}</span>
-                                        <span className="sheet-hint__meta">{row.detail}</span>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                        <div className="save-grid">
-                            {saveRows.map((save) => (
-                                <div key={save.key} className="save-card">
-                                    <div className="save-card__header">
-                                        <span>{save.label}</span>
-                                        <span className="pill light">
-                                            {save.ability} mod {formatModifier(save.abilityMod)}
-                                        </span>
-                                    </div>
-                                    <MathField
-                                        label="Total save"
-                                        value={save.total}
-                                        onCommit={(val) => set(`resources.saves.${save.key}.total`, Number(val))}
-                                        className="math-inline"
-                                        disabled={disableInputs}
-                                    />
-                                    <p className="text-muted text-small">
-                                        Add class, gear, and situational bonuses here.
-                                    </p>
+                    <section
+                        className={`sheet-section${collapsedSections.profile ? " is-collapsed" : ""}`}
+                    >
+                        <button
+                            type="button"
+                            className="section-header"
+                            onClick={() => toggleSection("profile")}
+                            aria-expanded={!collapsedSections.profile}
+                            aria-controls={profileSectionId}
+                        >
+                            <div className="section-header__text">
+                                <h4>Adventurer profile</h4>
+                                <p className="text-muted text-small" style={{ margin: 0 }}>
+                                    Capture the essentials, from alignment and arcana to class.
+                                </p>
+                            </div>
+                            <span className="section-header__icon" aria-hidden="true">
+                                {collapsedSections.profile ? "▸" : "▾"}
+                            </span>
+                        </button>
+                        {!collapsedSections.profile && (
+                            <div className="section-body" id={profileSectionId}>
+                                <div className="sheet-grid">
+                                    {textField("Character name", "name")}
+                                    {textField("Player / handler", "profile.player", {
+                                        placeholder: slot?.username || me.username,
+                                    })}
+                                    {textField("Concept / class", "profile.class")}
+                                    {selectField(
+                                        "Arcana",
+                                        "profile.arcana",
+                                        ARCANA_DATA.map((opt) => ({ ...opt, value: opt.label }))
+                                    )}
+                                    {textField("Alignment", "profile.alignment")}
+                                    {textField("Race / origin", "profile.race")}
+                                    {textField("Age", "profile.age")}
+                                    {textField("Gender", "profile.gender")}
+                                    {textField("Height", "profile.height")}
+                                    {textField("Weight", "profile.weight")}
+                                    {textField("Eye colour", "profile.eye")}
+                                    {textField("Hair", "profile.hair")}
                                 </div>
-                            ))}
-                        </div>
+                                <div className="sheet-grid sheet-grid--stretch">
+                                    {textareaField("Background & hooks", "profile.background", { rows: 3 })}
+                                    {textareaField("Notes", "profile.notes", { rows: 3 })}
+                                </div>
+                            </div>
+                        )}
                     </section>
 
-                    <section className="sheet-section">
-                        <div className="section-header">
-                            <h4>Ability scores</h4>
-                            <p className="text-muted text-small">
-                                Every formula references these modifiers. Even numbers step the modifier.
-                            </p>
-                        </div>
-                        <div className="ability-grid">
-                            {abilityInfo.map((ability) => (
-                                <div key={ability.key} className="ability-card">
-                                    <div className="ability-card__heading">
-                                        <span className="ability-card__abbr">{ability.key}</span>
-                                        <span className="ability-card__title">{ability.label}</span>
-                                    </div>
+                    <section
+                        className={`sheet-section${collapsedSections.resources ? " is-collapsed" : ""}`}
+                    >
+                        <button
+                            type="button"
+                            className="section-header"
+                            onClick={() => toggleSection("resources")}
+                            aria-expanded={!collapsedSections.resources}
+                            aria-controls={resourcesSectionId}
+                        >
+                            <div className="section-header__text">
+                                <h4>Progress & resources</h4>
+                                <p className="text-muted text-small" style={{ margin: 0 }}>
+                                    Base formulas assume modifiers: adjust manually if your table uses variants.
+                                </p>
+                            </div>
+                            <span className="section-header__icon" aria-hidden="true">
+                                {collapsedSections.resources ? "▸" : "▾"}
+                            </span>
+                        </button>
+                        {!collapsedSections.resources && (
+                            <div className="section-body" id={resourcesSectionId}>
+                                <div className="sheet-grid sheet-grid--resources">
                                     <MathField
-                                        label="Score"
-                                        value={ability.score}
-                                        onCommit={(val) => set(`stats.${ability.key}`, Number(val))}
+                                        label="Level"
+                                        value={get(ch, "resources.level")}
+                                        onCommit={(val) => set("resources.level", clampNonNegative(val))}
+                                        className="math-inline"
                                         disabled={disableInputs}
                                     />
-                                    <div className="ability-card__mod">
-                                        <span>Modifier</span>
-                                        <span className="ability-card__mod-value">
-                                            {formatModifier(ability.modifier)}
-                                        </span>
-                                    </div>
-                                    <p className="ability-card__summary">{ability.summary}</p>
+                                    <MathField
+                                        label="EXP"
+                                        value={get(ch, "resources.exp")}
+                                        onCommit={(val) => set("resources.exp", clampNonNegative(val))}
+                                        className="math-inline"
+                                        disabled={disableInputs}
+                                    />
+                                    <MathField
+                                        label="HP"
+                                        value={hp}
+                                        onCommit={(val) => set("resources.hp", clampNonNegative(val))}
+                                        className="math-inline"
+                                        disabled={disableInputs}
+                                    />
+                                    <MathField
+                                        label="Max HP"
+                                        value={maxHP}
+                                        onCommit={(val) => set("resources.maxHP", clampNonNegative(val))}
+                                        className="math-inline"
+                                        disabled={disableInputs}
+                                    />
+                                    <label className="field">
+                                        <span className="field__label">Resource type</span>
+                                        <select
+                                            value={resourceMode}
+                                            onChange={(e) => set("resources.useTP", e.target.value === "TP")}
+                                            disabled={disableInputs}
+                                        >
+                                            <option value="MP">MP</option>
+                                            <option value="TP">TP</option>
+                                        </select>
+                                    </label>
+                                    {resourceMode === "TP" ? (
+                                        <>
+                                            <MathField
+                                                label="TP"
+                                                value={tp}
+                                                onCommit={(val) => set("resources.tp", clampNonNegative(val))}
+                                                className="math-inline"
+                                                disabled={disableInputs}
+                                            />
+                                            <MathField
+                                                label="Max TP"
+                                                value={maxTP}
+                                                onCommit={(val) => set("resources.maxTP", clampNonNegative(val))}
+                                                className="math-inline"
+                                                disabled={disableInputs}
+                                            />
+                                        </>
+                                    ) : (
+                                        <>
+                                            <MathField
+                                                label="MP"
+                                                value={mp}
+                                                onCommit={(val) => set("resources.mp", clampNonNegative(val))}
+                                                className="math-inline"
+                                                disabled={disableInputs}
+                                            />
+                                            <MathField
+                                                label="Max MP"
+                                                value={maxMP}
+                                                onCommit={(val) => set("resources.maxMP", clampNonNegative(val))}
+                                                className="math-inline"
+                                                disabled={disableInputs}
+                                            />
+                                        </>
+                                    )}
+                                    <MathField
+                                        label="SP (earned)"
+                                        value={get(ch, "resources.sp")}
+                                        onCommit={(val) => set("resources.sp", clampNonNegative(val))}
+                                        className="math-inline"
+                                        disabled={disableInputs}
+                                    />
+                                    <MathField
+                                        label="Macca"
+                                        value={get(ch, "resources.macca")}
+                                        onCommit={(val) => set("resources.macca", clampNonNegative(val))}
+                                        className="math-inline"
+                                        disabled={disableInputs}
+                                    />
+                                    <MathField
+                                        label="Initiative bonus"
+                                        value={get(ch, "resources.initiative")}
+                                        onCommit={(val) => set("resources.initiative", Number(val))}
+                                        className="math-inline"
+                                        disabled={disableInputs}
+                                    />
                                 </div>
-                            ))}
-                        </div>
+                                <div className="sheet-hints">
+                                    {resourceSuggestions.map((row) => {
+                                        const mismatched =
+                                            row.actual !== undefined && Number(row.actual) !== row.value;
+                                        return (
+                                            <div
+                                                key={row.key}
+                                                className={`sheet-hint${mismatched ? " warn" : ""}`}
+                                            >
+                                                <span className="sheet-hint__label">{row.label}</span>
+                                                <span className="sheet-hint__value">{row.value}</span>
+                                                <span className="sheet-hint__meta">{row.detail}</span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                <div className="save-grid">
+                                    {saveRows.map((save) => (
+                                        <div key={save.key} className="save-card">
+                                            <div className="save-card__header">
+                                                <span>{save.label}</span>
+                                                <span className="pill light">
+                                                    {save.ability} mod {formatModifier(save.abilityMod)}
+                                                </span>
+                                            </div>
+                                            <MathField
+                                                label="Total save"
+                                                value={save.total}
+                                                onCommit={(val) =>
+                                                    set(`resources.saves.${save.key}.total`, Number(val))
+                                                }
+                                                className="math-inline"
+                                                disabled={disableInputs}
+                                            />
+                                            <p className="text-muted text-small">
+                                                Add class, gear, and situational bonuses here.
+                                            </p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                     </section>
 
-                    <section className="sheet-section">
-                        <div className="section-header">
-                            <h4>World skills</h4>
-                            <p className="text-muted text-small">
-                                Spend SP immediately. Max rank at level {level} is {maxSkillRank}.
-                            </p>
-                        </div>
-                        <div className={`sp-summary${overSpent ? " warn" : ""}`}>
+                    <section
+                        className={`sheet-section${collapsedSections.abilities ? " is-collapsed" : ""}`}
+                    >
+                        <button
+                            type="button"
+                            className="section-header"
+                            onClick={() => toggleSection("abilities")}
+                            aria-expanded={!collapsedSections.abilities}
+                            aria-controls={abilitySectionId}
+                        >
+                            <div className="section-header__text">
+                                <h4>Ability scores</h4>
+                                <p className="text-muted text-small" style={{ margin: 0 }}>
+                                    Every formula references these modifiers. Even numbers step the modifier.
+                                </p>
+                            </div>
+                            <span className="section-header__icon" aria-hidden="true">
+                                {collapsedSections.abilities ? "▸" : "▾"}
+                            </span>
+                        </button>
+                        {!collapsedSections.abilities && (
+                            <div className="section-body" id={abilitySectionId}>
+                                <div className="ability-grid">
+                                    {abilityInfo.map((ability) => (
+                                        <div key={ability.key} className="ability-card">
+                                            <div className="ability-card__heading">
+                                                <span className="ability-card__abbr">{ability.key}</span>
+                                                <span className="ability-card__title">{ability.label}</span>
+                                            </div>
+                                            <MathField
+                                                label="Score"
+                                                value={ability.score}
+                                                onCommit={(val) => set(`stats.${ability.key}`, Number(val))}
+                                                disabled={disableInputs}
+                                            />
+                                            <div className="ability-card__mod">
+                                                <span>Modifier</span>
+                                                <span className="ability-card__mod-value">
+                                                    {formatModifier(ability.modifier)}
+                                                </span>
+                                            </div>
+                                            <p className="ability-card__summary">{ability.summary}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </section>
+
+                    <section
+                        className={`sheet-section${collapsedSections.worldSkills ? " is-collapsed" : ""}`}
+                    >
+                        <button
+                            type="button"
+                            className="section-header"
+                            onClick={() => toggleSection("worldSkills")}
+                            aria-expanded={!collapsedSections.worldSkills}
+                            aria-controls={worldSkillsSectionId}
+                        >
+                            <div className="section-header__text">
+                                <h4>World skills</h4>
+                                <p className="text-muted text-small" style={{ margin: 0 }}>
+                                    Spend SP immediately. Max rank at level {level} is {maxSkillRank}.
+                                </p>
+                            </div>
+                            <span className="section-header__icon" aria-hidden="true">
+                                {collapsedSections.worldSkills ? "▸" : "▾"}
+                            </span>
+                        </button>
+                        {!collapsedSections.worldSkills && (
+                            <div className="section-body" id={worldSkillsSectionId}>
+                                <div className={`sp-summary${overSpent ? " warn" : ""}`}>
                             <span>SP spent: {spentSP}</span>
                             <span>Suggested pool: {availableSP}</span>
                             <span>Max rank: {maxSkillRank}</span>
@@ -6284,6 +6380,8 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                                 </div>
                             )}
                         </div>
+                    </div>
+                        )}
                     </section>
 
                     <div className="sheet-footer">

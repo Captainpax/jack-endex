@@ -2966,6 +2966,7 @@ label {
 .sheet-header__actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .sheet-toolbar { display: flex; flex-wrap: wrap; gap: 12px; }
 .sheet-section { display: grid; gap: 16px; }
+.sheet-section.is-collapsed .section-body { display: none; }
 .sheet-spotlight {
     display: grid;
     gap: 16px;
@@ -2984,7 +2985,37 @@ label {
 .sheet-spotlight__stat-extra { font-size: 0.85rem; color: var(--muted); }
 .sheet-spotlight__stat-detail { font-size: 0.75rem; color: var(--muted); }
 .sheet-spotlight__notes { margin: 0; }
-.section-header { display: grid; gap: 4px; }
+.section-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    padding: 4px 0;
+    border: none;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.section-header:focus-visible {
+    outline: none;
+    box-shadow: var(--focus);
+    border-radius: var(--radius-sm);
+}
+.section-header:hover .section-header__icon {
+    color: var(--brand-600);
+}
+.section-header__text { display: grid; gap: 4px; }
+.section-header__icon {
+    font-size: 1.2rem;
+    line-height: 1;
+    color: var(--muted);
+    transition: transform var(--trans-fast), color var(--trans-fast);
+}
+.sheet-section.is-collapsed .section-header__icon { transform: rotate(-90deg); }
+.section-body { display: grid; gap: 16px; }
 .sheet-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
 .sheet-grid--stretch { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 .sheet-grid--resources { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
