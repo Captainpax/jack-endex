@@ -4066,21 +4066,37 @@ app.post('/api/games/:id/map/strokes', requireAuth, async (req, res) => {
     }
 
     const timestamp = new Date().toISOString();
-    stroke.createdAt = timestamp;
-    stroke.createdBy = stroke.createdBy || req.session.userId;
-    map.strokes.push(stroke);
-    if (map.strokes.length > MAX_MAP_STROKES) {
-        map.strokes = map.strokes.slice(-MAX_MAP_STROKES);
+    const storedStroke = {
+        ...stroke,
+        createdAt: timestamp,
+        createdBy: stroke.createdBy || req.session.userId,
+    };
+
+    const update = await Game.updateOne(
+        { id: game.id },
+        {
+            $push: {
+                'map.strokes': {
+                    $each: [storedStroke],
+                    $slice: -MAX_MAP_STROKES,
+                },
+            },
+            $set: { 'map.updatedAt': timestamp },
+        },
+    );
+
+    if (!update?.acknowledged || update.modifiedCount === 0) {
+        return res.status(500).json({ error: 'map_update_failed' });
     }
-    map.updatedAt = timestamp;
 
-    await persistGame(db, game, {
-        reason: 'map:stroke',
-        actorId: req.session.userId,
-        broadcast: !map.paused,
-    });
+    if (!map.paused) {
+        broadcastGameUpdate(game.id, {
+            reason: 'map:stroke',
+            actorId: req.session.userId,
+        });
+    }
 
-    res.status(201).json(presentMapStroke(stroke));
+    res.status(201).json(presentMapStroke(storedStroke));
 });
 
 app.delete('/api/games/:id/map/strokes/:strokeId', requireAuth, async (req, res) => {
