@@ -553,13 +553,25 @@ function DemonsAdminPanel() {
     const handleSave = async () => {
         if (!selectedDemon || !draft) return;
         const parsedLevel = Number(draft.level);
+        const previousStats = selectedDemon?.stats || {};
+        const previousMods = selectedDemon?.mods || {};
+
         const statsPayload = ABILITY_KEYS.reduce((acc, key) => {
             const raw = draft?.stats?.[key];
-            if (raw === undefined || raw === null || String(raw).trim() === "") {
+            const trimmed = raw === undefined || raw === null ? "" : String(raw).trim();
+            const prev = previousStats[key];
+            const hasPrev = prev !== undefined && prev !== null;
+            const prevNumber = hasPrev ? Number(prev) : null;
+
+            if (trimmed === "") {
+                if (hasPrev) {
+                    acc[key] = null;
+                }
                 return acc;
             }
-            const num = Number(raw);
-            if (Number.isFinite(num)) {
+
+            const num = Number(trimmed);
+            if (Number.isFinite(num) && (!hasPrev || num !== prevNumber)) {
                 acc[key] = num;
             }
             return acc;
@@ -567,11 +579,20 @@ function DemonsAdminPanel() {
 
         const modsPayload = ABILITY_KEYS.reduce((acc, key) => {
             const raw = draft?.mods?.[key];
-            if (raw === undefined || raw === null || String(raw).trim() === "") {
+            const trimmed = raw === undefined || raw === null ? "" : String(raw).trim();
+            const prev = previousMods[key];
+            const hasPrev = prev !== undefined && prev !== null;
+            const prevNumber = hasPrev ? Number(prev) : null;
+
+            if (trimmed === "") {
+                if (hasPrev) {
+                    acc[key] = null;
+                }
                 return acc;
             }
-            const num = Number(raw);
-            if (Number.isFinite(num)) {
+
+            const num = Number(trimmed);
+            if (Number.isFinite(num) && (!hasPrev || num !== prevNumber)) {
                 acc[key] = num;
             }
             return acc;

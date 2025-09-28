@@ -771,10 +771,16 @@ export function updateDemonEntry(entry, updates) {
         }
         if (key === 'stats' || key === 'mods') {
             const source = value && typeof value === 'object' ? value : {};
-            const template = next[key] && typeof next[key] === 'object' ? next[key] : {};
+            const template = next[key] && typeof next[key] === 'object' ? cloneDeep(next[key]) : {};
             const updated = { ...template };
             for (const statKey of ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']) {
-                const raw = Number(source[statKey]);
+                if (!Object.prototype.hasOwnProperty.call(source, statKey)) continue;
+                const rawValue = source[statKey];
+                if (rawValue === null || rawValue === undefined || rawValue === '') {
+                    delete updated[statKey];
+                    continue;
+                }
+                const raw = Number(rawValue);
                 if (Number.isFinite(raw)) {
                     updated[statKey] = raw;
                 }
