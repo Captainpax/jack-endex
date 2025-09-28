@@ -19,12 +19,21 @@ import User from './models/User.js';
 import Game from './models/Game.js';
 import Demon from './models/Demon.js';
 import Item from './models/Item.js';
+import ServerSetting from './models/ServerSetting.js';
 import { loadDemonEntries } from './lib/demonImport.js';
 import { loadItemEntries, parseHealingEffect } from './lib/itemImport.js';
 import { DEFAULT_WORLD_SKILLS } from '../shared/worldSkills.js';
 import { findCombatSkillById, findCombatSkillByName } from '../shared/combatSkills.js';
 import { MUSIC_TRACKS, getMusicTrack } from '../shared/music/index.js';
 import { FUSE_ARCANA_KEY_BY_LABEL, FUSE_ARCANA_ORDER } from '../shared/fusionArcana.js';
+import {
+    DEMONS_JSON_PATH,
+    applyCsvToDemons,
+    loadDemonsFile,
+    replaceDemonInList,
+    updateDemonEntry,
+    writeDemonsFile,
+} from './services/demonCsvImport.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -42,6 +51,26 @@ const pendingTrades = new Map();
 const storyBroadcastQueue = new Map();
 const FUSION_OVERRIDE_RANDOM = 'none';
 const DISCORD_API_BASE = 'https://discord.com/api/v10';
+const SERVER_ADMIN_USERNAMES = new Set(['captainpax', 'amzyoshio']);
+const MASTER_DISCORD_SETTINGS_KEY = 'masterDiscordBot';
+const DEFAULT_MASTER_BOT_SETTINGS = Object.freeze({
+    prefix: '!',
+    adminRoles: [],
+    channelBindings: {
+        announcements: '',
+        logs: '',
+        commands: '',
+    },
+    webhooks: {
+        gameStart: '',
+        alerts: '',
+    },
+    events: {
+        sendGameStartMessage: true,
+        autoSyncUsers: false,
+        notifyDemonUpdate: false,
+    },
+});
 const readiness = {
     db: false,
     discord: false,
@@ -1885,6 +1914,61 @@ function ensurePlayerShape(player) {
     }
     out.gear = ensureGearState(out);
     return out;
+}
+
+function createPlayerEntry(user, role = 'player') {
+    if (!user || typeof user !== 'object') return null;
+    const entry = {
+        userId: user.id,
+        username: user.username,
+        role,
+        character: null,
+        inventory: [],
+        gear: { bag: [], slots: { weapon: null, armor: null, accessory: null } },
+    };
+    return ensurePlayerShape(entry);
+}
+
+function assignGameDungeonMaster(game, userOrId, { users = [] } = {}) {
+    if (!game || typeof game !== 'object') return;
+    const targetId = typeof userOrId === 'string' ? userOrId : userOrId?.id;
+    const players = Array.isArray(game.players) ? [...game.players] : [];
+
+    if (!targetId) {
+        game.dmId = null;
+        game.players = players.map((player) => {
+            if (!player || typeof player !== 'object') return player;
+            if ((player.role || '').toLowerCase() === 'dm') {
+                return { ...player, role: 'player' };
+            }
+            return player;
+        });
+        return;
+    }
+
+    let dmEntry = players.find((player) => player && player.userId === targetId) || null;
+    if (!dmEntry) {
+        const user = Array.isArray(users) ? users.find((u) => u && u.id === targetId) : null;
+        const created = createPlayerEntry(user || { id: targetId, username: '' }, 'dm');
+        if (created) {
+            players.push(created);
+            dmEntry = created;
+        }
+    }
+
+    const updatedPlayers = players.map((player) => {
+        if (!player || typeof player !== 'object') return player;
+        if (player.userId === targetId) {
+            return { ...player, role: 'dm' };
+        }
+        if ((player.role || '').toLowerCase() === 'dm') {
+            return { ...player, role: 'player' };
+        }
+        return player;
+    });
+
+    game.dmId = targetId;
+    game.players = updatedPlayers;
 }
 
 function getGame(db, id) {
@@ -3826,6 +3910,7 @@ function ensureStoryConfig(game) {
     return normalized;
 }
 
+const EMAIL_REGEX = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const USERNAME_REGEX = /^[A-Za-z0-9_]{3,30}$/;
 const INVALID_GAME_NAME_CHARS = /[<>\n\r\t]/;
 const INVITE_CODE_REGEX = /^[A-Z0-9]{6}$/;
@@ -3843,6 +3928,14 @@ function readPassword(value) {
     const password = value;
     if (password.length < 8 || password.length > 128) return null;
     return password;
+}
+
+function readEmail(value) {
+    if (typeof value !== 'string') return null;
+    const email = value.trim().toLowerCase();
+    if (!email || email.length > 254) return null;
+    if (!EMAIL_REGEX.test(email)) return null;
+    return email;
 }
 
 function readGameName(value) {
@@ -3973,6 +4066,26 @@ async function ensureInitialDemonDocs() {
     }
 }
 
+async function syncDemonsToDatabase() {
+    const entries = await loadDemonEntries();
+    if (!Array.isArray(entries) || entries.length === 0) {
+        throw new Error('No demons found in data/demons.json');
+    }
+
+    const bulkOps = entries.map((entry) => ({
+        replaceOne: {
+            filter: { slug: entry.slug },
+            replacement: entry,
+            upsert: true,
+        },
+    }));
+
+    await Demon.bulkWrite(bulkOps, { ordered: false });
+    const keepSlugs = entries.map((entry) => entry.slug);
+    await Demon.deleteMany({ slug: { $nin: keepSlugs } });
+    return entries.length;
+}
+
 async function readDB() {
     const [users, games] = await Promise.all([
         User.find().lean(),
@@ -4025,6 +4138,120 @@ function hash(pw, salt) {
     return crypto.createHash('sha256').update(salt + pw).digest('hex');
 }
 
+function isServerAdminUser(user) {
+    if (!user || typeof user.username !== 'string') return false;
+    return SERVER_ADMIN_USERNAMES.has(user.username.toLowerCase());
+}
+
+function sanitizeUserRecord(user) {
+    if (!user || typeof user !== 'object') return user;
+    const { pass: _pass, ...rest } = user;
+    return rest;
+}
+
+async function getUserById(id) {
+    if (!id) return null;
+    return User.findOne({ id }).lean();
+}
+
+async function requireServerAdmin(req, res, next) {
+    if (!req.session?.userId) {
+        return res.status(401).json({ error: 'unauthenticated' });
+    }
+
+    const user = await getUserById(req.session.userId);
+    if (!user) {
+        return res.status(401).json({ error: 'unauthenticated' });
+    }
+    if (user.banned) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+    if (!isServerAdminUser(user)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    req.adminUser = sanitizeUserRecord(user);
+    return next();
+}
+
+function timestampLabel() {
+    const now = new Date();
+    const pad = (value) => String(value).padStart(2, '0');
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(
+        now.getMinutes(),
+    )}-${pad(now.getSeconds())}`;
+}
+
+async function backupDemonsFile() {
+    const raw = await fs.readFile(DEMONS_JSON_PATH, 'utf8');
+    const backupPath = `${DEMONS_JSON_PATH}.${timestampLabel()}.bak`;
+    await fs.writeFile(backupPath, raw, 'utf8');
+    return backupPath;
+}
+
+function normalizeStringList(list) {
+    if (!Array.isArray(list)) return [];
+    const seen = new Set();
+    const output = [];
+    for (const value of list) {
+        if (typeof value !== 'string') continue;
+        const trimmed = value.trim();
+        if (!trimmed) continue;
+        const lower = trimmed.toLowerCase();
+        if (seen.has(lower)) continue;
+        seen.add(lower);
+        output.push(trimmed);
+    }
+    return output;
+}
+
+function normalizeStringMap(raw, template) {
+    const base = { ...template };
+    if (!raw || typeof raw !== 'object') return base;
+    for (const key of Object.keys(base)) {
+        const value = raw[key];
+        base[key] = typeof value === 'string' ? value.trim() : base[key];
+    }
+    return base;
+}
+
+function normalizeEventToggles(raw, template) {
+    const base = { ...template };
+    if (!raw || typeof raw !== 'object') return base;
+    for (const key of Object.keys(base)) {
+        base[key] = !!raw[key];
+    }
+    return base;
+}
+
+function normalizeMasterBotSettings(raw) {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const prefix = typeof source.prefix === 'string' && source.prefix.trim()
+        ? source.prefix.trim()
+        : DEFAULT_MASTER_BOT_SETTINGS.prefix;
+    const adminRoles = normalizeStringList(source.adminRoles ?? DEFAULT_MASTER_BOT_SETTINGS.adminRoles);
+    const channelBindings = normalizeStringMap(source.channelBindings, DEFAULT_MASTER_BOT_SETTINGS.channelBindings);
+    const webhooks = normalizeStringMap(source.webhooks, DEFAULT_MASTER_BOT_SETTINGS.webhooks);
+    const events = normalizeEventToggles(source.events, DEFAULT_MASTER_BOT_SETTINGS.events);
+    return { prefix, adminRoles, channelBindings, webhooks, events };
+}
+
+async function getMasterBotSettings() {
+    const doc = await ServerSetting.findOne({ key: MASTER_DISCORD_SETTINGS_KEY }).lean();
+    if (!doc) return { ...DEFAULT_MASTER_BOT_SETTINGS };
+    return normalizeMasterBotSettings(doc.value);
+}
+
+async function saveMasterBotSettings(settings) {
+    const normalized = normalizeMasterBotSettings(settings);
+    await ServerSetting.findOneAndUpdate(
+        { key: MASTER_DISCORD_SETTINGS_KEY },
+        { value: normalized },
+        { upsert: true, setDefaultsOnInsert: true },
+    );
+    return normalized;
+}
+
 const app = express();
 
 const resolvedTrustProxy = (() => {
@@ -4056,7 +4283,7 @@ app.use(cors({
     credentials: true,
 }));
 
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 
 // if you ever run behind a proxy/https later
 // app.set('trust proxy', 1);
@@ -4137,27 +4364,56 @@ function requireAuth(req, res, next) {
 app.get('/api/auth/me', async (req, res) => {
     const db = await readDB();
     const user = db.users.find(u => u.id === req.session.userId);
-    res.json(user ? { id: user.id, username: user.username } : null);
+    if (!user) {
+        res.json(null);
+        return;
+    }
+    const sanitized = sanitizeUserRecord(user);
+    res.json({
+        id: sanitized.id,
+        username: sanitized.username,
+        email: sanitized.email || null,
+        banned: !!sanitized.banned,
+        isAdmin: isServerAdminUser(sanitized),
+    });
 });
 
 app.post('/api/auth/register', async (req, res) => {
     const username = readUsername(req.body?.username);
     const password = readPassword(req.body?.password);
-    if (!username || !password) return res.status(400).json({ error: 'invalid fields' });
+    const confirmPassword = readPassword(req.body?.confirmPassword);
+    const email = readEmail(req.body?.email);
+    if (!username || !password || !confirmPassword || !email) {
+        return res.status(400).json({ error: 'invalid_fields' });
+    }
+    if (password !== confirmPassword) {
+        return res.status(400).json({ error: 'password_mismatch' });
+    }
 
     const db = await readDB();
-    const exists = db.users.some((u) =>
-        typeof u?.username === 'string' && u.username.toLowerCase() === username.toLowerCase()
+    const exists = db.users.some(
+        (u) => typeof u?.username === 'string' && u.username.toLowerCase() === username.toLowerCase(),
     );
-    if (exists) return res.status(400).json({ error: 'user exists' });
+    if (exists) return res.status(409).json({ error: 'user_exists' });
+
+    const emailExists = db.users.some(
+        (u) => typeof u?.email === 'string' && u.email.toLowerCase() === email.toLowerCase(),
+    );
+    if (emailExists) return res.status(409).json({ error: 'email_exists' });
 
     const salt = crypto.randomBytes(8).toString('hex');
-    const user = { id: uuid(), username, pass: `${salt}$${hash(password, salt)}` };
+    const user = {
+        id: uuid(),
+        username,
+        email,
+        banned: false,
+        pass: `${salt}$${hash(password, salt)}`,
+    };
     db.users.push(user);
     await writeDB(db);
 
     req.session.userId = user.id;
-    res.json({ id: user.id, username: user.username });
+    res.json({ id: user.id, username: user.username, email: user.email, isAdmin: isServerAdminUser(user) });
 });
 
 app.post('/api/auth/login', async (req, res) => {
@@ -4171,17 +4427,280 @@ app.post('/api/auth/login', async (req, res) => {
     );
     if (!user) return res.status(400).json({ error: 'invalid credentials' });
 
+    if (user.banned) {
+        return res.status(403).json({ error: 'user_banned' });
+    }
+
     const [salt, stored] = user.pass.split('$');
     if (!salt || !stored || hash(password, salt) !== stored) {
         return res.status(400).json({ error: 'invalid credentials' });
     }
 
     req.session.userId = user.id;
-    res.json({ id: user.id, username: user.username });
+    res.json({
+        id: user.id,
+        username: user.username,
+        email: user.email || null,
+        isAdmin: isServerAdminUser(user),
+    });
 });
 
 app.post('/api/auth/logout', (req, res) => {
     req.session.destroy(() => res.json({ ok: true }));
+});
+
+// --- Admin ---
+app.get('/api/admin/users', requireServerAdmin, async (_req, res) => {
+    const db = await readDB();
+    res.json(db.users.map((user) => sanitizeUserRecord(user)));
+});
+
+app.patch('/api/admin/users/:id', requireServerAdmin, async (req, res) => {
+    const userId = parseUUID(req.params?.id);
+    if (!userId) return res.status(400).json({ error: 'invalid_user' });
+
+    const db = await readDB();
+    const target = db.users.find((u) => u && u.id === userId);
+    if (!target) return res.status(404).json({ error: 'not_found' });
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'username')) {
+        const nextUsername = readUsername(req.body.username);
+        if (!nextUsername) return res.status(400).json({ error: 'invalid_username' });
+        const exists = db.users.some(
+            (u) =>
+                u &&
+                u.id !== userId &&
+                typeof u.username === 'string' &&
+                u.username.toLowerCase() === nextUsername.toLowerCase(),
+        );
+        if (exists) return res.status(409).json({ error: 'user_exists' });
+        target.username = nextUsername;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'email')) {
+        const rawEmail = req.body.email;
+        if (rawEmail === null || rawEmail === '' || rawEmail === undefined) {
+            delete target.email;
+        } else {
+            const nextEmail = readEmail(rawEmail);
+            if (!nextEmail) return res.status(400).json({ error: 'invalid_email' });
+            const exists = db.users.some(
+                (u) =>
+                    u &&
+                    u.id !== userId &&
+                    typeof u.email === 'string' &&
+                    u.email.toLowerCase() === nextEmail.toLowerCase(),
+            );
+            if (exists) return res.status(409).json({ error: 'email_exists' });
+            target.email = nextEmail;
+        }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'banned')) {
+        target.banned = !!req.body.banned;
+    }
+
+    await writeDB(db);
+    res.json(sanitizeUserRecord(target));
+});
+
+app.delete('/api/admin/users/:id', requireServerAdmin, async (req, res) => {
+    const userId = parseUUID(req.params?.id);
+    if (!userId) return res.status(400).json({ error: 'invalid_user' });
+
+    const db = await readDB();
+    const beforeLength = db.users.length;
+    db.users = db.users.filter((u) => u && u.id !== userId);
+    if (db.users.length === beforeLength) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
+    const modifiedGames = [];
+    db.games = (db.games || []).map((game) => {
+        if (!game || !game.id) return game;
+        let changed = false;
+        const originalPlayers = Array.isArray(game.players) ? game.players : [];
+        const nextPlayers = originalPlayers.filter((player) => player && player.userId !== userId);
+        if (nextPlayers.length !== originalPlayers.length) {
+            game.players = nextPlayers;
+            changed = true;
+        }
+
+        if (game.dmId === userId) {
+            const fallback = nextPlayers.find((player) => player && player.userId);
+            if (fallback) {
+                assignGameDungeonMaster(game, fallback.userId, { users: db.users });
+            } else {
+                assignGameDungeonMaster(game, null, { users: db.users });
+            }
+            changed = true;
+        }
+
+        if (changed) modifiedGames.push(game.id);
+        return game;
+    });
+
+    await writeDB(db);
+    for (const gameId of modifiedGames) {
+        broadcastGameUpdate(gameId, { reason: 'admin:userDelete', actorId: req.session.userId });
+    }
+    res.json({ ok: true });
+});
+
+app.get('/api/admin/games', requireServerAdmin, async (_req, res) => {
+    const db = await readDB();
+    const userMap = new Map((db.users || []).map((user) => [user.id, user]));
+    const games = (db.games || []).map((game) => ({
+        id: game.id,
+        name: game.name,
+        dmId: game.dmId,
+        dmUsername: userMap.get(game.dmId)?.username || null,
+        updatedAt: game.updatedAt || null,
+        createdAt: game.createdAt || null,
+        players: Array.isArray(game.players)
+            ? game.players.map((player) => ({
+                  userId: player.userId,
+                  role: player.role,
+                  username:
+                      userMap.get(player.userId)?.username ||
+                      (typeof player.username === 'string' ? player.username : null),
+              }))
+            : [],
+    }));
+    res.json(games);
+});
+
+app.delete('/api/admin/games/:id', requireServerAdmin, async (req, res) => {
+    const gameId = parseUUID(req.params?.id);
+    if (!gameId) return res.status(400).json({ error: 'invalid_game' });
+
+    const db = await readDB();
+    const game = getGame(db, gameId);
+    if (!game) return res.status(404).json({ error: 'not_found' });
+
+    removeStoryWatcher(gameId);
+    db.games = (db.games || []).filter((g) => g && g.id !== gameId);
+    await writeDB(db);
+    broadcastGameDeleted(gameId);
+    res.json({ ok: true });
+});
+
+app.delete('/api/admin/games/:id/players/:playerId', requireServerAdmin, async (req, res) => {
+    const gameId = parseUUID(req.params?.id);
+    const playerId = parseUUID(req.params?.playerId);
+    if (!gameId || !playerId) return res.status(400).json({ error: 'invalid_request' });
+
+    const db = await readDB();
+    const game = getGame(db, gameId);
+    if (!game) return res.status(404).json({ error: 'not_found' });
+    if (game.dmId === playerId) {
+        return res.status(400).json({ error: 'cannot_remove_dm' });
+    }
+
+    const players = Array.isArray(game.players) ? game.players : [];
+    if (!players.some((player) => player && player.userId === playerId)) {
+        return res.status(404).json({ error: 'player_not_found' });
+    }
+
+    game.players = players.filter((player) => player && player.userId !== playerId);
+    await persistGame(db, game, { reason: 'admin:removePlayer', actorId: req.session.userId });
+    res.json({ ok: true, players: game.players });
+});
+
+app.patch('/api/admin/games/:id', requireServerAdmin, async (req, res) => {
+    const gameId = parseUUID(req.params?.id);
+    if (!gameId) return res.status(400).json({ error: 'invalid_game' });
+
+    const dmIdRaw = req.body?.dmId;
+    const dmId = typeof dmIdRaw === 'string' ? parseUUID(dmIdRaw) : null;
+    if (!dmId) return res.status(400).json({ error: 'invalid_dm' });
+
+    const db = await readDB();
+    const game = getGame(db, gameId);
+    if (!game) return res.status(404).json({ error: 'not_found' });
+
+    const targetUser = db.users.find((user) => user && user.id === dmId);
+    if (!targetUser) return res.status(404).json({ error: 'user_not_found' });
+
+    assignGameDungeonMaster(game, targetUser, { users: db.users });
+    await persistGame(db, game, { reason: 'admin:setDm', actorId: req.session.userId });
+    res.json({ ok: true, dmId: game.dmId });
+});
+
+app.get('/api/admin/demons', requireServerAdmin, async (_req, res) => {
+    const demons = await loadDemonsFile();
+    res.json(demons);
+});
+
+app.patch('/api/admin/demons/:id', requireServerAdmin, async (req, res) => {
+    const idNum = Number(req.params?.id);
+    if (!Number.isFinite(idNum)) return res.status(400).json({ error: 'invalid_demon' });
+
+    const demons = await loadDemonsFile();
+    const current = demons.find((entry) => Number(entry?.id) === idNum);
+    if (!current) return res.status(404).json({ error: 'not_found' });
+
+    const updatedEntry = updateDemonEntry(current, req.body || {});
+    const { demons: nextDemons, updated } = replaceDemonInList(demons, idNum, updatedEntry);
+    if (!updated) return res.status(404).json({ error: 'not_found' });
+
+    await backupDemonsFile();
+    await writeDemonsFile(nextDemons);
+    res.json(updated);
+});
+
+app.post('/api/admin/demons/upload', requireServerAdmin, async (req, res) => {
+    const csvContent = typeof req.body?.csv === 'string' ? req.body.csv : null;
+    if (!csvContent || !csvContent.trim()) {
+        return res.status(400).json({ error: 'invalid_csv' });
+    }
+
+    const demons = await loadDemonsFile();
+    const result = applyCsvToDemons({ csvContent, demons });
+    if (result.demonsUpdated === 0) {
+        return res.json({
+            ok: true,
+            wrote: false,
+            rowsProcessed: result.rowsProcessed,
+            demonsUpdated: 0,
+            changeLog: result.changeLog,
+            mode: result.mode,
+            warnings: result.warnings,
+        });
+    }
+
+    const backupPath = await backupDemonsFile();
+    await writeDemonsFile(result.demons);
+    res.json({
+        ok: true,
+        wrote: true,
+        backupPath,
+        rowsProcessed: result.rowsProcessed,
+        demonsUpdated: result.demonsUpdated,
+        changeLog: result.changeLog,
+        mode: result.mode,
+        warnings: result.warnings,
+    });
+});
+
+app.post('/api/admin/demons/sync', requireServerAdmin, async (_req, res) => {
+    try {
+        const count = await syncDemonsToDatabase();
+        res.json({ ok: true, count });
+    } catch (err) {
+        console.warn('[admin] Failed to sync demon codex', err);
+        res.status(500).json({ error: 'sync_failed' });
+    }
+});
+
+app.get('/api/admin/master-bot', requireServerAdmin, async (_req, res) => {
+    const settings = await getMasterBotSettings();
+    res.json(settings);
+});
+
+app.put('/api/admin/master-bot', requireServerAdmin, async (req, res) => {
+    const saved = await saveMasterBotSettings(req.body || {});
+    res.json(saved);
 });
 
 // --- Games ---
