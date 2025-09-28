@@ -3545,7 +3545,15 @@ label {
 .demon-editor__resist-field textarea { min-height: 72px; }
 .demon-editor__preview { display: grid; gap: 12px; }
 .demon-editor__preview-body { display: grid; gap: 12px; }
-.demon-editor__preview-image { width: 100%; border-radius: var(--radius); border: 1px solid var(--border); background: #0b0c10; object-fit: cover; max-height: 260px; }
+.demon-editor__preview-image {
+    width: 100%;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: #0b0c10;
+    object-fit: cover;
+    object-position: top center;
+    max-height: 260px;
+}
 .demon-editor__preview-meta { display: grid; gap: 8px; }
 .demon-editor__preview-stats { display: flex; flex-wrap: wrap; gap: 6px; }
 .demon-editor__preview-resists { display: grid; gap: 4px; }
