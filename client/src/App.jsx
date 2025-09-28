@@ -97,45 +97,86 @@ function safeAiString(value) {
     return "";
 }
 
+function normalizeAiGearItem(item) {
+    if (!item || typeof item !== "object") return null;
+    const name = safeAiString(item.name || item.label || item.title);
+    const notes = safeAiString(item.notes || item.description || item.desc);
+    const type = safeAiString(item.type || item.category);
+    if (!name && !notes && !type) return null;
+    return { name, notes, type };
+}
+
 function buildAiGearSummary(gear) {
     if (!gear || typeof gear !== "object") {
         return { equipped: {}, bag: [] };
     }
 
     const equipped = {};
-    if (gear.equipped && typeof gear.equipped === "object") {
-        for (const [slot, item] of Object.entries(gear.equipped)) {
+    const bagItems = [];
+    const bagMap = new Map();
+
+    if (Array.isArray(gear.bag)) {
+        for (const item of gear.bag) {
             if (!item || typeof item !== "object") continue;
-            const name = safeAiString(item.name || item.label || item.title);
-            const notes = safeAiString(item.notes || item.description);
-            const type = safeAiString(item.type || item.category);
-            if (!name && !notes && !type) continue;
-            equipped[slot] = { name, notes, type };
+            const normalized = normalizeAiGearItem(item);
+            if (!normalized) continue;
+            bagItems.push(normalized);
+            const id = typeof item.id === "string" && item.id ? item.id : null;
+            if (id && !bagMap.has(id)) {
+                bagMap.set(id, normalized);
+            }
         }
     }
 
-    const bag = Array.isArray(gear.bag)
-        ? gear.bag
-              .filter((item) => item && typeof item === "object")
-              .slice(0, 6)
-              .map((item) => ({
-                  name: safeAiString(item.name || item.label || item.title),
-                  notes: safeAiString(item.notes || item.description),
-                  type: safeAiString(item.type || item.category),
-              }))
-              .filter((entry) => entry.name || entry.notes || entry.type)
-        : [];
+    if (gear.equipped && typeof gear.equipped === "object") {
+        for (const [slot, item] of Object.entries(gear.equipped)) {
+            const normalized = normalizeAiGearItem(item);
+            if (!normalized) continue;
+            equipped[slot] = normalized;
+        }
+    }
+
+    if (gear.slots && typeof gear.slots === "object") {
+        for (const [slot, value] of Object.entries(gear.slots)) {
+            if (!value || typeof value !== "object") continue;
+            let source = null;
+            if (value.item && typeof value.item === "object") {
+                source = value.item;
+            } else if (value.itemId && bagMap.has(value.itemId)) {
+                source = bagMap.get(value.itemId);
+            } else {
+                source = value;
+            }
+            const normalized = normalizeAiGearItem(source);
+            if (!normalized) continue;
+            equipped[slot] = normalized;
+        }
+    } else if (!gear.equipped || typeof gear.equipped !== "object") {
+        for (const [slot, item] of Object.entries(gear)) {
+            const normalized = normalizeAiGearItem(item);
+            if (!normalized) continue;
+            equipped[slot] = normalized;
+        }
+    }
+
+    const bag = bagItems.slice(0, 6);
 
     return { equipped, bag };
 }
 
-function buildCharacterAiPayload(character) {
+function buildCharacterAiPayload(character, playerGear) {
     if (!character || typeof character !== "object") {
         return {};
     }
 
     const profile = character.profile && typeof character.profile === "object" ? character.profile : {};
     const resources = character.resources && typeof character.resources === "object" ? character.resources : {};
+    const gearSource =
+        playerGear && typeof playerGear === "object"
+            ? playerGear
+            : character.gear && typeof character.gear === "object"
+            ? character.gear
+            : {};
 
     return {
         name: safeAiString(character.name),
@@ -146,6 +187,9 @@ function buildCharacterAiPayload(character) {
             alignment: safeAiString(profile.alignment),
             arcana: safeAiString(profile.arcana),
             nationality: safeAiString(profile.nationality),
+            backgroundLocale: safeAiString(profile.backgroundLocale),
+            homeland: safeAiString(profile.homeland),
+            origin: safeAiString(profile.origin),
             age: safeAiString(profile.age),
             gender: safeAiString(profile.gender),
             height: safeAiString(profile.height),
@@ -165,8 +209,75 @@ function buildCharacterAiPayload(character) {
             tp: resources.tp ?? "",
             sp: resources.sp ?? "",
         },
-        gear: buildAiGearSummary(character.gear),
+        gear: buildAiGearSummary(gearSource),
     };
+}
+
+
+const GEAR_SLOT_LABEL_OVERRIDES = {
+    weapon: "Weapon",
+    armor: "Armor",
+    accessory: "Accessory",
+};
+
+function formatGearSlotLabel(key, index = 1) {
+    if (!key) return `Gear Slot ${index}`;
+    const normalizedKey = String(key).trim();
+    const lower = normalizedKey.toLowerCase();
+    if (GEAR_SLOT_LABEL_OVERRIDES[lower]) return GEAR_SLOT_LABEL_OVERRIDES[lower];
+    const cleaned = normalizedKey.replace(/[-_]+/g, " ").trim();
+    if (!cleaned) return `Gear Slot ${index}`;
+    return cleaned
+        .split(/\s+/)
+        .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : ""))
+        .join(" ");
+}
+
+function normalizeGearDisplayItem(item) {
+    if (!item || typeof item !== "object") return null;
+    const nameSource =
+        typeof item.name === "string"
+            ? item.name
+            : typeof item.label === "string"
+            ? item.label
+            : typeof item.title === "string"
+            ? item.title
+            : "";
+    const name = nameSource.trim();
+    const detailSource = [
+        item.desc,
+        item.description,
+        item.notes,
+        item.effect,
+        item.type,
+        item.category,
+    ];
+    let detail = "";
+    for (const candidate of detailSource) {
+        if (typeof candidate === "string") {
+            const trimmed = candidate.trim();
+            if (trimmed) {
+                detail = trimmed;
+                break;
+            }
+        }
+    }
+    if (!name && !detail) return null;
+    return {
+        name: name || "Unnamed gear",
+        detail,
+    };
+}
+
+function resolveGearSlotItem(slotValue, bagMap) {
+    if (!slotValue || typeof slotValue !== "object") return null;
+    if (slotValue.item && typeof slotValue.item === "object") {
+        return normalizeGearDisplayItem(slotValue.item);
+    }
+    if (slotValue.itemId && bagMap instanceof Map && bagMap.has(slotValue.itemId)) {
+        return normalizeGearDisplayItem(bagMap.get(slotValue.itemId));
+    }
+    return normalizeGearDisplayItem(slotValue);
 }
 
 
@@ -6956,6 +7067,10 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
         () => new Intl.Collator(undefined, { numeric: true, sensitivity: "base" }),
         [],
     );
+    const gearCollator = useMemo(
+        () => new Intl.Collator(undefined, { numeric: true, sensitivity: "base" }),
+        [],
+    );
 
     useEffect(() => {
         setCh(normalizeCharacter(slotCharacter, worldSkills));
@@ -7040,10 +7155,60 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     const noPlayers = isDM && selectablePlayers.length === 0;
     const canEditSheet = (isDM && hasSelection) || (!isDM && !!game.permissions?.canEditStats);
     const disableInputs = !canEditSheet;
-    const aiCharacterPayload = useMemo(() => buildCharacterAiPayload(ch), [ch]);
+    const aiCharacterPayload = useMemo(() => buildCharacterAiPayload(ch, slot?.gear), [ch, slot?.gear]);
     const backgroundText = get(ch, "profile.background") ?? "";
     const notesText = get(ch, "profile.notes") ?? "";
     const disableSave = saving || !canEditSheet;
+
+    const equippedGearList = useMemo(() => {
+        const entries = [];
+        const gear = slot?.gear && typeof slot.gear === "object" ? slot.gear : null;
+        if (gear) {
+            const bagArray = Array.isArray(gear.bag) ? gear.bag : [];
+            const bagMap = new Map();
+            for (const item of bagArray) {
+                if (!item || typeof item !== "object") continue;
+                const id = typeof item.id === "string" ? item.id : null;
+                if (id && !bagMap.has(id)) {
+                    bagMap.set(id, item);
+                }
+            }
+            const slots = gear.slots && typeof gear.slots === "object" ? gear.slots : {};
+            let index = 0;
+            for (const [slotKey, slotValue] of Object.entries(slots)) {
+                index += 1;
+                const normalized = resolveGearSlotItem(slotValue, bagMap);
+                if (!normalized) continue;
+                entries.push({
+                    key: `slot:${slotKey}`,
+                    label: formatGearSlotLabel(slotKey, index),
+                    name: normalized.name,
+                    detail: normalized.detail,
+                });
+            }
+        }
+
+        if (entries.length === 0) {
+            const legacy = ch?.gear && typeof ch.gear === "object" ? ch.gear : null;
+            if (legacy && legacy.equipped && typeof legacy.equipped === "object") {
+                let index = 0;
+                for (const [slotKey, item] of Object.entries(legacy.equipped)) {
+                    index += 1;
+                    const normalized = normalizeGearDisplayItem(item);
+                    if (!normalized) continue;
+                    entries.push({
+                        key: `legacy:${slotKey}`,
+                        label: formatGearSlotLabel(slotKey, index),
+                        name: normalized.name,
+                        detail: normalized.detail,
+                    });
+                }
+            }
+        }
+
+        entries.sort((a, b) => gearCollator.compare(a.label, b.label));
+        return entries;
+    }, [ch?.gear, gearCollator, slot?.gear]);
 
     const [collapsedSections, setCollapsedSections] = useState(() => ({
         profile: false,
@@ -7588,6 +7753,28 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                                     Base bonus before gear or situational tweaks
                                 </span>
                             </div>
+                        </div>
+                        <div className="sheet-spotlight__gear">
+                            <div className="sheet-spotlight__gear-header">
+                                <h4>Equipped gear</h4>
+                            </div>
+                            {equippedGearList.length > 0 ? (
+                                <ul className="sheet-spotlight__gear-list">
+                                    {equippedGearList.map((entry) => (
+                                        <li key={entry.key} className="sheet-spotlight__gear-item">
+                                            <span className="sheet-spotlight__gear-slot">{entry.label}:</span>
+                                            <span className="sheet-spotlight__gear-name">{entry.name}</span>
+                                            {entry.detail && (
+                                                <span className="sheet-spotlight__gear-detail"> — {entry.detail}</span>
+                                            )}
+                                        </li>
+                                    ))}
+                                </ul>
+                            ) : (
+                                <p className="text-muted text-small sheet-spotlight__gear-empty">
+                                    No gear equipped.
+                                </p>
+                            )}
                         </div>
                         <div className="sheet-spotlight__notes text-muted text-small">
                             Use the panels below to record everything else—gear, saves, and background notes. Suggested

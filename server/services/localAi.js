@@ -432,21 +432,55 @@ function summarizeCharacter(character) {
     return lines.join("\n");
 }
 
+function extractGearName(item) {
+    if (!item || typeof item !== "object") return "";
+    return safeString(item.name || item.label || item.title);
+}
+
 function summarizeEquipment(gear) {
     if (!gear || typeof gear !== "object") return "";
     const equipped = [];
-    const slots = gear.equipped && typeof gear.equipped === "object" ? gear.equipped : gear;
-    for (const value of Object.values(slots)) {
-        if (!value || typeof value !== "object") continue;
-        const name = safeString(value.name || value.label || value.title);
-        if (name) equipped.push(name);
+    const bagArray = Array.isArray(gear.bag) ? gear.bag : [];
+    const bagMap = new Map();
+    for (const entry of bagArray) {
+        if (!entry || typeof entry !== "object") continue;
+        const id = typeof entry.id === "string" ? entry.id : null;
+        if (id && !bagMap.has(id)) {
+            bagMap.set(id, entry);
+        }
     }
-    const extras = Array.isArray(gear.bag)
-        ? gear.bag
-              .map((entry) => safeString(entry?.name || entry?.label))
-              .filter(Boolean)
-              .slice(0, 4)
-        : [];
+
+    if (gear.equipped && typeof gear.equipped === "object") {
+        for (const value of Object.values(gear.equipped)) {
+            const name = extractGearName(value);
+            if (name) equipped.push(name);
+        }
+    }
+
+    const slotEntries = gear.slots && typeof gear.slots === "object" ? gear.slots : null;
+    if (slotEntries) {
+        for (const value of Object.values(slotEntries)) {
+            if (!value || typeof value !== "object") continue;
+            let item = null;
+            if (value.item && typeof value.item === "object") {
+                item = value.item;
+            } else if (value.itemId && bagMap.has(value.itemId)) {
+                item = bagMap.get(value.itemId);
+            }
+            const name = extractGearName(item || value);
+            if (name) equipped.push(name);
+        }
+    } else if (!gear.equipped || typeof gear.equipped !== "object") {
+        for (const value of Object.values(gear)) {
+            const name = extractGearName(value);
+            if (name) equipped.push(name);
+        }
+    }
+
+    const extras = bagArray
+        .map((entry) => extractGearName(entry))
+        .filter(Boolean)
+        .slice(0, 4);
     const unique = Array.from(new Set([...equipped, ...extras]));
     return unique.slice(0, 6).join(", ");
 }
@@ -458,8 +492,25 @@ function buildPortraitVariables(character, overrides = {}) {
     const race = safeString(profile.race) || "mysterious adventurer";
     const role = safeString(profile.class) || safeString(profile.concept) || "hero";
     const armor = overrides.armor || inferArmor(gear) || "signature battle attire";
-    const setting =
-        overrides.setting || safeString(profile.backgroundLocale || profile.nationality) || "dramatic fantasy scene";
+    const nationality = safeString(profile.nationality);
+    const locale = safeString(profile.backgroundLocale);
+    const historySummary = summarizeHistoryForPrompt(profile.background);
+    let setting = overrides.setting;
+    if (!setting) {
+        const base = locale || (nationality ? `${nationality} locale` : "dramatic fantasy scene");
+        const influences = [];
+        if (nationality) influences.push(`${nationality} heritage`);
+        if (historySummary) influences.push(`their history: ${historySummary}`);
+        if (influences.length > 0) {
+            const influenceText =
+                influences.length === 1
+                    ? `inspired by ${influences[0]}`
+                    : `inspired by ${influences.slice(0, -1).join(", ")} and ${influences[influences.length - 1]}`;
+            setting = `${base} ${influenceText}`.trim();
+        } else {
+            setting = base;
+        }
+    }
     const expression = overrides.expression || safeString(profile.expression) || "determined";
     const style = overrides.style || safeString(profile.style);
     const details = safeString(overrides.details) || gatherPortraitDetails(character, profile, gear);
@@ -490,6 +541,13 @@ function gatherPortraitDetails(character, profile, gear) {
         .filter(Boolean);
     if (identityBits.length > 0) {
         sentences.push(`Identity: ${identityBits.join(", ")}.`);
+    }
+
+    const origin = safeString(
+        profile.nationality || profile.homeland || profile.origin || profile.backgroundLocale,
+    );
+    if (origin) {
+        sentences.push(`Origin: ${origin}.`);
     }
 
     const appearanceTraits = [
@@ -537,21 +595,75 @@ function gatherPortraitDetails(character, profile, gear) {
     return sentences.slice(0, 4).join(" ");
 }
 
+function summarizeHistoryForPrompt(value) {
+    const text = safeString(value);
+    if (!text) return "";
+    const normalized = text.replace(/\s+/g, " ").trim();
+    if (!normalized) return "";
+    const sentenceMatch = normalized.match(/[^.!?]+[.!?]?/);
+    const sentence = sentenceMatch ? sentenceMatch[0].trim() : normalized;
+    const words = sentence.split(/\s+/);
+    if (words.length > 24) {
+        return `${words.slice(0, 24).join(" ")}…`;
+    }
+    return sentence;
+}
+
 function inferArmor(gear) {
     if (!gear || typeof gear !== "object") return "";
-    const slots = gear.equipped && typeof gear.equipped === "object" ? gear.equipped : {};
-    for (const key of ["armor", "body", "torso", "outfit", "clothing"]) {
-        const item = slots[key];
+    const preferred = ["armor", "body", "torso", "outfit", "clothing"];
+    const legacySlots = gear.equipped && typeof gear.equipped === "object" ? gear.equipped : {};
+    for (const key of preferred) {
+        const item = legacySlots[key];
         const name = safeString(item?.name || item?.label);
         if (name) return name;
     }
-    const bag = Array.isArray(gear.bag) ? gear.bag : [];
-    for (const entry of bag) {
+
+    const bagArray = Array.isArray(gear.bag) ? gear.bag : [];
+    const bagMap = new Map();
+    for (const entry of bagArray) {
+        if (!entry || typeof entry !== "object") continue;
+        const id = typeof entry.id === "string" ? entry.id : null;
+        if (id && !bagMap.has(id)) {
+            bagMap.set(id, entry);
+        }
+    }
+
+    const slotEntries = gear.slots && typeof gear.slots === "object" ? gear.slots : {};
+    for (const key of preferred) {
+        const value = slotEntries[key];
+        if (!value || typeof value !== "object") continue;
+        let item = null;
+        if (value.item && typeof value.item === "object") {
+            item = value.item;
+        } else if (value.itemId && bagMap.has(value.itemId)) {
+            item = bagMap.get(value.itemId);
+        }
+        const name = safeString(item?.name || item?.label);
+        if (name) return name;
+    }
+
+    for (const entry of bagArray) {
         const name = safeString(entry?.name || entry?.label);
         if (name) return name;
     }
     return "";
 }
+
+const promptEnhancerPrompt = ChatPromptTemplate.fromMessages([
+    [
+        "system",
+        "You are an expert prompt engineer for Stable Diffusion and similar image models. " +
+            "Rewrite the provided base prompt using the supplied character context so it becomes a vivid, " +
+            "cohesive prompt suited for high-quality fantasy portrait generation. Respond with a single refined " +
+            "prompt sentence no longer than 120 words and do not include any additional commentary or JSON.",
+    ],
+    [
+        "user",
+        "Base prompt:\n{basePrompt}\n\nCharacter context:\n{context}\n\n" +
+            "Incorporate the important gear, personality, and heritage cues. Keep the portrait framing implicit and do not mention camera settings unless they appear in the base prompt.",
+    ],
+]);
 
 const imageChain = RunnableSequence.from([
     new RunnableLambda({
@@ -562,7 +674,14 @@ const imageChain = RunnableSequence.from([
     new RunnableLambda({
         func: async ({ variables }) => ({
             variables,
-            prompt: await portraitTemplate.format(variables),
+            basePrompt: await portraitTemplate.format(variables),
+        }),
+    }),
+    new RunnableLambda({
+        func: async ({ basePrompt, variables }) => ({
+            variables,
+            basePrompt,
+            prompt: await enhanceStableDiffusionPrompt(basePrompt, variables),
         }),
     }),
     new RunnableLambda({
@@ -625,6 +744,48 @@ async function callImageEndpoint(prompt, style) {
         .map(({ url, error }) => `${url}: ${error?.message || String(error)}`)
         .join("; ");
     throw new Error(`Image generation failed after ${errors.length} attempt(s): ${detail || "unknown error"}`);
+}
+
+async function enhanceStableDiffusionPrompt(basePrompt, variables) {
+    const context = formatPromptEnhancerContext(variables);
+    const messages = await promptEnhancerPrompt.formatMessages({
+        basePrompt,
+        context,
+    });
+    const enhanced = await callChatEndpoint(messages);
+    return cleanEnhancedPrompt(enhanced, basePrompt);
+}
+
+function formatPromptEnhancerContext(variables) {
+    if (!variables || typeof variables !== "object") {
+        return "";
+    }
+    const lines = [];
+    for (const [key, value] of Object.entries(variables)) {
+        const text = safeString(value);
+        if (!text) continue;
+        const label = key
+            .replace(/([A-Z])/g, " $1")
+            .replace(/^./, (char) => char.toUpperCase())
+            .trim();
+        lines.push(`${label}: ${text}`);
+    }
+    return lines.join("\n");
+}
+
+function cleanEnhancedPrompt(response, fallback) {
+    const text = safeString(response);
+    if (!text) return fallback;
+    let normalized = text.replace(/^```(?:text)?/i, "").replace(/```$/i, "").trim();
+    if (!normalized) return fallback;
+    normalized = normalized
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join(" ");
+    normalized = normalized.replace(/^Improved prompt[:-]?\s*/i, "");
+    normalized = normalized.replace(/^Final prompt[:-]?\s*/i, "");
+    return normalized.trim() || fallback;
 }
 
 function buildImagePayload({ apiStyle, prompt, negativePrompt, backend }) {
