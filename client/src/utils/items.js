@@ -55,3 +55,30 @@ export function formatHealingEffect(healing) {
 
     return parts.join(" · ");
 }
+
+export function formatTriggerEffect(effect) {
+    if (!effect || typeof effect !== "object") return "";
+    const parts = [];
+    if (effect.kind) parts.push(effect.kind);
+    if (effect.trigger) parts.push(`Trigger: ${effect.trigger}`);
+    if (typeof effect.interval === "number" && effect.interval > 0) {
+        parts.push(`Interval: ${effect.interval}`);
+    }
+    if (typeof effect.duration === "number" && effect.duration > 0) {
+        parts.push(`Duration: ${effect.duration}`);
+    }
+    if (effect.value) parts.push(effect.value);
+    if (effect.notes) parts.push(effect.notes);
+    return parts.join(" · ");
+}
+
+export function isConsumableType(type) {
+    if (typeof type !== "string") return false;
+    const normalized = type.toLowerCase();
+    return (
+        normalized.includes("consumable") ||
+        normalized.includes("restorative") ||
+        normalized.includes("potion") ||
+        normalized.includes("tonic")
+    );
+}
