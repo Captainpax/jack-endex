@@ -22,7 +22,13 @@ import Demon from './models/Demon.js';
 import Item from './models/Item.js';
 import ServerSetting from './models/ServerSetting.js';
 import { loadDemonEntries } from './lib/demonImport.js';
-import { loadItemEntries, parseHealingEffect } from './lib/itemImport.js';
+import {
+    loadItemEntries,
+    parseHealingEffect,
+    replaceItemInList,
+    updateItemEntry,
+    writeItemEntries,
+} from './lib/itemImport.js';
 import { DEFAULT_WORLD_SKILLS } from '../shared/worldSkills.js';
 import { findCombatSkillById, findCombatSkillByName } from '../shared/combatSkills.js';
 import { MUSIC_TRACKS, getMusicTrack } from '../shared/music/index.js';
@@ -4190,6 +4196,13 @@ async function backupDemonsFile() {
     return backupPath;
 }
 
+async function backupItemsFile() {
+    const raw = await fs.readFile(ITEMS_PATH, 'utf8');
+    const backupPath = `${ITEMS_PATH}.${timestampLabel()}.bak`;
+    await fs.writeFile(backupPath, raw, 'utf8');
+    return backupPath;
+}
+
 function normalizeStringList(list) {
     if (!Array.isArray(list)) return [];
     const seen = new Set();
@@ -4730,6 +4743,49 @@ app.post('/api/admin/demons/sync', requireServerAdmin, async (_req, res) => {
         res.json({ ok: true, count });
     } catch (err) {
         console.warn('[admin] Failed to sync demon codex', err);
+        res.status(500).json({ error: 'sync_failed' });
+    }
+});
+
+app.get('/api/admin/items', requireServerAdmin, async (_req, res) => {
+    try {
+        const items = await loadItemEntries({ file: ITEMS_PATH });
+        res.json(items);
+    } catch (err) {
+        console.warn('[admin] Failed to load default items', err);
+        res.status(500).json({ error: 'failed_to_load_items' });
+    }
+});
+
+app.patch('/api/admin/items/:slug', requireServerAdmin, async (req, res) => {
+    const slug = typeof req.params?.slug === 'string' ? req.params.slug : '';
+    if (!slug) return res.status(400).json({ error: 'invalid_item' });
+
+    try {
+        const items = await loadItemEntries({ file: ITEMS_PATH });
+        const current = items.find((entry) => entry?.slug === slug);
+        if (!current) return res.status(404).json({ error: 'not_found' });
+
+        const updatedEntry = updateItemEntry(current, req.body || {});
+        const { items: nextItems, updated } = replaceItemInList(items, slug, updatedEntry);
+        if (!updated) return res.status(404).json({ error: 'not_found' });
+
+        await backupItemsFile();
+        const saved = await writeItemEntries(nextItems, { file: ITEMS_PATH });
+        const fresh = saved.find((entry) => entry?.slug === updated.slug) || updated;
+        res.json(fresh);
+    } catch (err) {
+        console.warn('[admin] Failed to update default item', err);
+        res.status(500).json({ error: 'update_failed' });
+    }
+});
+
+app.post('/api/admin/items/sync', requireServerAdmin, async (_req, res) => {
+    try {
+        const count = await ensureInitialItemDocs();
+        res.json({ ok: true, count });
+    } catch (err) {
+        console.warn('[admin] Failed to sync item library', err);
         res.status(500).json({ error: 'sync_failed' });
     }
 });

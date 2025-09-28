@@ -766,6 +766,12 @@ export const ServerAdmin = {
             }),
         sync: () => api('/api/admin/demons/sync', { method: 'POST' }),
     },
+    items: {
+        list: () => api('/api/admin/items'),
+        update: (slug, payload) =>
+            api(`/api/admin/items/${encodeURIComponent(slug)}`, { method: 'PATCH', body: payload }),
+        sync: () => api('/api/admin/items/sync', { method: 'POST' }),
+    },
     masterBot: {
         get: () => api('/api/admin/master-bot', { cache: 2000 }),
         update: (settings) => api('/api/admin/master-bot', { method: 'PUT', body: settings }),

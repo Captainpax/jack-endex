@@ -9,6 +9,7 @@ const MAX_DEMON_IMAGE_BYTES = 2 * 1024 * 1024;
 const SUBTABS = [
     { key: "users", label: "Users" },
     { key: "games", label: "Games" },
+    { key: "items", label: "Default Items" },
     { key: "demons", label: "Default Demons" },
     { key: "bot", label: "Master Discord Bot" },
 ];
@@ -18,6 +19,65 @@ function formatError(err) {
     if (typeof err === "string") return err;
     if (err instanceof Error) return err.message;
     return err?.message || "Unexpected error";
+}
+
+function sortItems(list) {
+    return [...(Array.isArray(list) ? list : [])].sort((a, b) => {
+        const orderA = Number.isFinite(a?.order) ? a.order : Number.MAX_SAFE_INTEGER;
+        const orderB = Number.isFinite(b?.order) ? b.order : Number.MAX_SAFE_INTEGER;
+        if (orderA !== orderB) return orderA - orderB;
+        return (a?.name || "").localeCompare(b?.name || "");
+    });
+}
+
+function createItemDraft(item) {
+    if (!item || typeof item !== "object") {
+        return {
+            slug: "",
+            name: "",
+            type: "",
+            category: "",
+            subcategory: "",
+            slot: "",
+            tags: "",
+            desc: "",
+            order: "",
+        };
+    }
+    return {
+        slug: item.slug || "",
+        name: item.name || "",
+        type: item.type || "",
+        category: item.category || "",
+        subcategory: item.subcategory || "",
+        slot: item.slot || "",
+        tags: Array.isArray(item.tags) ? item.tags.join(", ") : "",
+        desc: item.desc || "",
+        order: item.order ?? "",
+    };
+}
+
+function parseTagsInput(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) {
+        return value
+            .map((tag) => (typeof tag === "string" ? tag.trim() : ""))
+            .filter(Boolean);
+    }
+    return String(value)
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean);
+}
+
+function formatTagsForCompare(value) {
+    return parseTagsInput(value).join("||");
+}
+
+function parseOrderValue(value) {
+    if (value === "" || value === null || value === undefined) return null;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
 }
 
 function UsersAdminPanel({ onChanged }) {
@@ -405,6 +465,293 @@ function createDemonDraft(demon) {
             reflect: Array.isArray(resist.reflect) ? resist.reflect.join(", ") : "",
         },
     };
+}
+
+function ItemsAdminPanel() {
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState("");
+    const [items, setItems] = useState([]);
+    const [search, setSearch] = useState("");
+    const [selectedSlug, setSelectedSlug] = useState(null);
+    const [draft, setDraft] = useState(createItemDraft(null));
+    const [saving, setSaving] = useState(false);
+    const [saveNotice, setSaveNotice] = useState("");
+    const [syncState, setSyncState] = useState({ status: "idle", message: "" });
+
+    const load = useCallback(async () => {
+        setLoading(true);
+        setError("");
+        try {
+            const list = await ServerAdmin.items.list();
+            setItems(sortItems(Array.isArray(list) ? list : []));
+        } catch (err) {
+            setError(formatError(err));
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        load();
+    }, [load]);
+
+    useEffect(() => {
+        if (items.length === 0) {
+            setSelectedSlug(null);
+            return;
+        }
+        if (!selectedSlug || !items.some((item) => item?.slug === selectedSlug)) {
+            setSelectedSlug(items[0]?.slug || null);
+        }
+    }, [items, selectedSlug]);
+
+    useEffect(() => {
+        const selected = items.find((item) => item.slug === selectedSlug) || null;
+        setDraft(createItemDraft(selected));
+        setSaveNotice("");
+    }, [items, selectedSlug]);
+
+    const filteredItems = useMemo(() => {
+        if (!search) return items;
+        const term = search.toLowerCase();
+        return items.filter((item) => {
+            const tags = Array.isArray(item.tags) ? item.tags.join(" ") : "";
+            return (
+                (item.name || "").toLowerCase().includes(term) ||
+                (item.type || "").toLowerCase().includes(term) ||
+                (item.category || "").toLowerCase().includes(term) ||
+                (item.subcategory || "").toLowerCase().includes(term) ||
+                tags.toLowerCase().includes(term)
+            );
+        });
+    }, [items, search]);
+
+    const selectedItem = useMemo(
+        () => items.find((item) => item.slug === selectedSlug) || null,
+        [items, selectedSlug],
+    );
+
+    const dirty = useMemo(() => {
+        if (!selectedItem) return false;
+        const compare = (a, b) => (a || "").trim() === (b || "").trim();
+        if (!compare(draft.name, selectedItem.name)) return true;
+        if (!compare(draft.type, selectedItem.type)) return true;
+        if (!compare(draft.category, selectedItem.category)) return true;
+        if (!compare(draft.subcategory, selectedItem.subcategory)) return true;
+        if (!compare(draft.slot, selectedItem.slot)) return true;
+        if (!compare(draft.desc, selectedItem.desc)) return true;
+        if (formatTagsForCompare(draft.tags) !== formatTagsForCompare(selectedItem.tags)) return true;
+        if (parseOrderValue(draft.order) !== parseOrderValue(selectedItem.order)) return true;
+        return false;
+    }, [draft, selectedItem]);
+
+    const handleDraftChange = (field, value) => {
+        setDraft((prev) => ({
+            ...prev,
+            [field]: value,
+        }));
+    };
+
+    const handleSave = async () => {
+        if (!selectedItem) return;
+        setSaving(true);
+        setSaveNotice("");
+        try {
+            const payload = {
+                name: (draft.name || "").trim(),
+                type: (draft.type || "").trim(),
+                category: (draft.category || "").trim(),
+                subcategory: (draft.subcategory || "").trim(),
+                slot: (draft.slot || "").trim(),
+                desc: draft.desc || "",
+                tags: parseTagsInput(draft.tags || ""),
+            };
+            const orderValue = parseOrderValue(draft.order);
+            if (orderValue !== null) {
+                payload.order = orderValue;
+            }
+            const updated = await ServerAdmin.items.update(selectedItem.slug, payload);
+            setItems((prev) =>
+                sortItems(prev.map((item) => (item.slug === selectedItem.slug ? updated : item))),
+            );
+            setSelectedSlug(updated.slug);
+            setDraft(createItemDraft(updated));
+            setSaveNotice("Saved changes.");
+        } catch (err) {
+            alert(formatError(err));
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleReset = () => {
+        setDraft(createItemDraft(selectedItem));
+        setSaveNotice("");
+    };
+
+    const syncPending = syncState.status === "pending";
+
+    const handleSync = async () => {
+        setSyncState({ status: "pending", message: "" });
+        try {
+            const result = await ServerAdmin.items.sync();
+            const count = Number(result?.count);
+            setSyncState({
+                status: "success",
+                message:
+                    Number.isFinite(count) && count >= 0
+                        ? `Synced ${count} items into the library.`
+                        : "Sync completed.",
+            });
+        } catch (err) {
+            setSyncState({ status: "error", message: formatError(err) });
+        }
+    };
+
+    return (
+        <div className="col" style={{ gap: 16 }}>
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                <h2 style={{ margin: 0 }}>Default Items</h2>
+                <div className="row" style={{ gap: 8 }}>
+                    <button type="button" className="btn ghost" onClick={handleSync} disabled={syncPending}>
+                        {syncPending ? "Syncing…" : "Sync Library"}
+                    </button>
+                    <button type="button" className="btn ghost" onClick={load} disabled={loading}>
+                        {loading ? "Loading…" : "Refresh"}
+                    </button>
+                </div>
+            </div>
+            {error && <div className="alert warn">{error}</div>}
+            {syncState.status === "success" && (
+                <div className="alert success">{syncState.message || "Sync completed."}</div>
+            )}
+            {syncState.status === "error" && <div className="alert warn">{syncState.message}</div>}
+            <div className="row" style={{ gap: 12 }}>
+                <input
+                    placeholder="Search items"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                />
+            </div>
+            <div className="row" style={{ gap: 16 }}>
+                <div style={{ flex: "0 0 260px", maxHeight: 360, overflow: "auto" }}>
+                    {loading && items.length === 0 ? (
+                        <div className="text-muted">Loading items…</div>
+                    ) : filteredItems.length === 0 ? (
+                        <div className="text-muted">No items match your search.</div>
+                    ) : (
+                        <ul className="col" style={{ listStyle: "none", margin: 0, padding: 0, gap: 4 }}>
+                            {filteredItems.map((item) => (
+                                <li key={item.slug}>
+                                    <button
+                                        type="button"
+                                        className={`btn ghost btn-small${selectedSlug === item.slug ? " is-active" : ""}`}
+                                        onClick={() => setSelectedSlug(item.slug)}
+                                    >
+                                        {item.name} <span className="text-muted">({item.type || item.category || "Item"})</span>
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+                <div style={{ flex: 1 }}>
+                    {!selectedItem ? (
+                        <div className="text-muted">Select an item to edit.</div>
+                    ) : (
+                        <div className="col" style={{ gap: 12 }}>
+                            <div className="row" style={{ alignItems: "baseline", gap: 12 }}>
+                                <h3 style={{ margin: 0 }}>{selectedItem.name}</h3>
+                                <span className="text-muted text-small">Slug: {selectedItem.slug}</span>
+                            </div>
+                            <div
+                                className="grid"
+                                style={{ gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}
+                            >
+                                <label className="col">
+                                    <span className="text-muted text-small">Name</span>
+                                    <input
+                                        value={draft.name}
+                                        onChange={(e) => handleDraftChange("name", e.target.value)}
+                                    />
+                                </label>
+                                <label className="col">
+                                    <span className="text-muted text-small">Type</span>
+                                    <input
+                                        value={draft.type}
+                                        onChange={(e) => handleDraftChange("type", e.target.value)}
+                                    />
+                                </label>
+                                <label className="col">
+                                    <span className="text-muted text-small">Category</span>
+                                    <input
+                                        value={draft.category}
+                                        onChange={(e) => handleDraftChange("category", e.target.value)}
+                                    />
+                                </label>
+                                <label className="col">
+                                    <span className="text-muted text-small">Subcategory</span>
+                                    <input
+                                        value={draft.subcategory}
+                                        onChange={(e) => handleDraftChange("subcategory", e.target.value)}
+                                    />
+                                </label>
+                                <label className="col">
+                                    <span className="text-muted text-small">Slot</span>
+                                    <input
+                                        value={draft.slot}
+                                        onChange={(e) => handleDraftChange("slot", e.target.value)}
+                                    />
+                                </label>
+                                <label className="col">
+                                    <span className="text-muted text-small">Order</span>
+                                    <input
+                                        type="number"
+                                        value={draft.order}
+                                        onChange={(e) => handleDraftChange("order", e.target.value)}
+                                    />
+                                </label>
+                                <label className="col" style={{ gridColumn: "1 / -1" }}>
+                                    <span className="text-muted text-small">Tags (comma separated)</span>
+                                    <input
+                                        value={draft.tags}
+                                        onChange={(e) => handleDraftChange("tags", e.target.value)}
+                                    />
+                                </label>
+                            </div>
+                            <label className="col">
+                                <span className="text-muted text-small">Description</span>
+                                <textarea
+                                    rows={6}
+                                    value={draft.desc}
+                                    onChange={(e) => handleDraftChange("desc", e.target.value)}
+                                />
+                            </label>
+                            {saveNotice && <div className="text-muted text-small">{saveNotice}</div>}
+                            <div className="row" style={{ gap: 8 }}>
+                                <button
+                                    type="button"
+                                    className="btn"
+                                    onClick={handleSave}
+                                    disabled={!dirty || saving}
+                                >
+                                    {saving ? "Saving…" : "Save Changes"}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="btn ghost"
+                                    onClick={handleReset}
+                                    disabled={saving || !dirty}
+                                >
+                                    Reset
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
 }
 
 function DemonsAdminPanel() {
@@ -1141,6 +1488,8 @@ export default function ServerManagementTab({ activeGameId, onGameDeleted, onRef
                         onRefreshActiveGame={onRefreshActiveGame}
                     />
                 );
+            case "items":
+                return <ItemsAdminPanel />;
             case "demons":
                 return <DemonsAdminPanel />;
             case "bot":
