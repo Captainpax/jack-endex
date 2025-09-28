@@ -4656,17 +4656,52 @@ app.post('/api/admin/demons/upload', requireServerAdmin, async (req, res) => {
         return res.status(400).json({ error: 'invalid_csv' });
     }
 
+    const confirmDeletes = req.body?.confirmDeletes === true;
+
     const demons = await loadDemonsFile();
-    const result = applyCsvToDemons({ csvContent, demons });
-    if (result.demonsUpdated === 0) {
+    const result = applyCsvToDemons({
+        csvContent,
+        demons,
+        createMissing: true,
+        deleteMissing: confirmDeletes,
+    });
+
+    if (!confirmDeletes && Array.isArray(result.pendingDeletes) && result.pendingDeletes.length > 0) {
+        return res.json({
+            ok: true,
+            wrote: false,
+            requiresConfirmation: true,
+            rowsProcessed: result.rowsProcessed,
+            demonsUpdated: result.demonsUpdated,
+            demonsCreated: result.demonsCreated,
+            demonsDeleted: 0,
+            changeLog: result.changeLog,
+            mode: result.mode,
+            warnings: result.warnings,
+            pendingDeletes: result.pendingDeletes,
+            created: result.created,
+        });
+    }
+
+    const hasChanges =
+        result.demonsUpdated > 0 ||
+        (Array.isArray(result.created) && result.created.length > 0) ||
+        (confirmDeletes && Array.isArray(result.deleted) && result.deleted.length > 0);
+
+    if (!hasChanges) {
         return res.json({
             ok: true,
             wrote: false,
             rowsProcessed: result.rowsProcessed,
-            demonsUpdated: 0,
+            demonsUpdated: result.demonsUpdated,
+            demonsCreated: result.demonsCreated,
+            demonsDeleted: confirmDeletes ? result.demonsDeleted : 0,
             changeLog: result.changeLog,
             mode: result.mode,
             warnings: result.warnings,
+            pendingDeletes: result.pendingDeletes,
+            created: result.created,
+            deleted: result.deleted,
         });
     }
 
@@ -4678,9 +4713,14 @@ app.post('/api/admin/demons/upload', requireServerAdmin, async (req, res) => {
         backupPath,
         rowsProcessed: result.rowsProcessed,
         demonsUpdated: result.demonsUpdated,
+        demonsCreated: result.demonsCreated,
+        demonsDeleted: confirmDeletes ? result.demonsDeleted : 0,
         changeLog: result.changeLog,
         mode: result.mode,
         warnings: result.warnings,
+        pendingDeletes: result.pendingDeletes,
+        created: result.created,
+        deleted: result.deleted,
     });
 });
 

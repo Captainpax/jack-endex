@@ -1,5 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ServerAdmin } from "../api";
+import { ABILITY_DEFS } from "../constants/gameData";
+import DemonImage from "./DemonImage";
+
+const ABILITY_KEYS = ABILITY_DEFS.map((ability) => ability.key);
+const MAX_DEMON_IMAGE_BYTES = 2 * 1024 * 1024;
 
 const SUBTABS = [
     { key: "users", label: "Users" },
@@ -355,6 +360,15 @@ function createDemonDraft(demon) {
             personality: "",
             description: "",
             skillsText: "",
+            image: "",
+            stats: ABILITY_KEYS.reduce((acc, key) => {
+                acc[key] = "";
+                return acc;
+            }, {}),
+            mods: ABILITY_KEYS.reduce((acc, key) => {
+                acc[key] = "";
+                return acc;
+            }, {}),
             resistances: {
                 weak: "",
                 resist: "",
@@ -372,6 +386,17 @@ function createDemonDraft(demon) {
         personality: demon.personality || "",
         description: demon.description || "",
         skillsText: Array.isArray(demon.skills) ? demon.skills.join(", ") : "",
+        image: typeof demon.image === "string" ? demon.image : "",
+        stats: ABILITY_KEYS.reduce((acc, key) => {
+            const value = demon.stats?.[key];
+            acc[key] = value === undefined || value === null ? "" : String(value);
+            return acc;
+        }, {}),
+        mods: ABILITY_KEYS.reduce((acc, key) => {
+            const value = demon.mods?.[key];
+            acc[key] = value === undefined || value === null ? "" : String(value);
+            return acc;
+        }, {}),
         resistances: {
             weak: Array.isArray(resist.weak) ? resist.weak.join(", ") : "",
             resist: Array.isArray(resist.resist) ? resist.resist.join(", ") : "",
@@ -390,6 +415,8 @@ function DemonsAdminPanel() {
     const [selectedId, setSelectedId] = useState(null);
     const [draft, setDraft] = useState(null);
     const [csvReport, setCsvReport] = useState(null);
+    const imageInputRef = useRef(null);
+    const [imageError, setImageError] = useState("");
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -411,6 +438,10 @@ function DemonsAdminPanel() {
     useEffect(() => {
         const demon = demons.find((entry) => Number(entry?.id) === Number(selectedId));
         setDraft(createDemonDraft(demon));
+        setImageError("");
+        if (imageInputRef.current) {
+            imageInputRef.current.value = "";
+        }
     }, [demons, selectedId]);
 
     const filteredDemons = useMemo(() => {
@@ -448,20 +479,116 @@ function DemonsAdminPanel() {
         }));
     };
 
+    const handleStatChange = (key, value) => {
+        setDraft((prev) => ({
+            ...(prev || {}),
+            stats: {
+                ...(prev?.stats || {}),
+                [key]: value,
+            },
+        }));
+    };
+
+    const handleModChange = (key, value) => {
+        setDraft((prev) => ({
+            ...(prev || {}),
+            mods: {
+                ...(prev?.mods || {}),
+                [key]: value,
+            },
+        }));
+    };
+
+    const handleImageUploadClick = () => {
+        imageInputRef.current?.click();
+    };
+
+    const handleImageUpload = (event) => {
+        const input = event.target;
+        const file = input?.files?.[0];
+
+        const reset = () => {
+            if (input) input.value = "";
+        };
+
+        if (!file) {
+            reset();
+            return;
+        }
+
+        if (typeof file.type === "string" && file.type && !file.type.startsWith("image/")) {
+            setImageError("Please choose an image file.");
+            reset();
+            return;
+        }
+
+        if (file.size > MAX_DEMON_IMAGE_BYTES) {
+            setImageError("Images must be 2 MB or smaller.");
+            reset();
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = () => {
+            const result = typeof reader.result === "string" ? reader.result : "";
+            handleDraftChange({ image: result });
+            setImageError("");
+            reset();
+        };
+        reader.onerror = () => {
+            setImageError("Failed to load image. Try a different file.");
+            reset();
+        };
+        reader.readAsDataURL(file);
+    };
+
+    const handleImageRemove = () => {
+        handleDraftChange({ image: "" });
+        setImageError("");
+        if (imageInputRef.current) {
+            imageInputRef.current.value = "";
+        }
+    };
+
     const handleSave = async () => {
         if (!selectedDemon || !draft) return;
         const parsedLevel = Number(draft.level);
+        const statsPayload = ABILITY_KEYS.reduce((acc, key) => {
+            const raw = draft?.stats?.[key];
+            if (raw === undefined || raw === null || String(raw).trim() === "") {
+                return acc;
+            }
+            const num = Number(raw);
+            if (Number.isFinite(num)) {
+                acc[key] = num;
+            }
+            return acc;
+        }, {});
+
+        const modsPayload = ABILITY_KEYS.reduce((acc, key) => {
+            const raw = draft?.mods?.[key];
+            if (raw === undefined || raw === null || String(raw).trim() === "") {
+                return acc;
+            }
+            const num = Number(raw);
+            if (Number.isFinite(num)) {
+                acc[key] = num;
+            }
+            return acc;
+        }, {});
+
         const payload = {
-            arcana: draft.arcana,
+            arcana: draft.arcana?.trim() || "",
             level:
                 draft.level === ""
                     ? null
                     : Number.isFinite(parsedLevel)
                     ? parsedLevel
                     : selectedDemon.level,
-            alignment: draft.alignment,
-            personality: draft.personality,
-            description: draft.description,
+            alignment: draft.alignment?.trim() || "",
+            personality: draft.personality?.trim() || "",
+            description: draft.description || "",
+            image: typeof draft.image === "string" ? draft.image.trim() : "",
             skills: draft.skillsText
                 ? draft.skillsText
                       .split(",")
@@ -486,9 +613,18 @@ function DemonsAdminPanel() {
                     : [],
             },
         };
+
+        if (Object.keys(statsPayload).length > 0) {
+            payload.stats = statsPayload;
+        }
+        if (Object.keys(modsPayload).length > 0) {
+            payload.mods = modsPayload;
+        }
+
         try {
             const updated = await ServerAdmin.demons.update(selectedDemon.id, payload);
             setDemons((prev) => prev.map((entry) => (entry.id === updated.id ? updated : entry)));
+            setDraft(createDemonDraft(updated));
             alert("Demon updated");
         } catch (err) {
             alert(formatError(err));
@@ -498,21 +634,54 @@ function DemonsAdminPanel() {
     const handleReset = () => {
         const demon = demons.find((entry) => Number(entry?.id) === Number(selectedId));
         setDraft(createDemonDraft(demon));
+        setImageError("");
+        if (imageInputRef.current) {
+            imageInputRef.current.value = "";
+        }
     };
 
     const handleCsvUpload = async (file) => {
         if (!file) return;
         try {
             const text = await file.text();
-            const report = await ServerAdmin.demons.uploadCsv(text);
-            setCsvReport(report);
-            if (report?.wrote) {
-                await load();
-            }
-            if (report?.demonsUpdated > 0 && window.confirm("Testing - passed, push to database?")) {
-                const sync = await ServerAdmin.demons.sync();
-                setCsvReport((prev) => ({ ...prev, synced: sync?.count ?? 0 }));
-            }
+            const uploadWithConfirmation = async (confirmDeletes = false) => {
+                const report = await ServerAdmin.demons.uploadCsv(text, { confirmDeletes });
+                setCsvReport(report);
+
+                if (report?.requiresConfirmation && !confirmDeletes) {
+                    const pending = Array.isArray(report.pendingDeletes) ? report.pendingDeletes : [];
+                    const preview = pending.slice(0, 5).map((entry) => entry.name || `ID ${entry.id}`);
+                    const more = pending.length > preview.length ? pending.length - preview.length : 0;
+                    const messageLines = [
+                        `${pending.length} demon${pending.length === 1 ? " is" : "s are"} missing from the CSV and will be removed.`,
+                    ];
+                    if (preview.length > 0) {
+                        messageLines.push(`Examples: ${preview.join(", ")}${more > 0 ? `, and ${more} more` : ""}.`);
+                    }
+                    messageLines.push("Continue and remove them?");
+                    if (window.confirm(messageLines.join("\n"))) {
+                        return uploadWithConfirmation(true);
+                    }
+                    return report;
+                }
+
+                if (report?.wrote) {
+                    await load();
+                }
+
+                const totalChanges =
+                    (report?.demonsUpdated || 0) +
+                    (report?.demonsCreated || 0) +
+                    (report?.demonsDeleted || 0);
+                if (totalChanges > 0 && window.confirm("Testing - passed, push to database?")) {
+                    const sync = await ServerAdmin.demons.sync();
+                    setCsvReport((prev) => ({ ...(prev || {}), synced: sync?.count ?? 0 }));
+                }
+
+                return report;
+            };
+
+            await uploadWithConfirmation(false);
         } catch (err) {
             alert(formatError(err));
         }
@@ -575,6 +744,61 @@ function DemonsAdminPanel() {
                     ) : (
                         <div className="col" style={{ gap: 12 }}>
                             <h3 style={{ margin: 0 }}>{selectedDemon.name}</h3>
+                            <div className="row" style={{ gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+                                <div
+                                    style={{
+                                        width: 180,
+                                        height: 180,
+                                        borderRadius: 12,
+                                        background: "#111",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        overflow: "hidden",
+                                        flex: "0 0 auto",
+                                    }}
+                                >
+                                    {draft?.image ? (
+                                        <DemonImage
+                                            src={draft.image}
+                                            personaSlug={selectedDemon.slug || selectedDemon.query}
+                                            alt={`${selectedDemon.name || "Demon"} artwork`}
+                                            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                                        />
+                                    ) : (
+                                        <span className="text-muted text-small">No image</span>
+                                    )}
+                                </div>
+                                <div className="col" style={{ gap: 8, flex: "1 1 220px" }}>
+                                    <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                                        <button type="button" className="btn ghost btn-small" onClick={handleImageUploadClick}>
+                                            Upload image
+                                        </button>
+                                        {draft?.image && (
+                                            <button type="button" className="btn ghost btn-small" onClick={handleImageRemove}>
+                                                Remove
+                                            </button>
+                                        )}
+                                    </div>
+                                    <input
+                                        type="text"
+                                        placeholder="Paste image URL…"
+                                        value={draft?.image || ""}
+                                        onChange={(e) => {
+                                            handleDraftChange({ image: e.target.value });
+                                            setImageError("");
+                                        }}
+                                    />
+                                    {imageError && <div className="text-error text-small">{imageError}</div>}
+                                </div>
+                            </div>
+                            <input
+                                ref={imageInputRef}
+                                type="file"
+                                accept="image/*"
+                                style={{ display: "none" }}
+                                onChange={handleImageUpload}
+                            />
                             <div className="grid" style={{ gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
                                 <label className="col">
                                     <span className="text-muted text-small">Arcana</span>
@@ -621,23 +845,65 @@ function DemonsAdminPanel() {
                                     onChange={(e) => handleDraftChange({ skillsText: e.target.value })}
                                 />
                             </label>
-                            <div className="grid" style={{ gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
-                                {[
-                                    ["weak", "Weak"],
-                                    ["resist", "Resist"],
-                                    ["block", "Block/Null"],
-                                    ["drain", "Drain"],
-                                    ["reflect", "Reflect"],
-                                ].map(([key, label]) => (
-                                    <label key={key} className="col">
-                                        <span className="text-muted text-small">{label}</span>
-                                        <textarea
-                                            rows={2}
-                                            value={draft?.resistances?.[key] || ""}
-                                            onChange={(e) => handleResistanceChange(key, e.target.value)}
-                                        />
-                                    </label>
-                                ))}
+                            <div className="col" style={{ gap: 8 }}>
+                                <strong>Ability scores</strong>
+                                <div
+                                    className="grid"
+                                    style={{ gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))" }}
+                                >
+                                    {ABILITY_DEFS.map((ability) => (
+                                        <label key={ability.key} className="col">
+                                            <span className="text-muted text-small">{ability.key} score</span>
+                                            <input
+                                                type="number"
+                                                value={draft?.stats?.[ability.key] ?? ""}
+                                                onChange={(e) => handleStatChange(ability.key, e.target.value)}
+                                            />
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+                            <div className="col" style={{ gap: 8 }}>
+                                <strong>Ability modifiers</strong>
+                                <div
+                                    className="grid"
+                                    style={{ gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))" }}
+                                >
+                                    {ABILITY_DEFS.map((ability) => (
+                                        <label key={ability.key} className="col">
+                                            <span className="text-muted text-small">{ability.key} modifier</span>
+                                            <input
+                                                type="number"
+                                                value={draft?.mods?.[ability.key] ?? ""}
+                                                onChange={(e) => handleModChange(ability.key, e.target.value)}
+                                            />
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+                            <div className="col" style={{ gap: 8 }}>
+                                <strong>Resistances</strong>
+                                <div
+                                    className="grid"
+                                    style={{ gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}
+                                >
+                                    {[
+                                        ["weak", "Weak"],
+                                        ["resist", "Resist"],
+                                        ["block", "Block/Null"],
+                                        ["drain", "Drain"],
+                                        ["reflect", "Reflect"],
+                                    ].map(([key, label]) => (
+                                        <label key={key} className="col">
+                                            <span className="text-muted text-small">{label}</span>
+                                            <textarea
+                                                rows={2}
+                                                value={draft?.resistances?.[key] || ""}
+                                                onChange={(e) => handleResistanceChange(key, e.target.value)}
+                                            />
+                                        </label>
+                                    ))}
+                                </div>
                             </div>
                             <div className="row" style={{ gap: 8 }}>
                                 <button type="button" className="btn" onClick={handleSave}>
@@ -656,6 +922,19 @@ function DemonsAdminPanel() {
                     <strong>CSV Import Summary</strong>
                     <div>Rows processed: {csvReport.rowsProcessed}</div>
                     <div>Demons updated: {csvReport.demonsUpdated}</div>
+                    {typeof csvReport.demonsCreated === "number" && (
+                        <div>Demons added: {csvReport.demonsCreated}</div>
+                    )}
+                    {typeof csvReport.demonsDeleted === "number" && (
+                        <div>Demons removed: {csvReport.demonsDeleted}</div>
+                    )}
+                    {Array.isArray(csvReport.pendingDeletes) && csvReport.pendingDeletes.length > 0 && !csvReport.demonsDeleted && (
+                        <div className="alert warn">
+                            {csvReport.requiresConfirmation
+                                ? `${csvReport.pendingDeletes.length} demon${csvReport.pendingDeletes.length === 1 ? " is" : "s are"} missing from the CSV. Confirm the upload again to remove them.`
+                                : `${csvReport.pendingDeletes.length} demon${csvReport.pendingDeletes.length === 1 ? " was" : "s were"} missing from the CSV.`}
+                        </div>
+                    )}
                     {Array.isArray(csvReport.warnings) && csvReport.warnings.length > 0 && (
                         <div className="alert warn" style={{ marginTop: 8 }}>
                             <strong>Warnings</strong>

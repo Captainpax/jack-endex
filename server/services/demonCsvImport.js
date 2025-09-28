@@ -383,26 +383,106 @@ function detectDuplicateNames(parsed) {
     return warnings;
 }
 
-export function applyCsvToDemons({ csvContent, demons, strict = false }) {
+const ABILITY_KEYS = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'];
+
+function createBlankDemonEntry(id = null) {
+    const baseStats = ABILITY_KEYS.reduce((acc, key) => {
+        acc[key] = 0;
+        return acc;
+    }, {});
+
+    return {
+        id,
+        name: '',
+        arcana: '',
+        alignment: '',
+        personality: '',
+        strategy: '',
+        level: null,
+        description: '',
+        image: '',
+        query: '',
+        stats: { ...baseStats },
+        mods: { ...baseStats },
+        resistances: {
+            weak: [],
+            resist: [],
+            block: [],
+            drain: [],
+            reflect: [],
+        },
+        skills: [],
+        dlc: 0,
+        tags: [],
+    };
+}
+
+function toLowerSafe(value) {
+    return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function ensureQuery(value) {
+    const trimmed = typeof value === 'string' ? value.trim() : '';
+    if (!trimmed) return '';
+    return trimmed.toLowerCase().replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '');
+}
+
+export function applyCsvToDemons({
+    csvContent,
+    demons,
+    strict = false,
+    createMissing = false,
+    deleteMissing = false,
+}) {
     const dataset = normalizeDemonsInput(demons);
     const parsed = parseFlexibleCsv(csvContent);
     const warnings = detectDuplicateNames(parsed);
     const mapByName = new Map();
     const mapById = new Map();
+    const seenEntries = new Set();
+
+    const schemaSample = dataset.find((entry) => entry && typeof entry === 'object') || createBlankDemonEntry();
+
+    const usedIds = new Set();
+    let nextId = 1;
 
     for (const entry of dataset) {
         if (entry && typeof entry === 'object') {
-            if (typeof entry.name === 'string') {
-                mapByName.set(entry.name.toLowerCase(), entry);
+            if (typeof entry.name === 'string' && entry.name.trim()) {
+                mapByName.set(entry.name.trim().toLowerCase(), entry);
             }
             if (Number.isFinite(Number(entry.id))) {
-                mapById.set(Number(entry.id), entry);
+                const idNum = Number(entry.id);
+                mapById.set(idNum, entry);
+                usedIds.add(idNum);
+                if (idNum >= nextId) {
+                    nextId = idNum + 1;
+                }
             }
         }
     }
 
+    const allocateId = (preferred) => {
+        const preferredNum = Number(preferred);
+        if (Number.isFinite(preferredNum) && preferredNum > 0 && !usedIds.has(preferredNum)) {
+            usedIds.add(preferredNum);
+            if (preferredNum >= nextId) {
+                nextId = preferredNum + 1;
+            }
+            return preferredNum;
+        }
+        while (usedIds.has(nextId)) {
+            nextId += 1;
+        }
+        usedIds.add(nextId);
+        const allocated = nextId;
+        nextId += 1;
+        return allocated;
+    };
+
     const changeLog = [];
     let touched = 0;
+    const createdEntries = [];
 
     if (parsed.mode === 'header') {
         const headersLower = (parsed.headers || []).map((header) => header.toLowerCase());
@@ -412,19 +492,31 @@ export function applyCsvToDemons({ csvContent, demons, strict = false }) {
         }
 
         for (const row of parsed.rows) {
-            const matchValue = row[key] ?? row[key.toUpperCase()] ?? row[key.toLowerCase()];
-            if (matchValue == null || String(matchValue).trim() === '') {
+            const rawMatch = row[key] ?? row[key.toUpperCase()] ?? row[key.toLowerCase()];
+            if (rawMatch == null || String(rawMatch).trim() === '') {
                 changeLog.push({ who: null, note: `Skipped row: missing ${key}` });
                 continue;
             }
 
-            const demon = key === 'id' ? mapById.get(Number(matchValue)) : mapByName.get(String(matchValue).toLowerCase());
+            let demon = key === 'id'
+                ? mapById.get(Number(rawMatch))
+                : mapByName.get(String(rawMatch).toLowerCase());
+            let created = false;
+
+            if (!demon && createMissing) {
+                const entry = createBlankDemonEntry();
+                entry.id = allocateId(key === 'id' ? Number(rawMatch) : null);
+                demon = entry;
+                dataset.push(entry);
+                created = true;
+                createdEntries.push({ id: entry.id, name: row.name?.trim() || String(rawMatch).trim() || `Demon ${entry.id}` });
+            }
+
             if (!demon) {
-                changeLog.push({ who: matchValue, note: 'No match in demons.json' });
+                changeLog.push({ who: rawMatch, note: 'No match in demons.json' });
                 continue;
             }
 
-            const schema = demon;
             const target = demon;
             const before = cloneDeep(demon);
             const perRowChanges = [];
@@ -432,64 +524,152 @@ export function applyCsvToDemons({ csvContent, demons, strict = false }) {
             for (const [column, rawValue] of Object.entries(row)) {
                 if (column.toLowerCase() === key) continue;
                 if (rawValue == null || String(rawValue).trim() === '') continue;
-                const res = setByPath(schema, target, column.trim(), rawValue, { strict });
+                const res = setByPath(schemaSample, target, column.trim(), rawValue, { strict });
                 if (res.changed) perRowChanges.push(`✓ ${column.trim()}`);
                 else if (res.reason) perRowChanges.push(`- ${column.trim()} (${res.reason})`);
             }
 
+            if (created) {
+                // ensure required fields like name/query are populated if present in row
+                if (typeof target.name === 'string') {
+                    const providedName = row.name ?? row.Name ?? row.NAME;
+                    if (typeof providedName === 'string' && providedName.trim()) {
+                        target.name = providedName.trim();
+                    }
+                }
+                if (!target.query) {
+                    target.query = ensureQuery(target.name || rawMatch);
+                }
+                if (typeof target.arcana === 'string' && target.arcana.trim()) {
+                    target.arcana = target.arcana.trim();
+                }
+            }
+
             const changed = !deepEqual(before, target);
             if (changed) touched += 1;
+            const whoLabel = key === 'id' ? `id=${target.id ?? rawMatch}` : `name="${target.name || rawMatch}"`;
             changeLog.push({
-                who: key === 'id' ? `id=${matchValue}` : `name="${matchValue}"`,
+                who: whoLabel,
                 changes: perRowChanges,
+                note: created ? 'Created new demon' : undefined,
             });
+            if (typeof target.name === 'string' && target.name.trim()) {
+                mapByName.set(target.name.trim().toLowerCase(), target);
+            }
+            if (Number.isFinite(Number(target.id))) {
+                mapById.set(Number(target.id), target);
+            }
+            seenEntries.add(target);
         }
     } else {
         for (const row of parsed.rows) {
-            const demon = mapByName.get(row.name.toLowerCase());
+            const nameKey = toLowerSafe(row.name);
+            let demon = mapByName.get(nameKey);
+            let created = false;
+
+            if (!demon && createMissing && nameKey) {
+                const entry = createBlankDemonEntry();
+                entry.id = allocateId(null);
+                entry.name = row.name.trim();
+                entry.arcana = typeof row.arcana === 'string' ? row.arcana.trim() : entry.arcana;
+                entry.level = Number.isFinite(Number(row.level)) ? Number(row.level) : entry.level;
+                const skills = parseSkills(row.skillsRaw);
+                if (skills) entry.skills = skills;
+                const resistances = parseResistances(row.resistRaw);
+                if (resistances) entry.resistances = resistances;
+                entry.query = ensureQuery(entry.name);
+                dataset.push(entry);
+                demon = entry;
+                created = true;
+                createdEntries.push({ id: entry.id, name: entry.name });
+            }
+
             if (!demon) {
                 changeLog.push({ who: row.name, note: 'No match in demons.json' });
                 continue;
             }
 
-            const schema = demon;
             const target = demon;
             const before = cloneDeep(demon);
             const perRowChanges = [];
 
             if (row.arcana) {
-                const res = setByPath(schema, target, 'arcana', row.arcana, { strict });
+                const res = setByPath(schemaSample, target, 'arcana', row.arcana, { strict });
                 if (res.changed) perRowChanges.push('✓ arcana');
                 else if (res.reason) perRowChanges.push(`- arcana (${res.reason})`);
             }
 
             if (row.level != null) {
-                const res = setByPath(schema, target, 'level', row.level, { strict });
+                const res = setByPath(schemaSample, target, 'level', row.level, { strict });
                 if (res.changed) perRowChanges.push('✓ level');
                 else if (res.reason) perRowChanges.push(`- level (${res.reason})`);
             }
 
             const skills = parseSkills(row.skillsRaw);
-            if (skills && Array.isArray(schema.skills)) {
-                const res = setByPath(schema, target, 'skills', skills, { strict });
+            if (skills && Array.isArray(target.skills)) {
+                const res = setByPath(schemaSample, target, 'skills', skills, { strict });
                 if (res.changed) perRowChanges.push('✓ skills');
                 else if (res.reason) perRowChanges.push(`- skills (${res.reason})`);
             }
 
             const resistances = parseResistances(row.resistRaw);
-            if (resistances && isObject(schema.resistances)) {
+            if (resistances && isObject(target.resistances)) {
                 for (const bucket of ['weak', 'resist', 'block', 'drain', 'reflect']) {
-                    if (Array.isArray(schema.resistances[bucket]) && Array.isArray(resistances[bucket])) {
-                        const res = setByPath(schema, target, `resistances.${bucket}`, resistances[bucket], { strict });
+                    if (Array.isArray(target.resistances[bucket]) && Array.isArray(resistances[bucket])) {
+                        const res = setByPath(schemaSample, target, `resistances.${bucket}`, resistances[bucket], {
+                            strict,
+                        });
                         if (res.changed) perRowChanges.push(`✓ resistances.${bucket}`);
                         else if (res.reason) perRowChanges.push(`- resistances.${bucket} (${res.reason})`);
                     }
                 }
             }
 
+            if (created && typeof target.name === 'string') {
+                target.query = ensureQuery(target.name);
+            }
+
             const changed = !deepEqual(before, target);
             if (changed) touched += 1;
-            changeLog.push({ who: `name="${row.name}"`, changes: perRowChanges });
+            changeLog.push({
+                who: `name="${target.name || row.name}"`,
+                changes: perRowChanges,
+                note: created ? 'Created new demon' : undefined,
+            });
+            if (typeof target.name === 'string' && target.name.trim()) {
+                mapByName.set(target.name.trim().toLowerCase(), target);
+            }
+            if (Number.isFinite(Number(target.id))) {
+                mapById.set(Number(target.id), target);
+            }
+            seenEntries.add(target);
+        }
+    }
+
+    const pendingDeletes = dataset.filter((entry) => {
+        if (!entry || typeof entry !== 'object') return false;
+        if (!Number.isFinite(Number(entry.id))) return false;
+        return !seenEntries.has(entry);
+    });
+
+    const deletedEntries = deleteMissing
+        ? pendingDeletes.map((entry) => ({ id: entry.id, name: entry.name || '', arcana: entry.arcana || '' }))
+        : [];
+
+    if (deleteMissing && deletedEntries.length > 0) {
+        const keepIds = new Set(dataset.map((entry) => (seenEntries.has(entry) ? entry.id : null)).filter((id) => id != null));
+        const filtered = dataset.filter((entry) => {
+            if (!entry || typeof entry !== 'object') return true;
+            if (!Number.isFinite(Number(entry.id))) return true;
+            return keepIds.has(entry.id);
+        });
+        dataset.length = 0;
+        for (const entry of filtered) {
+            dataset.push(entry);
+        }
+        touched += deletedEntries.length;
+        for (const entry of deletedEntries) {
+            changeLog.push({ who: `id=${entry.id}`, note: `Removed demon "${entry.name || 'Unknown'}"` });
         }
     }
 
@@ -497,6 +677,15 @@ export function applyCsvToDemons({ csvContent, demons, strict = false }) {
         demons: dataset,
         rowsProcessed: parsed.rows.length,
         demonsUpdated: touched,
+        demonsCreated: createdEntries.length,
+        demonsDeleted: deleteMissing ? deletedEntries.length : 0,
+        created: createdEntries,
+        pendingDeletes: pendingDeletes.map((entry) => ({
+            id: entry.id,
+            name: entry.name || '',
+            arcana: entry.arcana || '',
+        })),
+        deleted: deletedEntries,
         changeLog,
         mode: parsed.mode,
         warnings,
