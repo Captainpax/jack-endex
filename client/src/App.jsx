@@ -20,6 +20,7 @@ import DemonTab from "./components/DemonTab";
 import DemonImage from "./components/DemonImage";
 import { DM_NAV, PLAYER_NAV } from "./constants/navigation";
 import { BATTLE_MATH_REFERENCE } from "./constants/referenceContent";
+import ServerManagementTab from "./components/ServerManagementTab";
 import {
     ABILITY_DEFS,
     ABILITY_KEY_SET,
@@ -116,6 +117,30 @@ const ALIGNMENT_OPTIONS = [
     { value: "Neutral Evil", label: "Neutral Evil" },
     { value: "Chaotic Evil", label: "Chaotic Evil" },
 ];
+
+const SERVER_ADMIN_USERNAMES = new Set(["captainpax", "amzyoshio"]);
+const SERVER_MANAGEMENT_NAV_ITEM = Object.freeze({
+    key: "serverManagement",
+    label: "Server Management",
+    description: "Administer users, games, demons, and bots",
+});
+
+function isServerAdminClient(user) {
+    if (!user) return false;
+    if (user.isAdmin) return true;
+    const username = typeof user.username === "string" ? user.username.trim().toLowerCase() : "";
+    if (!username) return false;
+    return SERVER_ADMIN_USERNAMES.has(username);
+}
+
+function getNavItemsForUser({ isDM, me }) {
+    const base = isDM ? DM_NAV : PLAYER_NAV;
+    if (!isServerAdminClient(me)) return base;
+    if (base.some((item) => item.key === SERVER_MANAGEMENT_NAV_ITEM.key)) {
+        return base;
+    }
+    return [...base, SERVER_MANAGEMENT_NAV_ITEM];
+}
 
 function clampVolume(value, fallback = 0.2) {
     const num = Number(value);
@@ -419,7 +444,7 @@ export default function App() {
         const applyStateForGame = (gameData) => {
             if (!gameData) return;
             const isDM = gameData.dmId === me.id;
-            const nav = isDM ? DM_NAV : PLAYER_NAV;
+            const nav = getNavItemsForUser({ isDM, me });
             const allowedTabs = new Set(nav.map((item) => item.key));
             const fallbackTab = isDM ? "overview" : "sheet";
             const desiredTab = link.tab && allowedTabs.has(link.tab) ? link.tab : fallbackTab;
@@ -665,15 +690,22 @@ function InviteButton({ gameId }) {
 function AuthView({ onAuthed }) {
     const [username, setUser] = useState("");
     const [password, setPass] = useState("");
+    const [email, setEmail] = useState("");
+    const [confirmPassword, setConfirmPassword] = useState("");
     const [mode, setMode] = useState("login");
     const [busy, setBusy] = useState(false);
 
     const go = async () => {
         if (!username || !password) return alert("Enter username & password");
+        if (mode === "register") {
+            if (!email) return alert("Enter email");
+            if (!confirmPassword) return alert("Confirm your password");
+            if (password !== confirmPassword) return alert("Passwords do not match");
+        }
         try {
             setBusy(true);
             if (mode === "login") await Auth.login(username, password);
-            else await Auth.register(username, password);
+            else await Auth.register(username, password, email, confirmPassword);
             onAuthed();
         } catch (e) {
             alert(e.message);
@@ -683,6 +715,17 @@ function AuthView({ onAuthed }) {
     };
 
     const onKey = (e) => e.key === "Enter" && go();
+
+    const toggleMode = () => {
+        setMode((prev) => {
+            const next = prev === "login" ? "register" : "login";
+            if (next === "login") {
+                setEmail("");
+                setConfirmPassword("");
+            }
+            return next;
+        });
+    };
 
     return (
         <Center>
@@ -695,6 +738,15 @@ function AuthView({ onAuthed }) {
                         onChange={(e) => setUser(e.target.value)}
                         onKeyDown={onKey}
                     />
+                    {mode === "register" && (
+                        <input
+                            placeholder="Email"
+                            type="email"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            onKeyDown={onKey}
+                        />
+                    )}
                     <input
                         placeholder="Password"
                         type="password"
@@ -702,12 +754,21 @@ function AuthView({ onAuthed }) {
                         onChange={(e) => setPass(e.target.value)}
                         onKeyDown={onKey}
                     />
+                    {mode === "register" && (
+                        <input
+                            placeholder="Confirm Password"
+                            type="password"
+                            value={confirmPassword}
+                            onChange={(e) => setConfirmPassword(e.target.value)}
+                            onKeyDown={onKey}
+                        />
+                    )}
                     <button className="btn" onClick={go} disabled={busy}>
                         {busy ? "…" : mode === "login" ? "Login" : "Register"}
                     </button>
                     <button
                         className="btn"
-                        onClick={() => setMode(mode === "login" ? "register" : "login")}
+                        onClick={toggleMode}
                         disabled={busy}
                     >
                         {mode === "login" ? "Need an account?" : "Have an account?"}
@@ -922,6 +983,7 @@ function GameView({
     const [logoutBusy, setLogoutBusy] = useState(false);
     const loadedTabRef = useRef(false);
     const loadedSheetRef = useRef(false);
+    const showServerManagement = isServerAdminClient(me);
 
     useEffect(() => {
         if (typeof window === "undefined") return undefined;
@@ -950,7 +1012,15 @@ function GameView({
         loadedSheetRef.current = false;
     }, [sheetPrefKey]);
 
-    const navItems = useMemo(() => (isDM ? DM_NAV : PLAYER_NAV), [isDM]);
+    const navItems = useMemo(() => getNavItemsForUser({ isDM, me }), [isDM, me]);
+
+    const refreshCampaignList = useCallback(async () => {
+        try {
+            setGames(await Games.list());
+        } catch (err) {
+            console.warn("Failed to refresh games", err);
+        }
+    }, [setGames]);
 
     const handleSelectNav = useCallback(
         (key) => {
@@ -1112,12 +1182,8 @@ function GameView({
         }
         setActive(null);
         setDmSheetPlayerId(null);
-        try {
-            setGames(await Games.list());
-        } catch (err) {
-            console.warn("Failed to refresh games after deletion", err);
-        }
-    }, [isDM, setActive, setDmSheetPlayerId, setGames]);
+        await refreshCampaignList();
+    }, [isDM, refreshCampaignList, setActive, setDmSheetPlayerId]);
 
     useEffect(() => {
         if (typeof window === "undefined" || !game?.id) return;
@@ -1528,6 +1594,15 @@ function GameView({
                     {tab === "storyLogs" && <StoryLogsTab game={game} me={me} />}
 
                     {tab === "help" && <HelpTab />}
+
+                    {tab === "serverManagement" && showServerManagement && (
+                        <ServerManagementTab
+                            activeGameId={game.id}
+                            onGameDeleted={handleGameDeleted}
+                            onRefreshGames={refreshCampaignList}
+                            onRefreshActiveGame={refreshGameData}
+                        />
+                    )}
 
                     {tab === "settings" && isDM && (
                         <SettingsTab

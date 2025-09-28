@@ -519,9 +519,9 @@ export const Auth = {
         body: { username, password },
         noRetry: true,
     }),
-    register: (username, password) => api('/api/auth/register', {
+    register: (username, password, email, confirmPassword) => api('/api/auth/register', {
         method: 'POST',
-        body: { username, password },
+        body: { username, password, email, confirmPassword },
         noRetry: true,
     }),
     logout: () => api('/api/auth/logout', { method: 'POST', noRetry: true }),
@@ -720,6 +720,37 @@ export const Games = {
 
     // Optional: full pagination helper example if the backend supports it
     listAll: (query) => apiClient.getAllPages('/api/games', { query }),
+};
+
+export const ServerAdmin = {
+    users: {
+        list: () => api('/api/admin/users'),
+        update: (id, payload) =>
+            api(`/api/admin/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload }),
+        delete: (id) => api(`/api/admin/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    },
+    games: {
+        list: () => api('/api/admin/games'),
+        delete: (id) => api(`/api/admin/games/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+        removePlayer: (gameId, playerId) =>
+            api(
+                `/api/admin/games/${encodeURIComponent(gameId)}/players/${encodeURIComponent(playerId)}`,
+                { method: 'DELETE' },
+            ),
+        setDungeonMaster: (gameId, dmId) =>
+            api(`/api/admin/games/${encodeURIComponent(gameId)}`, { method: 'PATCH', body: { dmId } }),
+    },
+    demons: {
+        list: () => api('/api/admin/demons'),
+        update: (id, payload) =>
+            api(`/api/admin/demons/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload }),
+        uploadCsv: (csv) => api('/api/admin/demons/upload', { method: 'POST', body: { csv } }),
+        sync: () => api('/api/admin/demons/sync', { method: 'POST' }),
+    },
+    masterBot: {
+        get: () => api('/api/admin/master-bot', { cache: 2000 }),
+        update: (settings) => api('/api/admin/master-bot', { method: 'PUT', body: settings }),
+    },
 };
 
 export const Items = {
