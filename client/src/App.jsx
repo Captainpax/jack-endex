@@ -7370,12 +7370,14 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                                     )}
                                     {selectField("Alignment", "profile.alignment", ALIGNMENT_OPTIONS)}
                                     {textField("Race / origin", "profile.race")}
+                                    {textField("Nationality", "profile.nationality")}
                                     {textField("Age", "profile.age")}
                                     {textField("Gender", "profile.gender")}
                                     {textField("Height", "profile.height")}
                                     {textField("Weight", "profile.weight")}
                                     {textField("Eye colour", "profile.eye")}
                                     {textField("Hair", "profile.hair")}
+                                    {textField("Skin tone", "profile.skinTone")}
                                 </div>
                                 <div className="sheet-grid sheet-grid--stretch">
                                     {textareaField("Background & hooks", "profile.background", { rows: 3 })}
@@ -8010,12 +8012,14 @@ function PlayerSetupWizard({ open, onClose, onApply, baseCharacter, playerName, 
                 })}
                 {conceptField("Alignment", "alignment")}
                 {conceptField("Race / origin", "race")}
+                {conceptField("Nationality", "nationality")}
                 {conceptField("Age", "age")}
                 {conceptField("Gender", "gender")}
                 {conceptField("Height", "height")}
                 {conceptField("Weight", "weight")}
                 {conceptField("Eye colour", "eye")}
                 {conceptField("Hair", "hair")}
+                {conceptField("Skin tone", "skinTone")}
             </div>
             <div className="wizard-archetypes">
                 {ROLE_ARCHETYPES.map((role) => {
@@ -8483,12 +8487,14 @@ function buildInitialWizardState(character, playerName, worldSkills = DEFAULT_WO
         arcana: normalized.profile?.arcana || "",
         alignment: normalized.profile?.alignment || "",
         race: normalized.profile?.race || "",
+        nationality: normalized.profile?.nationality || "",
         age: normalized.profile?.age || "",
         gender: normalized.profile?.gender || "",
         height: normalized.profile?.height || "",
         weight: normalized.profile?.weight || "",
         eye: normalized.profile?.eye || "",
         hair: normalized.profile?.hair || "",
+        skinTone: normalized.profile?.skinTone || "",
         background: normalized.profile?.background || "",
         notes: normalized.profile?.notes || "",
     };
@@ -8512,12 +8518,14 @@ function buildCharacterFromWizard(state, base, worldSkills = DEFAULT_WORLD_SKILL
         arcana: state.concept.arcana || "",
         alignment: state.concept.alignment || "",
         race: state.concept.race || "",
+        nationality: state.concept.nationality || "",
         age: state.concept.age || "",
         gender: state.concept.gender || "",
         height: state.concept.height || "",
         weight: state.concept.weight || "",
         eye: state.concept.eye || "",
         hair: state.concept.hair || "",
+        skinTone: state.concept.skinTone || "",
         background: state.concept.background || "",
         notes: state.concept.notes || "",
     };
