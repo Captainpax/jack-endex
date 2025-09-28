@@ -24,6 +24,14 @@ const portraitTemplate = PromptTemplate.fromTemplate(
     "Portrait of a {race} {role}, wearing {armor}, in a {setting} background, with {expression} expression."
 );
 
+const MESSAGE_TYPE_ROLE_MAP = {
+    human: "user",
+    ai: "assistant",
+    system: "system",
+    function: "function",
+    tool: "tool",
+};
+
 function getBaseUrl() {
     const base = envString("LOCAL_AI_BASE_URL", DEFAULT_BASE_URL).trim();
     if (!base) {
@@ -49,6 +57,107 @@ function toAbsoluteUrl(pathOrUrl, defaultPath = "") {
         return toAbsoluteUrl(defaultPath, "");
     }
     return "";
+}
+
+function normalizeMessages(rawMessages) {
+    if (!rawMessages) {
+        return [];
+    }
+
+    if (typeof rawMessages.toChatMessages === "function") {
+        return normalizeMessages(rawMessages.toChatMessages());
+    }
+
+    if (Array.isArray(rawMessages)) {
+        return rawMessages
+            .map((message) => normalizeMessage(message))
+            .filter((message) => message !== null);
+    }
+
+    if (typeof rawMessages === "object" && Array.isArray(rawMessages.messages)) {
+        return normalizeMessages(rawMessages.messages);
+    }
+
+    return [];
+}
+
+function normalizeMessage(message) {
+    if (!message) return null;
+
+    if (typeof message.toJSON === "function") {
+        const json = message.toJSON();
+        if (json && typeof json === "object") {
+            return normalizeMessage({
+                ...json.kwargs,
+                type: json.type,
+                role: json.type || json.kwargs?.role,
+            });
+        }
+    }
+
+    const type = typeof message._getType === "function" ? message._getType() : message.type;
+    const role = MESSAGE_TYPE_ROLE_MAP[type] || message.role || "user";
+    const content = normalizeMessageContent(message.content ?? message.text ?? "");
+
+    const normalized = {
+        role,
+        content,
+    };
+
+    if (message.name) {
+        normalized.name = message.name;
+    }
+
+    const additional = message.additional_kwargs || {};
+    if (additional.function_call) {
+        normalized.function_call = additional.function_call;
+    }
+    if (Array.isArray(additional.tool_calls) && additional.tool_calls.length > 0) {
+        normalized.tool_calls = additional.tool_calls;
+    }
+
+    if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
+        normalized.tool_calls = message.tool_calls;
+    }
+
+    if (typeof message.function_call === "object" && message.function_call !== null) {
+        normalized.function_call = message.function_call;
+    }
+
+    return normalized;
+}
+
+function normalizeMessageContent(content) {
+    if (typeof content === "string") {
+        return content;
+    }
+    if (Array.isArray(content)) {
+        return content
+            .map((entry) => {
+                if (!entry) return "";
+                if (typeof entry === "string") return entry;
+                if (typeof entry.text === "string") return entry.text;
+                if (typeof entry.content === "string") return entry.content;
+                if (typeof entry.message === "string") return entry.message;
+                return "";
+            })
+            .filter(Boolean)
+            .join("\n");
+    }
+    if (content && typeof content === "object") {
+        if (typeof content.text === "string") return content.text;
+        if (typeof content.content === "string") return content.content;
+        if (typeof content.message === "string") return content.message;
+        try {
+            return JSON.stringify(content);
+        } catch {
+            return String(content);
+        }
+    }
+    if (content == null) {
+        return "";
+    }
+    return String(content);
 }
 
 function getChatEndpoints() {
@@ -155,9 +264,14 @@ const callChatEndpoint = new RunnableLambda({
             throw new Error("No chat endpoint is configured.");
         }
 
+        const normalizedMessages = normalizeMessages(messages);
+        if (normalizedMessages.length === 0) {
+            throw new Error("Chat prompt did not produce any messages.");
+        }
+
         const payload = {
             model: getChatModel(),
-            messages,
+            messages: normalizedMessages,
             temperature: 0.8,
             max_tokens: 600,
             stream: false,
