@@ -557,7 +557,17 @@ export function normalizeWorldSkillDefs(raw) {
 }
 
 export function normalizeCombatSkillDefs(raw) {
-    const source = Array.isArray(raw) ? raw : [];
+    let source = [];
+    if (Array.isArray(raw)) {
+        source = raw;
+    } else if (raw && typeof raw === "object") {
+        source = Object.values(raw).reduce((acc, value) => {
+            if (Array.isArray(value)) {
+                acc.push(...value);
+            }
+            return acc;
+        }, []);
+    }
     const seen = new Set();
     const normalized = [];
     for (const entry of source) {

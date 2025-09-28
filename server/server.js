@@ -1745,17 +1745,69 @@ function normalizeCombatSkillEntry(entry, seen) {
     return normalized;
 }
 
-function ensureCombatSkills(game) {
-    if (!game || typeof game !== 'object') return [];
-    const source = Array.isArray(game.combatSkills) ? game.combatSkills : [];
+function normalizeCombatSkillList(source) {
     const seen = new Set();
     const normalized = [];
-    for (const entry of source) {
+    const entries = Array.isArray(source) ? source : [];
+    for (const entry of entries) {
         const skill = normalizeCombatSkillEntry(entry, seen);
         if (skill) normalized.push(skill);
     }
+    return normalized;
+}
+
+function ensureCombatSkills(game) {
+    if (!game || typeof game !== 'object') {
+        return {};
+    }
+    const normalized = {};
+    const raw = game.combatSkills;
+    if (Array.isArray(raw)) {
+        const owner = typeof game.dmId === 'string' && game.dmId ? game.dmId : 'dm';
+        normalized[owner] = normalizeCombatSkillList(raw);
+    } else if (raw && typeof raw === 'object') {
+        for (const [ownerId, list] of Object.entries(raw)) {
+            if (typeof ownerId !== 'string' || !ownerId.trim()) continue;
+            normalized[ownerId.trim()] = normalizeCombatSkillList(list);
+        }
+    }
+    const dmOwner = typeof game.dmId === 'string' && game.dmId ? game.dmId : 'dm';
+    if (!normalized[dmOwner]) {
+        normalized[dmOwner] = [];
+    }
     game.combatSkills = normalized;
     return normalized;
+}
+
+function ensureCombatSkillBucket(game, ownerId) {
+    if (!ownerId || typeof ownerId !== 'string') {
+        return [];
+    }
+    const map = ensureCombatSkills(game);
+    if (!Array.isArray(map[ownerId])) {
+        map[ownerId] = [];
+    }
+    return map[ownerId];
+}
+
+function resolveCombatSkillOwnerId(game, actorId, requestedId) {
+    const requested = parseUUID(requestedId);
+    if (isDM(game, actorId)) {
+        if (requested) {
+            if (requested === game.dmId) return requested;
+            const targetPlayer = findPlayer(game, requested);
+            if (targetPlayer) return requested;
+        }
+        return typeof game.dmId === 'string' ? game.dmId : requested || null;
+    }
+    if (!actorId) return null;
+    if (requested && requested !== actorId) {
+        return null;
+    }
+    if (actorId === game.dmId || findPlayer(game, actorId)) {
+        return actorId;
+    }
+    return null;
 }
 
 function ensureGearEntry(item) {
@@ -5137,7 +5189,18 @@ app.post('/api/games/:id/combat-skills', requireAuth, async (req, res) => {
         return res.status(403).json({ error: 'forbidden' });
     }
 
-    const list = ensureCombatSkills(game);
+    const requestedOwnerId =
+        (typeof req.body?.targetUserId === 'string' && req.body.targetUserId) ||
+        (typeof req.body?.userId === 'string' && req.body.userId) ||
+        (typeof req.query?.targetUserId === 'string' && req.query.targetUserId) ||
+        (typeof req.query?.userId === 'string' && req.query.userId) ||
+        null;
+    const ownerId = resolveCombatSkillOwnerId(game, req.session.userId, requestedOwnerId);
+    if (!ownerId) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const list = ensureCombatSkillBucket(game, ownerId);
     const payload = req.body?.skill || req.body || {};
     const seen = new Set(list.map((skill) => skill.id));
     const entry = normalizeCombatSkillEntry(payload, seen);
@@ -5162,7 +5225,18 @@ app.put('/api/games/:id/combat-skills/:skillId', requireAuth, async (req, res) =
         return res.status(403).json({ error: 'forbidden' });
     }
 
-    const list = ensureCombatSkills(game);
+    const requestedOwnerId =
+        (typeof req.body?.targetUserId === 'string' && req.body.targetUserId) ||
+        (typeof req.body?.userId === 'string' && req.body.userId) ||
+        (typeof req.query?.targetUserId === 'string' && req.query.targetUserId) ||
+        (typeof req.query?.userId === 'string' && req.query.userId) ||
+        null;
+    const ownerId = resolveCombatSkillOwnerId(game, req.session.userId, requestedOwnerId);
+    if (!ownerId) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const list = ensureCombatSkillBucket(game, ownerId);
     const idx = list.findIndex((skill) => skill && skill.id === skillId);
     if (idx === -1) {
         return res.status(404).json({ error: 'skill_not_found' });
@@ -5343,12 +5417,24 @@ app.delete('/api/games/:id/combat-skills/:skillId', requireAuth, async (req, res
         return res.status(403).json({ error: 'forbidden' });
     }
 
-    const list = ensureCombatSkills(game);
+    const requestedOwnerId =
+        (typeof req.body?.targetUserId === 'string' && req.body.targetUserId) ||
+        (typeof req.body?.userId === 'string' && req.body.userId) ||
+        (typeof req.query?.targetUserId === 'string' && req.query.targetUserId) ||
+        (typeof req.query?.userId === 'string' && req.query.userId) ||
+        null;
+    const ownerId = resolveCombatSkillOwnerId(game, req.session.userId, requestedOwnerId);
+    if (!ownerId) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const list = ensureCombatSkillBucket(game, ownerId);
     const next = list.filter((skill) => skill && skill.id !== skillId);
     if (next.length === list.length) {
         return res.status(404).json({ error: 'skill_not_found' });
     }
-    game.combatSkills = next;
+    ensureCombatSkills(game);
+    game.combatSkills[ownerId] = next;
 
     await persistGame(db, game, { reason: 'combatSkill:delete', actorId: req.session.userId });
     res.json({ ok: true });

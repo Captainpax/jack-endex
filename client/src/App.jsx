@@ -10246,12 +10246,83 @@ function formatDuration(ms) {
     return `${seconds}s`;
 }
 
+function readCombatSkillBucket(collection, ownerId, dmId) {
+    if (!collection) return [];
+    if (Array.isArray(collection)) {
+        if (ownerId && dmId && ownerId === dmId) {
+            return collection;
+        }
+        return [];
+    }
+    if (!ownerId) {
+        const dmBucket = dmId && collection && typeof collection === 'object' ? collection[dmId] : null;
+        return Array.isArray(dmBucket) ? dmBucket : [];
+    }
+    if (collection && typeof collection === 'object') {
+        const bucket = collection[ownerId];
+        if (Array.isArray(bucket)) return bucket;
+    }
+    return [];
+}
+
 // ---------- Items ----------
 
 function CombatSkillsTab({ game, me, onUpdate }) {
     const isDM = game.dmId === me.id;
     const abilityDefault = ABILITY_DEFS[0]?.key || "INT";
-    const combatSkills = useMemo(() => normalizeCombatSkillDefs(game.combatSkills), [game.combatSkills]);
+    const ownerOptions = useMemo(() => {
+        const options = [];
+        const seen = new Set();
+        const addOption = (value, label) => {
+            if (!value || seen.has(value)) return;
+            seen.add(value);
+            options.push({ value, label });
+        };
+        const players = Array.isArray(game.players) ? game.players.filter(Boolean) : [];
+        if (isDM && typeof game.dmId === "string" && game.dmId) {
+            const dmLabel = game.dmId === me.id
+                ? `You (${me.username || "Dungeon Master"})`
+                : "Dungeon Master";
+            addOption(game.dmId, dmLabel);
+        }
+        for (const player of players) {
+            if (!player?.userId) continue;
+            if (!isDM && player.userId !== me.id) continue;
+            const baseLabel = describePlayerName(player);
+            const label = player.userId === me.id ? `You (${baseLabel})` : baseLabel;
+            addOption(player.userId, label);
+        }
+        if (!isDM && me?.id && !seen.has(me.id)) {
+            const fallbackLabel = me.username ? `You (${me.username})` : "You";
+            addOption(me.id, fallbackLabel);
+        }
+        return options;
+    }, [game.dmId, game.players, isDM, me?.id, me?.username]);
+    const defaultOwnerId = useMemo(() => {
+        if (ownerOptions.length > 0) return ownerOptions[0].value;
+        if (isDM && typeof game.dmId === "string" && game.dmId) return game.dmId;
+        if (me?.id) return me.id;
+        return "";
+    }, [game.dmId, isDM, me?.id, ownerOptions]);
+    const [activeOwnerId, setActiveOwnerId] = useState(defaultOwnerId);
+    useEffect(() => {
+        if (ownerOptions.length === 0) {
+            setActiveOwnerId("");
+            return;
+        }
+        setActiveOwnerId((prev) => {
+            if (prev && ownerOptions.some((option) => option.value === prev)) {
+                return prev;
+            }
+            return defaultOwnerId;
+        });
+    }, [defaultOwnerId, ownerOptions]);
+    const activeOwnerValue = activeOwnerId || defaultOwnerId;
+    const rawCombatSkills = useMemo(
+        () => readCombatSkillBucket(game.combatSkills, activeOwnerValue, game.dmId),
+        [game.combatSkills, activeOwnerValue, game.dmId],
+    );
+    const combatSkills = useMemo(() => normalizeCombatSkillDefs(rawCombatSkills), [rawCombatSkills]);
     const worldSkills = useMemo(() => normalizeWorldSkillDefs(game.worldSkills), [game.worldSkills]);
     const demons = useMemo(
         () => (Array.isArray(game.demons) ? game.demons.filter(Boolean) : EMPTY_ARRAY),
@@ -10274,10 +10345,10 @@ function CombatSkillsTab({ game, me, onUpdate }) {
     const [rowBusy, setRowBusy] = useState(null);
     const [importBusyId, setImportBusyId] = useState(null);
     const skillLibraryDatalistId = "combat-skill-library-options";
-    const viewPrefKey = useMemo(
-        () => `combat-skill-view:${game.id || "game"}:${me.id || "user"}`,
-        [game.id, me.id]
-    );
+    const viewPrefKey = useMemo(() => {
+        const ownerKey = activeOwnerValue || me.id || game.dmId || "owner";
+        return `combat-skill-view:${game.id || "game"}:${ownerKey}`;
+    }, [activeOwnerValue, game.dmId, game.id, me.id]);
     const [viewPrefs, setViewPrefs] = useState(() => createEmptySkillViewPrefs());
     const [showHiddenSkills, setShowHiddenSkills] = useState(false);
     const canManage = isDM || !!game.permissions?.canEditCombatSkills;
@@ -10297,7 +10368,7 @@ function CombatSkillsTab({ game, me, onUpdate }) {
         });
         setActivePane("library");
         setShowHiddenSkills(false);
-    }, [game.id, abilityDefault]);
+    }, [abilityDefault, activeOwnerValue, game.id]);
 
     const editingSkill = useMemo(() => {
         if (!editingSkillId || editingSkillId === NEW_COMBAT_SKILL_ID) return null;
@@ -10559,6 +10630,7 @@ function CombatSkillsTab({ game, me, onUpdate }) {
             alert("Skill needs a name");
             return;
         }
+        const ownerIdForRequest = activeOwnerValue || defaultOwnerId || (isDM ? game.dmId : me.id) || null;
         const payload = {
             label,
             ability: ABILITY_KEY_SET.has(form.ability) ? form.ability : abilityDefault,
@@ -10573,10 +10645,19 @@ function CombatSkillsTab({ game, me, onUpdate }) {
         try {
             if (editingSkillId === NEW_COMBAT_SKILL_ID) {
                 setBusy(true);
-                await Games.addCombatSkill(game.id, payload);
+                await Games.addCombatSkill(
+                    game.id,
+                    payload,
+                    ownerIdForRequest ? { userId: ownerIdForRequest } : undefined,
+                );
             } else if (editingSkill) {
                 setRowBusy(editingSkill.id);
-                await Games.updateCombatSkill(game.id, editingSkill.id, payload);
+                await Games.updateCombatSkill(
+                    game.id,
+                    editingSkill.id,
+                    payload,
+                    ownerIdForRequest ? { userId: ownerIdForRequest } : undefined,
+                );
             }
             setEditingSkillId(null);
             await onUpdate?.();
@@ -10586,16 +10667,34 @@ function CombatSkillsTab({ game, me, onUpdate }) {
             setBusy(false);
             setRowBusy(null);
         }
-    }, [abilityDefault, canManage, editingSkill, editingSkillId, form, game.id, onUpdate]);
+    }, [
+        abilityDefault,
+        activeOwnerValue,
+        canManage,
+        defaultOwnerId,
+        editingSkill,
+        editingSkillId,
+        form,
+        game.dmId,
+        game.id,
+        isDM,
+        me.id,
+        onUpdate,
+    ]);
 
     const handleDelete = useCallback(
         async (skill) => {
             if (!canManage || !skill) return;
             const confirmed = confirm(`Delete ${skill.label}? This cannot be undone.`);
             if (!confirmed) return;
+            const ownerIdForRequest = activeOwnerValue || defaultOwnerId || (isDM ? game.dmId : me.id) || null;
             try {
                 setRowBusy(skill.id);
-                await Games.deleteCombatSkill(game.id, skill.id);
+                await Games.deleteCombatSkill(
+                    game.id,
+                    skill.id,
+                    ownerIdForRequest ? { userId: ownerIdForRequest } : undefined,
+                );
                 await onUpdate?.();
             } catch (err) {
                 alert(err?.message || "Failed to delete combat skill");
@@ -10603,12 +10702,13 @@ function CombatSkillsTab({ game, me, onUpdate }) {
                 setRowBusy(null);
             }
         },
-        [canManage, game.id, onUpdate]
+        [activeOwnerValue, canManage, defaultOwnerId, game.dmId, game.id, isDM, me.id, onUpdate]
     );
 
     const importGlossarySkill = useCallback(
         async (entry) => {
             if (!canManage || !entry || typeof entry.label !== "string") return;
+            const ownerIdForRequest = activeOwnerValue || defaultOwnerId || (isDM ? game.dmId : me.id) || null;
             const payload = {
                 label: entry.label,
                 ability: ABILITY_KEY_SET.has(entry.ability) ? entry.ability : abilityDefault,
@@ -10620,7 +10720,11 @@ function CombatSkillsTab({ game, me, onUpdate }) {
             };
             try {
                 setImportBusyId(entry.id);
-                await Games.addCombatSkill(game.id, payload);
+                await Games.addCombatSkill(
+                    game.id,
+                    payload,
+                    ownerIdForRequest ? { userId: ownerIdForRequest } : undefined,
+                );
                 await onUpdate?.();
             } catch (err) {
                 alert(err?.message || "Failed to import skill");
@@ -10628,7 +10732,17 @@ function CombatSkillsTab({ game, me, onUpdate }) {
                 setImportBusyId(null);
             }
         },
-        [abilityDefault, canManage, game.id, onUpdate]
+        [
+            abilityDefault,
+            activeOwnerValue,
+            canManage,
+            defaultOwnerId,
+            game.dmId,
+            game.id,
+            isDM,
+            me.id,
+            onUpdate,
+        ]
     );
 
     const renderSkillEditor = (mode) => {
@@ -10822,6 +10936,21 @@ function CombatSkillsTab({ game, me, onUpdate }) {
                 {activePane === "library" ? (
                     <>
                         <div className="combat-skill-manager__filters row wrap">
+                            {isDM && ownerOptions.length > 0 && (
+                                <label className="text-small" style={{ minWidth: 200 }}>
+                                    Managing skills for
+                                    <select
+                                        value={activeOwnerValue}
+                                        onChange={(e) => setActiveOwnerId(e.target.value)}
+                                    >
+                                        {ownerOptions.map((option) => (
+                                            <option key={option.value} value={option.value}>
+                                                {option.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                            )}
                             <label className="text-small" style={{ flexGrow: 1 }}>
                                 Search
                                 <input
