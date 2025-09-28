@@ -9,7 +9,7 @@ import React, {
     useRef,
     useState,
 } from "react";
-import { ApiError, Auth, Games, Help, StoryLogs, onApiActivity } from "./api";
+import { ApiError, Auth, Games, Help, StoryLogs, onApiActivity, LocalAI } from "./api";
 
 import useRealtimeConnection from "./hooks/useRealtimeConnection";
 import useBattleLogger from "./hooks/useBattleLogger";
@@ -86,6 +86,88 @@ function normalizePrimaryBot(primaryBot) {
     };
 }
 
+
+
+function safeAiString(value) {
+    if (typeof value === "string") return value.trim();
+    if (value === undefined || value === null) return "";
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return String(value);
+    }
+    return "";
+}
+
+function buildAiGearSummary(gear) {
+    if (!gear || typeof gear !== "object") {
+        return { equipped: {}, bag: [] };
+    }
+
+    const equipped = {};
+    if (gear.equipped && typeof gear.equipped === "object") {
+        for (const [slot, item] of Object.entries(gear.equipped)) {
+            if (!item || typeof item !== "object") continue;
+            const name = safeAiString(item.name || item.label || item.title);
+            const notes = safeAiString(item.notes || item.description);
+            const type = safeAiString(item.type || item.category);
+            if (!name && !notes && !type) continue;
+            equipped[slot] = { name, notes, type };
+        }
+    }
+
+    const bag = Array.isArray(gear.bag)
+        ? gear.bag
+              .filter((item) => item && typeof item === "object")
+              .slice(0, 6)
+              .map((item) => ({
+                  name: safeAiString(item.name || item.label || item.title),
+                  notes: safeAiString(item.notes || item.description),
+                  type: safeAiString(item.type || item.category),
+              }))
+              .filter((entry) => entry.name || entry.notes || entry.type)
+        : [];
+
+    return { equipped, bag };
+}
+
+function buildCharacterAiPayload(character) {
+    if (!character || typeof character !== "object") {
+        return {};
+    }
+
+    const profile = character.profile && typeof character.profile === "object" ? character.profile : {};
+    const resources = character.resources && typeof character.resources === "object" ? character.resources : {};
+
+    return {
+        name: safeAiString(character.name),
+        profile: {
+            class: safeAiString(profile.class),
+            concept: safeAiString(profile.concept),
+            race: safeAiString(profile.race),
+            alignment: safeAiString(profile.alignment),
+            arcana: safeAiString(profile.arcana),
+            nationality: safeAiString(profile.nationality),
+            age: safeAiString(profile.age),
+            gender: safeAiString(profile.gender),
+            height: safeAiString(profile.height),
+            weight: safeAiString(profile.weight),
+            eye: safeAiString(profile.eye),
+            hair: safeAiString(profile.hair),
+            skinTone: safeAiString(profile.skinTone),
+            background: safeAiString(profile.background),
+            notes: safeAiString(profile.notes),
+            expression: safeAiString(profile.expression),
+            style: safeAiString(profile.style),
+        },
+        resources: {
+            level: resources.level ?? "",
+            hp: resources.hp ?? "",
+            mp: resources.mp ?? "",
+            tp: resources.tp ?? "",
+            sp: resources.sp ?? "",
+        },
+        gear: buildAiGearSummary(character.gear),
+    };
+}
 
 
 const RealtimeContext = createContext(null);
@@ -6861,6 +6943,12 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     const [ch, setCh] = useState(() => normalizeCharacter(slotCharacter, worldSkills));
     const portraitInputRef = useRef(null);
     const [portraitError, setPortraitError] = useState("");
+    const [imageGenerating, setImageGenerating] = useState(false);
+    const [imageError, setImageError] = useState("");
+    const [imagePromptPreview, setImagePromptPreview] = useState("");
+    const [backgroundUpdating, setBackgroundUpdating] = useState(false);
+    const [backgroundError, setBackgroundError] = useState("");
+    const [backgroundSuggestion, setBackgroundSuggestion] = useState(null);
     const [saving, setSaving] = useState(false);
     const [showWizard, setShowWizard] = useState(false);
     const [playerSortMode, setPlayerSortMode] = useState("name");
@@ -6879,6 +6967,13 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
             portraitInputRef.current.value = "";
         }
     }, [slotCharacter, setPortraitError]);
+
+    useEffect(() => {
+        setImageError("");
+        setImagePromptPreview("");
+        setBackgroundError("");
+        setBackgroundSuggestion(null);
+    }, [slotCharacter]);
 
     const set = useCallback((path, value) => {
         setCh((prev) => {
@@ -6945,6 +7040,9 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     const noPlayers = isDM && selectablePlayers.length === 0;
     const canEditSheet = (isDM && hasSelection) || (!isDM && !!game.permissions?.canEditStats);
     const disableInputs = !canEditSheet;
+    const aiCharacterPayload = useMemo(() => buildCharacterAiPayload(ch), [ch]);
+    const backgroundText = get(ch, "profile.background") ?? "";
+    const notesText = get(ch, "profile.notes") ?? "";
     const disableSave = saving || !canEditSheet;
 
     const [collapsedSections, setCollapsedSections] = useState(() => ({
@@ -7113,6 +7211,29 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     const headlineParts = [classLabel, arcanaLabel, alignmentLabel].filter(Boolean);
     const portraitButtonLabel = hasPortrait ? "Replace portrait" : "Upload portrait";
 
+    const handleGeneratePortrait = useCallback(async () => {
+        if (disableInputs) return;
+        setImageError("");
+        setImageGenerating(true);
+        try {
+            const result = await LocalAI.generatePortrait({ character: aiCharacterPayload });
+            if (result?.image) {
+                set("profile.portrait", result.image);
+                setPortraitError("");
+            }
+            if (typeof result?.prompt === "string") {
+                const promptText = result.prompt.trim();
+                setImagePromptPreview(promptText);
+            }
+        } catch (err) {
+            console.error("Failed to generate portrait", err);
+            const message = err instanceof ApiError ? err.message : err?.message || "Failed to generate portrait.";
+            setImageError(message);
+        } finally {
+            setImageGenerating(false);
+        }
+    }, [aiCharacterPayload, disableInputs, set, setPortraitError]);
+
     const handlePortraitUploadClick = useCallback(() => {
         if (disableInputs) return;
         portraitInputRef.current?.click();
@@ -7171,6 +7292,62 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
         [disableInputs, set, setPortraitError]
     );
 
+    const handleUpdateBackground = useCallback(async () => {
+        if (disableInputs) return;
+        setBackgroundError("");
+        setBackgroundUpdating(true);
+        try {
+            const result = await LocalAI.enhanceBackground({
+                character: aiCharacterPayload,
+                background: backgroundText,
+                notes: notesText,
+            });
+            const nextBackground =
+                typeof result?.background === "string" && result.background.trim()
+                    ? result.background.trim()
+                    : backgroundText;
+            const nextNotes =
+                typeof result?.notes === "string" && result.notes.trim() ? result.notes.trim() : notesText;
+            setBackgroundSuggestion({
+                background: nextBackground,
+                notes: nextNotes,
+                draftBackground: nextBackground,
+                draftNotes: nextNotes,
+                summary: typeof result?.summary === "string" ? result.summary : "",
+            });
+        } catch (err) {
+            console.error("Failed to enhance background", err);
+            const message =
+                err instanceof ApiError ? err.message : err?.message || "Failed to enhance background.";
+            setBackgroundError(message);
+        } finally {
+            setBackgroundUpdating(false);
+        }
+    }, [aiCharacterPayload, backgroundText, disableInputs, notesText]);
+
+    const handleSuggestionDraftChange = useCallback(
+        (field) => (event) => {
+            const value = event?.target?.value ?? "";
+            setBackgroundSuggestion((prev) => {
+                if (!prev) return prev;
+                return { ...prev, [field]: value };
+            });
+        },
+        [],
+    );
+
+    const handleApplySuggestion = useCallback(() => {
+        if (!backgroundSuggestion) return;
+        set("profile.background", backgroundSuggestion.draftBackground);
+        set("profile.notes", backgroundSuggestion.draftNotes);
+        setBackgroundSuggestion(null);
+        setBackgroundError("");
+    }, [backgroundSuggestion, set]);
+
+    const handleDismissSuggestion = useCallback(() => {
+        setBackgroundSuggestion(null);
+    }, []);
+
     const handleWizardApply = useCallback(
         async (payload) => {
             const next = normalizeCharacter(payload || {}, worldSkills);
@@ -7223,19 +7400,6 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                     </option>
                 ))}
             </select>
-        </label>
-    );
-
-    const textareaField = (label, path, props = {}) => (
-        <label className="field">
-            <span className="field__label">{label}</span>
-            <textarea
-                rows={props.rows || 3}
-                placeholder={props.placeholder || ""}
-                value={get(ch, path) ?? ""}
-                onChange={(e) => set(path, e.target.value)}
-                disabled={disableInputs || props.disabled}
-            />
         </label>
     );
 
@@ -7337,6 +7501,14 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                                         <div className="sheet-portrait__actions">
                                             <button
                                                 type="button"
+                                                className="btn btn-small"
+                                                onClick={handleGeneratePortrait}
+                                                disabled={disableInputs || imageGenerating}
+                                            >
+                                                {imageGenerating ? "Generating..." : "Generate image"}
+                                            </button>
+                                            <button
+                                                type="button"
                                                 className="btn secondary btn-small"
                                                 onClick={handlePortraitUploadClick}
                                                 disabled={disableInputs}
@@ -7354,8 +7526,21 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                                                 </button>
                                             )}
                                         </div>
-                                        {portraitError && (
-                                            <p className="text-error sheet-portrait__error">{portraitError}</p>
+                                        {(portraitError || imageError) && (
+                                            <div className="sheet-portrait__messages">
+                                                {portraitError && (
+                                                    <p className="text-error sheet-portrait__error">{portraitError}</p>
+                                                )}
+                                                {imageError && (
+                                                    <p className="text-error sheet-portrait__error">{imageError}</p>
+                                                )}
+                                            </div>
+                                        )}
+                                        {imagePromptPreview && (
+                                            <details className="sheet-portrait__prompt">
+                                                <summary>Prompt used</summary>
+                                                <p>{imagePromptPreview}</p>
+                                            </details>
                                         )}
                                     </>
                                 )}
@@ -7455,9 +7640,89 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                                     {textField("Skin tone", "profile.skinTone")}
                                 </div>
                                 <div className="sheet-grid sheet-grid--stretch">
-                                    {textareaField("Background & hooks", "profile.background", { rows: 3 })}
-                                    {textareaField("Notes", "profile.notes", { rows: 3 })}
+                                    <div className="field field--with-action">
+                                        <div className="field__header">
+                                            <span className="field__label">Background & hooks</span>
+                                            {canEditSheet && (
+                                                <button
+                                                    type="button"
+                                                    className="btn secondary btn-small"
+                                                    onClick={handleUpdateBackground}
+                                                    disabled={disableInputs || backgroundUpdating}
+                                                >
+                                                    {backgroundUpdating
+                                                        ? "Updating..."
+                                                        : "Update background & notes"}
+                                                </button>
+                                            )}
+                                        </div>
+                                        <textarea
+                                            rows={3}
+                                            value={backgroundText}
+                                            onChange={(e) => set("profile.background", e.target.value)}
+                                            disabled={disableInputs}
+                                        />
+                                        {backgroundError && (
+                                            <p className="text-error field__error">{backgroundError}</p>
+                                        )}
+                                    </div>
+                                    <label className="field">
+                                        <span className="field__label">Notes</span>
+                                        <textarea
+                                            rows={3}
+                                            value={notesText}
+                                            onChange={(e) => set("profile.notes", e.target.value)}
+                                            disabled={disableInputs}
+                                        />
+                                    </label>
                                 </div>
+                                {backgroundSuggestion && (
+                                    <div className="ai-suggestion" role="region" aria-live="polite">
+                                        <div className="ai-suggestion__header">
+                                            <h5>Suggested update</h5>
+                                            <p className="text-muted text-small">
+                                                Review the generated text, tweak anything you'd like, then apply it to your
+                                                sheet.
+                                            </p>
+                                        </div>
+                                        <label className="field">
+                                            <span className="field__label">Suggested background</span>
+                                            <textarea
+                                                rows={4}
+                                                value={backgroundSuggestion.draftBackground}
+                                                onChange={handleSuggestionDraftChange("draftBackground")}
+                                                disabled={backgroundUpdating}
+                                            />
+                                        </label>
+                                        <label className="field">
+                                            <span className="field__label">Suggested notes</span>
+                                            <textarea
+                                                rows={4}
+                                                value={backgroundSuggestion.draftNotes}
+                                                onChange={handleSuggestionDraftChange("draftNotes")}
+                                                disabled={backgroundUpdating}
+                                            />
+                                        </label>
+                                        <div className="ai-suggestion__actions">
+                                            <button
+                                                type="button"
+                                                className="btn btn-small"
+                                                onClick={handleApplySuggestion}
+                                                disabled={backgroundUpdating}
+                                            >
+                                                Apply to sheet
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="btn ghost btn-small"
+                                                onClick={handleDismissSuggestion}
+                                                disabled={backgroundUpdating}
+                                            >
+                                                Dismiss
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </section>
