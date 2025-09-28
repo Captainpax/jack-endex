@@ -752,7 +752,7 @@ async function enhanceStableDiffusionPrompt(basePrompt, variables) {
         basePrompt,
         context,
     });
-    const enhanced = await callChatEndpoint(messages);
+    const enhanced = await callChatEndpoint.invoke(messages);
     return cleanEnhancedPrompt(enhanced, basePrompt);
 }
 
