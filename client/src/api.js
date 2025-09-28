@@ -759,7 +759,11 @@ export const ServerAdmin = {
         list: () => api('/api/admin/demons'),
         update: (id, payload) =>
             api(`/api/admin/demons/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload }),
-        uploadCsv: (csv) => api('/api/admin/demons/upload', { method: 'POST', body: { csv } }),
+        uploadCsv: (csv, options = {}) =>
+            api('/api/admin/demons/upload', {
+                method: 'POST',
+                body: { csv, confirmDeletes: !!options.confirmDeletes },
+            }),
         sync: () => api('/api/admin/demons/sync', { method: 'POST' }),
     },
     masterBot: {
