@@ -12,6 +12,7 @@ import React, {
 import { ApiError, Auth, Games, Help, StoryLogs, onApiActivity } from "./api";
 
 import useRealtimeConnection from "./hooks/useRealtimeConnection";
+import useBattleLogger from "./hooks/useBattleLogger";
 import MathField from "./components/MathField";
 import WorldSkillsTab from "./components/WorldSkillsTab";
 import { GearTab, ItemsTab } from "./components/ItemsGearTabs";
@@ -1678,6 +1679,12 @@ const MAP_SIDEBAR_TABS = [
     { key: 'shapes', label: 'Shapes', description: 'Create tactical shapes and zones.' },
     { key: 'library', label: 'Library', description: 'Save and load prepared battle maps.' },
 ];
+const MAP_BATTLE_LOG_TAB = {
+    key: 'log',
+    label: 'Battle Log',
+    description: 'Review realtime battle map activity and automation.',
+};
+const MAP_BATTLE_LOG_LIMIT = 200;
 
 function mapClamp01(value) {
     const num = Number(value);
@@ -2198,6 +2205,74 @@ function CombatTimeline({ entries, ariaLabel = 'Turn order timeline' }) {
     );
 }
 
+function resolveBattleLogActorName(actorId, playerMap, me, dmId) {
+    if (!actorId) return 'System';
+    if (me?.id && actorId === me.id) return 'You';
+    if (dmId && actorId === dmId) return dmId === me?.id ? 'You (DM)' : 'Dungeon Master';
+    if (playerMap && typeof playerMap.get === 'function') {
+        const player = playerMap.get(actorId);
+        if (player) {
+            const name = describePlayerName(player);
+            if (actorId === me?.id) {
+                return `${name} (you)`;
+            }
+            return name;
+        }
+    }
+    return `User ${actorId.slice(0, 8)}`;
+}
+
+function formatBattleLogTimestamp(value) {
+    if (typeof value !== 'string') return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function BattleLogPanel({ entries, playerMap, me, dmId }) {
+    const hasEntries = Array.isArray(entries) && entries.length > 0;
+    const ordered = hasEntries ? entries.slice().reverse() : [];
+
+    return (
+        <section className="map-battle-log" aria-label="Battle log">
+            <header className="map-battle-log__header">
+                <h3>Battle Log</h3>
+                <p className="text-muted">Detailed DM-only diagnostics for battle map activity.</p>
+            </header>
+            <div className="map-battle-log__scroller" role="log" aria-live="polite">
+                {hasEntries ? (
+                    ordered.map((entry) => {
+                        const actor = resolveBattleLogActorName(entry.actorId, playerMap, me, dmId);
+                        const timestamp = formatBattleLogTimestamp(entry.createdAt);
+                        return (
+                            <article key={entry.id} className="map-battle-log__entry">
+                                <div className="map-battle-log__meta">
+                                    <span className="map-battle-log__time">{timestamp}</span>
+                                    <span className="map-battle-log__actor">{actor}</span>
+                                </div>
+                                <div className="map-battle-log__message">
+                                    {entry.message || entry.action}
+                                </div>
+                                <div className="map-battle-log__action" aria-label="Log action">
+                                    <code>{entry.action}</code>
+                                </div>
+                                {entry.details !== null && entry.details !== undefined && (
+                                    <details className="map-battle-log__details">
+                                        <summary>Details</summary>
+                                        <pre>{JSON.stringify(entry.details, null, 2)}</pre>
+                                    </details>
+                                )}
+                            </article>
+                        );
+                    })
+                ) : (
+                    <p className="map-battle-log__empty text-muted">No battle log entries yet.</p>
+                )}
+            </div>
+        </section>
+    );
+}
+
 function normalizeClientCombatState(state) {
     if (!state || typeof state !== 'object') {
         return { ...DEFAULT_CLIENT_COMBAT };
@@ -2220,6 +2295,34 @@ function normalizeClientCombatState(state) {
     return { active: true, order, turn, round, lastUpdatedAt };
 }
 
+function normalizeClientBattleLogEntry(entry) {
+    if (!entry || typeof entry !== 'object') return null;
+    const id = typeof entry.id === 'string' && entry.id ? entry.id : null;
+    if (!id) return null;
+    const action = typeof entry.action === 'string' && entry.action.trim() ? entry.action.trim() : 'event';
+    const message = typeof entry.message === 'string' ? entry.message : '';
+    const createdAt = typeof entry.createdAt === 'string' ? entry.createdAt : new Date().toISOString();
+    const actorId = typeof entry.actorId === 'string' ? entry.actorId : null;
+    let details = null;
+    if (entry.details !== undefined) {
+        try {
+            details = JSON.parse(JSON.stringify(entry.details));
+        } catch {
+            details = null;
+        }
+    }
+    return { id, action, message, createdAt, actorId, details };
+}
+
+function normalizeClientBattleLog(list) {
+    if (!Array.isArray(list)) return [];
+    const entries = list.map((entry) => normalizeClientBattleLogEntry(entry)).filter(Boolean);
+    if (entries.length <= MAP_BATTLE_LOG_LIMIT) {
+        return entries;
+    }
+    return entries.slice(entries.length - MAP_BATTLE_LOG_LIMIT);
+}
+
 function normalizeClientMapState(map) {
     if (!map || typeof map !== 'object') {
         return {
@@ -2232,6 +2335,7 @@ function normalizeClientMapState(map) {
             updatedAt: null,
             drawer: { ...MAP_DEFAULT_DRAWER },
             combat: { ...DEFAULT_CLIENT_COMBAT },
+            battleLog: [],
         };
     }
     const strokes = Array.isArray(map.strokes)
@@ -2271,6 +2375,7 @@ function normalizeClientMapState(map) {
         updatedAt: typeof map.updatedAt === 'string' ? map.updatedAt : null,
         drawer,
         combat: normalizeClientCombatState(map.combat),
+        battleLog: normalizeClientBattleLog(map.battleLog),
     };
 }
 
@@ -2311,6 +2416,12 @@ function describeDemonTooltip(demon) {
 
 function MapTab({ game, me }) {
     const isDM = game.dmId === me.id;
+    const realtime = useContext(RealtimeContext);
+    const logBattle = useBattleLogger(game.id);
+    const sidebarTabs = useMemo(
+        () => (isDM ? MAP_SIDEBAR_TABS.concat(MAP_BATTLE_LOG_TAB) : MAP_SIDEBAR_TABS),
+        [isDM],
+    );
     const [mapState, setMapState] = useState(() => normalizeClientMapState(game?.map));
     const [mapLibrary, setMapLibrary] = useState(() => normalizeMapLibrary(game?.mapLibrary));
     const [tokenTooltipsEnabled, setTokenTooltipsEnabled] = useState(
@@ -2422,6 +2533,24 @@ function MapTab({ game, me }) {
         };
     }, [game.id, isDM]);
 
+    useEffect(() => {
+        if (!isDM || !realtime?.subscribeBattleLog) return () => {};
+        const unsubscribe = realtime.subscribeBattleLog((entry) => {
+            const normalized = normalizeClientBattleLogEntry(entry);
+            if (!normalized) return;
+            setMapState((prev) => {
+                if (!prev) return prev;
+                const nextLog = (prev.battleLog || []).concat(normalized);
+                const trimmed =
+                    nextLog.length > MAP_BATTLE_LOG_LIMIT
+                        ? nextLog.slice(nextLog.length - MAP_BATTLE_LOG_LIMIT)
+                        : nextLog;
+                return { ...prev, battleLog: trimmed };
+            });
+        });
+        return unsubscribe;
+    }, [isDM, realtime]);
+
     const [tool, setTool] = useState('select');
     const [brushPalette, setBrushPalette] = useState(() => loadStoredBrushPalette());
     const [selectedBrushSlot, setSelectedBrushSlot] = useState(0);
@@ -2466,10 +2595,10 @@ function MapTab({ game, me }) {
     }, []);
 
     useEffect(() => {
-        if (!MAP_SIDEBAR_TABS.some((tab) => tab.key === sidebarTab)) {
-            setSidebarTab(MAP_SIDEBAR_TABS[0]?.key || 'tokens');
+        if (!sidebarTabs.some((tab) => tab.key === sidebarTab)) {
+            setSidebarTab(sidebarTabs[0]?.key || 'tokens');
         }
-    }, [sidebarTab]);
+    }, [sidebarTab, sidebarTabs]);
 
     useEffect(() => {
         if (!isDM || tool !== 'shape') {
@@ -2674,8 +2803,8 @@ function MapTab({ game, me }) {
     const canUndo = isActiveDrawer && undoStack.length > 0 && !undoInFlight;
     const drawerSelectValue = activeDrawerId || game.dmId || '';
     const activeSidebarTab = useMemo(
-        () => MAP_SIDEBAR_TABS.find((entry) => entry.key === sidebarTab) || MAP_SIDEBAR_TABS[0],
-        [sidebarTab],
+        () => sidebarTabs.find((entry) => entry.key === sidebarTab) || sidebarTabs[0],
+        [sidebarTab, sidebarTabs],
     );
 
     const demonMap = useMemo(() => {
@@ -2830,11 +2959,14 @@ function MapTab({ game, me }) {
                     updatedAt: new Date().toISOString(),
                 }));
                 setBackgroundDraft(normalized);
+                const keys = Object.keys(patch || {});
+                const summary = keys.length > 0 ? keys.join(', ') : 'background';
+                logBattle('map:background:update', `Updated background (${summary})`, patch);
             } catch (err) {
                 alert(err.message);
             }
         },
-        [game.id, isDM]
+        [game.id, isDM, logBattle]
     );
 
     const queueBackgroundUpdate = useCallback(
@@ -2874,10 +3006,11 @@ function MapTab({ game, me }) {
                 updatedAt: new Date().toISOString(),
             }));
             setBackgroundDraft(normalized);
+            logBattle('map:background:clear', 'Cleared battle map background');
         } catch (err) {
             alert(err.message);
         }
-    }, [game.id, isDM]);
+    }, [game.id, isDM, logBattle]);
 
     const handleBackgroundPointerDown = useCallback(
         (event) => {
@@ -2959,12 +3092,21 @@ function MapTab({ game, me }) {
                                 : next;
                         });
                     }
+                    const pointCount = Array.isArray(normalized.points) ? normalized.points.length : 0;
+                    const modeLabel = normalized.mode === 'erase' ? 'eraser' : 'brush';
+                    logBattle('map:stroke:add', `Added ${modeLabel} stroke (${pointCount} points)`, {
+                        strokeId: normalized.id,
+                        mode: normalized.mode,
+                        size: normalized.size,
+                        color: normalized.color,
+                        points: pointCount,
+                    });
                 }
             } catch (err) {
                 alert(err.message);
             }
         },
-        [game.id, me.id]
+        [game.id, logBattle, me.id]
     );
 
     const completeStroke = useCallback(() => {
@@ -2995,12 +3137,13 @@ function MapTab({ game, me }) {
                 strokes: prev.strokes.filter((stroke) => stroke.id !== target.id),
             }));
             setUndoStack((prev) => prev.slice(0, -1));
+            logBattle('map:stroke:undo', `Undid stroke ${target.id}`, { strokeId: target.id });
         } catch (err) {
             alert(err.message);
         } finally {
             setUndoInFlight(false);
         }
-    }, [game.id, isActiveDrawer, undoInFlight, undoStack]);
+    }, [game.id, isActiveDrawer, logBattle, undoInFlight, undoStack]);
 
     const handleCanvasPointerDown = useCallback(
         (event) => {
@@ -3204,12 +3347,19 @@ function MapTab({ game, me }) {
                         ),
                         updatedAt: response?.updatedAt || prev.updatedAt,
                     }));
+                    const label = normalized?.label || token.label || token.id;
+                    const targetCoords = normalized ? { x: normalized.x, y: normalized.y } : coords;
+                    logBattle('map:token:update', `Moved token ${label}`, {
+                        tokenId: token.id,
+                        x: targetCoords.x,
+                        y: targetCoords.y,
+                    });
                 } catch (err) {
                     alert(err.message);
                 }
             })();
         },
-        [dragPreview, dragging, game.id]
+        [dragPreview, dragging, game.id, logBattle]
     );
 
     const handleToggleTooltip = useCallback(
@@ -3227,12 +3377,18 @@ function MapTab({ game, me }) {
                         ),
                         updatedAt: response?.updatedAt || prev.updatedAt,
                     }));
+                    const label = normalized.label || token.label || token.id;
+                    logBattle(
+                        'map:token:update',
+                        `${nextValue ? 'Enabled' : 'Disabled'} tooltip for ${label}`,
+                        { tokenId: normalized.id, showTooltip: normalized.showTooltip },
+                    );
                 }
             } catch (err) {
                 alert(err.message);
             }
         },
-        [game.id]
+        [game.id, logBattle]
     );
 
     const handleRemoveToken = useCallback(
@@ -3246,11 +3402,15 @@ function MapTab({ game, me }) {
                     tokens: prev.tokens.filter((entry) => entry.id !== token.id),
                     updatedAt: new Date().toISOString(),
                 }));
+                logBattle('map:token:remove', `Removed token ${token.label || token.id}`, {
+                    tokenId: token.id,
+                    kind: token.kind,
+                });
             } catch (err) {
                 alert(err.message);
             }
         },
-        [game.id, isDM]
+        [game.id, isDM, logBattle]
     );
 
     const handleAddPlayerToken = useCallback(async () => {
@@ -3267,12 +3427,19 @@ function MapTab({ game, me }) {
                     tokens: prev.tokens.concat(normalized),
                     updatedAt: response?.updatedAt || prev.updatedAt,
                 }));
+                const player = playerMap.get(normalized.refId);
+                const label = player ? describePlayerName(player) : normalized.label || 'Player token';
+                logBattle('map:token:add', `Placed player token for ${label}`, {
+                    tokenId: normalized.id,
+                    kind: normalized.kind,
+                    refId: normalized.refId || null,
+                });
             }
             setPlayerChoice('');
         } catch (err) {
             alert(err.message);
         }
-    }, [game.id, playerChoice]);
+    }, [game.id, logBattle, playerChoice, playerMap]);
 
     const handleAddDemonToken = useCallback(async () => {
         if (!demonChoice) return;
@@ -3288,12 +3455,19 @@ function MapTab({ game, me }) {
                     tokens: prev.tokens.concat(normalized),
                     updatedAt: response?.updatedAt || prev.updatedAt,
                 }));
+                const demon = findDemon(normalized.refId);
+                const label = demon?.name || normalized.label || 'Demon token';
+                logBattle('map:token:add', `Placed demon token for ${label}`, {
+                    tokenId: normalized.id,
+                    kind: normalized.kind,
+                    refId: normalized.refId || null,
+                });
             }
             setDemonChoice('');
         } catch (err) {
             alert(err.message);
         }
-    }, [demonChoice, game.id]);
+    }, [demonChoice, findDemon, game.id, logBattle]);
 
     const handleSubmitEnemyToken = useCallback(async () => {
         const name = enemyForm.label.trim();
@@ -3324,6 +3498,11 @@ function MapTab({ game, me }) {
                         tokens: prev.tokens.map((entry) => (entry.id === normalized.id ? normalized : entry)),
                         updatedAt: response?.updatedAt || prev.updatedAt,
                     }));
+                    const label = normalized.label || name;
+                    logBattle('map:token:update', `Updated enemy token ${label}`, {
+                        tokenId: normalized.id,
+                        kind: normalized.kind,
+                    });
                 }
             } else {
                 const response = await Games.addMapToken(game.id, payload);
@@ -3334,13 +3513,18 @@ function MapTab({ game, me }) {
                         tokens: prev.tokens.concat(normalized),
                         updatedAt: response?.updatedAt || prev.updatedAt,
                     }));
+                    const label = normalized.label || name;
+                    logBattle('map:token:add', `Placed enemy token ${label}`, {
+                        tokenId: normalized.id,
+                        kind: normalized.kind,
+                    });
                 }
             }
             resetEnemyForm();
         } catch (err) {
             alert(err.message);
         }
-    }, [enemyForm, game.id, resetEnemyForm]);
+    }, [enemyForm, game.id, logBattle, resetEnemyForm]);
 
     const handleAddShape = useCallback(
         async (type, extras = {}) => {
@@ -3354,12 +3538,17 @@ function MapTab({ game, me }) {
                         shapes: prev.shapes.concat(normalized),
                         updatedAt: response?.updatedAt || prev.updatedAt,
                     }));
+                    const label = MAP_SHAPE_LABELS[normalized.type] || normalized.type;
+                    logBattle('map:shape:add', `Added ${label} shape`, {
+                        shapeId: normalized.id,
+                        type: normalized.type,
+                    });
                 }
             } catch (err) {
                 alert(err.message);
             }
         },
-        [game.id, isDM]
+        [game.id, isDM, logBattle]
     );
 
     const handleUpdateShape = useCallback(
@@ -3374,12 +3563,18 @@ function MapTab({ game, me }) {
                         shapes: prev.shapes.map((shape) => (shape.id === shapeId ? normalized : shape)),
                         updatedAt: response?.updatedAt || prev.updatedAt,
                     }));
+                    const label = MAP_SHAPE_LABELS[normalized.type] || normalized.type;
+                    logBattle('map:shape:update', `Updated ${label} shape`, {
+                        shapeId: normalized.id,
+                        type: normalized.type,
+                        patch,
+                    });
                 }
             } catch (err) {
                 alert(err.message);
             }
         },
-        [game.id, isDM]
+        [game.id, isDM, logBattle]
     );
 
     const handleRemoveShape = useCallback(
@@ -3387,6 +3582,7 @@ function MapTab({ game, me }) {
             if (!isDM) return;
             if (!shapeId) return;
             if (!window.confirm('Remove this shape from the map?')) return;
+            const targetShape = mapState.shapes.find((shape) => shape.id === shapeId);
             try {
                 await Games.deleteMapShape(game.id, shapeId);
                 setMapState((prev) => ({
@@ -3394,11 +3590,13 @@ function MapTab({ game, me }) {
                     shapes: prev.shapes.filter((shape) => shape.id !== shapeId),
                     updatedAt: new Date().toISOString(),
                 }));
+                const label = targetShape ? MAP_SHAPE_LABELS[targetShape.type] || targetShape.type : 'shape';
+                logBattle('map:shape:remove', `Removed ${label}`, { shapeId });
             } catch (err) {
                 alert(err.message);
             }
         },
-        [game.id, isDM]
+        [game.id, isDM, logBattle, mapState.shapes]
     );
 
     const handleShapePointerDown = useCallback(
@@ -3696,10 +3894,14 @@ function MapTab({ game, me }) {
             } else {
                 await refreshMapLibrary();
             }
+            const label = typeof name === 'string' && name.trim() ? name.trim() : defaultName;
+            logBattle('map:library:save', `Saved map "${label}"`, {
+                entryId: response?.entry?.id || null,
+            });
         } catch (err) {
             alert(err.message);
         }
-    }, [game.id, isDM, mapLibrary.length, refreshMapLibrary]);
+    }, [game.id, isDM, logBattle, mapLibrary.length, refreshMapLibrary]);
 
     const handleLoadSavedMap = useCallback(
         async (entry) => {
@@ -3722,11 +3924,12 @@ function MapTab({ game, me }) {
                 } else {
                     await refreshMapLibrary();
                 }
+                logBattle('map:library:load', `Loaded saved map "${entry.name}"`, { entryId: entry.id });
             } catch (err) {
                 alert(err.message);
             }
         },
-        [game.id, isDM, refreshMapLibrary]
+        [game.id, isDM, logBattle, refreshMapLibrary]
     );
 
     const handleDeleteSavedMap = useCallback(
@@ -3743,21 +3946,27 @@ function MapTab({ game, me }) {
                 } else {
                     setMapLibrary((prev) => prev.filter((item) => item.id !== entry.id));
                 }
+                logBattle('map:library:delete', `Deleted saved map "${entry.name}"`, { entryId: entry.id });
             } catch (err) {
                 alert(err.message);
             }
         },
-        [game.id, isDM]
+        [game.id, isDM, logBattle]
     );
 
     const handleTogglePause = useCallback(async () => {
         try {
             const updated = await Games.updateMapSettings(game.id, { paused: !mapState.paused });
             setMapState(normalizeClientMapState(updated));
+            logBattle(
+                'map:settings:pause',
+                updated.paused ? 'Paused battle map updates' : 'Resumed battle map updates',
+                { paused: !!updated.paused },
+            );
         } catch (err) {
             alert(err.message);
         }
-    }, [game.id, mapState.paused]);
+    }, [game.id, logBattle, mapState.paused]);
 
     const handleDrawerChange = useCallback(
         async (nextUserId) => {
@@ -3769,18 +3978,25 @@ function MapTab({ game, me }) {
             try {
                 const updated = await Games.updateMapSettings(game.id, { drawerUserId: desired });
                 setMapState(normalizeClientMapState(updated));
+                const actorId = desired || game.dmId || '';
+                const drawerLabel = actorId
+                    ? resolveBattleLogActorName(actorId, playerMap, me, game.dmId)
+                    : 'Drawer';
+                logBattle('map:settings:drawer', `Assigned drawing control to ${drawerLabel}`, {
+                    drawerUserId: desired || null,
+                });
             } catch (err) {
                 alert(err.message);
             } finally {
                 setDrawerUpdating(false);
             }
         },
-        [game.dmId, game.id, isDM, mapState.drawer?.userId],
+        [game.dmId, game.id, isDM, logBattle, mapState.drawer?.userId, me, playerMap],
     );
 
     const handleSidebarTabKeyDown = useCallback(
         (event, index) => {
-            const total = MAP_SIDEBAR_TABS.length;
+            const total = sidebarTabs.length;
             if (total === 0) return;
             let nextIndex = index;
             switch (event.key) {
@@ -3802,12 +4018,12 @@ function MapTab({ game, me }) {
                     return;
             }
             event.preventDefault();
-            const nextTab = MAP_SIDEBAR_TABS[nextIndex];
+            const nextTab = sidebarTabs[nextIndex];
             if (nextTab) {
                 setSidebarTab(nextTab.key);
             }
         },
-        [setSidebarTab],
+        [setSidebarTab, sidebarTabs],
     );
 
     const handleSaveBrushColor = useCallback(() => {
@@ -3838,13 +4054,14 @@ function MapTab({ game, me }) {
             const response = await Games.clearMap(game.id);
             if (response && typeof response === 'object') {
                 setMapState(normalizeClientMapState(response));
+                logBattle('map:clear', 'Cleared the entire battle map');
             }
         } catch (err) {
             alert(err.message);
         } finally {
             setClearingMap(false);
         }
-    }, [game.id, isDM]);
+    }, [game.id, isDM, logBattle]);
 
     const parseCombatOrderInput = useCallback((value) => {
         return (value || '')
@@ -3874,12 +4091,17 @@ function MapTab({ game, me }) {
             });
             setMapState((prev) => ({ ...prev, combat: normalizeClientCombatState(response) }));
             setCombatNotice({ type: 'success', message: 'Combat started.' });
+            logBattle('map:combat:start', `Started combat (round ${roundValue}, turn ${turnValue})`, {
+                round: roundValue,
+                turn: turnValue,
+                order,
+            });
         } catch (err) {
             setCombatNotice({ type: 'error', message: err.message || 'Failed to start combat.' });
         } finally {
             setCombatBusy(false);
         }
-    }, [combatOrderDraft, combatRoundDraft, combatTurnDraft, game.id, isDM, parseCombatOrderInput]);
+    }, [combatOrderDraft, combatRoundDraft, combatTurnDraft, game.id, isDM, logBattle, parseCombatOrderInput]);
 
     const handleNextCombatTurn = useCallback(async () => {
         if (!isDM || !combatState.active) return;
@@ -3887,14 +4109,24 @@ function MapTab({ game, me }) {
             setCombatBusy(true);
             setCombatNotice(null);
             const response = await Games.nextCombatTurn(game.id, { order: combatState.order });
-            setMapState((prev) => ({ ...prev, combat: normalizeClientCombatState(response) }));
+            const nextState = normalizeClientCombatState(response);
+            setMapState((prev) => ({ ...prev, combat: nextState }));
             setCombatNotice({ type: 'success', message: 'Advanced to next turn.' });
+            logBattle(
+                'map:combat:advance',
+                `Advanced to round ${nextState.round}, turn ${nextState.turn}.`,
+                {
+                    round: nextState.round,
+                    turn: nextState.turn,
+                    order: nextState.order,
+                },
+            );
         } catch (err) {
             setCombatNotice({ type: 'error', message: err.message || 'Failed to advance turn.' });
         } finally {
             setCombatBusy(false);
         }
-    }, [combatState.active, combatState.order, game.id, isDM]);
+    }, [combatState.active, combatState.order, game.id, isDM, logBattle]);
 
     const handleEndCombat = useCallback(async () => {
         if (!isDM || !combatState.active) return;
@@ -3902,14 +4134,20 @@ function MapTab({ game, me }) {
             setCombatBusy(true);
             setCombatNotice(null);
             const response = await Games.endCombat(game.id);
-            setMapState((prev) => ({ ...prev, combat: normalizeClientCombatState(response) }));
+            const nextState = normalizeClientCombatState(response);
+            setMapState((prev) => ({ ...prev, combat: nextState }));
             setCombatNotice({ type: 'success', message: 'Combat ended.' });
+            logBattle('map:combat:end', 'Ended combat encounter.', {
+                previousRound: combatState.round,
+                previousTurn: combatState.turn,
+                order: combatState.order,
+            });
         } catch (err) {
             setCombatNotice({ type: 'error', message: err.message || 'Failed to end combat.' });
         } finally {
             setCombatBusy(false);
         }
-    }, [combatState.active, game.id, isDM]);
+    }, [combatState.active, combatState.order, combatState.round, combatState.turn, game.id, isDM, logBattle]);
 
     return (
         <div className="map-tab">
@@ -4472,7 +4710,7 @@ function MapTab({ game, me }) {
                 </div>
                 <aside className="map-sidebar">
                     <div className="map-sidebar__tabs" role="tablist" aria-label="Battle map sections">
-                        {MAP_SIDEBAR_TABS.map((tab, index) => {
+                        {sidebarTabs.map((tab, index) => {
                             const tabId = `map-tab-${tab.key}`;
                             const panelId = `map-tabpanel-${tab.key}`;
                             const isSelected = sidebarTab === tab.key;
@@ -5943,6 +6181,14 @@ function MapTab({ game, me }) {
                                     )}
                                 </MapAccordionSection>
                             </div>
+                        )}
+                        {sidebarTab === 'log' && isDM && (
+                            <BattleLogPanel
+                                entries={mapState.battleLog}
+                                playerMap={playerMap}
+                                me={me}
+                                dmId={game.dmId}
+                            />
                         )}
                     </div>
                 </aside>
@@ -11566,6 +11812,7 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
     }));
     const [mapSaving, setMapSaving] = useState(false);
     const [clearingDrawings, setClearingDrawings] = useState(false);
+    const logBattle = useBattleLogger(game.id);
 
     useEffect(() => {
         setPerms({
@@ -11633,7 +11880,7 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
             setMapSaving(true);
             try {
                 const updated = await Games.updateMapSettings(game.id, changes);
-                setMapSettings({
+                const resolvedSettings = {
                     allowPlayerDrawing: mapReadBoolean(
                         updated.settings?.allowPlayerDrawing,
                         MAP_DEFAULT_SETTINGS.allowPlayerDrawing,
@@ -11643,7 +11890,31 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
                         MAP_DEFAULT_SETTINGS.allowPlayerTokenMoves,
                     ),
                     paused: mapReadBoolean(updated.paused),
-                });
+                };
+                setMapSettings(resolvedSettings);
+                const summary = [];
+                const changeDetails = {};
+                if (Object.prototype.hasOwnProperty.call(changes, "allowPlayerDrawing")) {
+                    const enabled = !!changes.allowPlayerDrawing;
+                    summary.push(`${enabled ? "Enabled" : "Disabled"} player drawing`);
+                    changeDetails.allowPlayerDrawing = enabled;
+                }
+                if (Object.prototype.hasOwnProperty.call(changes, "allowPlayerTokenMoves")) {
+                    const enabled = !!changes.allowPlayerTokenMoves;
+                    summary.push(`${enabled ? "Enabled" : "Disabled"} player token moves`);
+                    changeDetails.allowPlayerTokenMoves = enabled;
+                }
+                if (Object.prototype.hasOwnProperty.call(changes, "paused")) {
+                    const paused = !!changes.paused;
+                    summary.push(paused ? "Paused the battle map" : "Resumed the battle map");
+                    changeDetails.paused = paused;
+                }
+                if (summary.length > 0) {
+                    logBattle("map:settings:update", `Updated map settings: ${summary.join(", ")}.`, {
+                        changes: changeDetails,
+                        settings: resolvedSettings,
+                    });
+                }
                 if (typeof onGameRefresh === "function") {
                     await onGameRefresh();
                 }
@@ -11654,7 +11925,7 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
                 setMapSaving(false);
             }
         },
-        [game.id, isDM, mapSettings, onGameRefresh]
+        [game.id, isDM, logBattle, mapSettings, onGameRefresh]
     );
 
     const handleClearDrawings = useCallback(async () => {
@@ -11663,6 +11934,7 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
         try {
             setClearingDrawings(true);
             await Games.clearMapStrokes(game.id);
+            logBattle("map:stroke:clear", "Cleared all map drawings from the settings panel.");
             if (typeof onGameRefresh === "function") {
                 await onGameRefresh();
             }
@@ -11671,7 +11943,7 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
         } finally {
             setClearingDrawings(false);
         }
-    }, [game.id, isDM, onGameRefresh]);
+    }, [game.id, isDM, logBattle, onGameRefresh]);
 
     const navSections = useMemo(() => {
         const sections = [

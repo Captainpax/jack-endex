@@ -81,6 +81,7 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
     const socketRef = useRef(null);
     const retryRef = useRef(null);
     const storyHandlersRef = useRef(new Set());
+    const battleLogHandlersRef = useRef(new Set());
     const latestStoryRef = useRef(null);
     const pendingPersonaRef = useRef(new Map());
     const [personaPrompts, setPersonaPrompts] = useState([]);
@@ -167,6 +168,17 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
             }
             return () => {
                 storyHandlersRef.current.delete(handler);
+            };
+        },
+        []
+    );
+
+    const subscribeBattleLog = useCallback(
+        (handler) => {
+            if (typeof handler !== "function") return () => {};
+            battleLogHandlersRef.current.add(handler);
+            return () => {
+                battleLogHandlersRef.current.delete(handler);
             };
         },
         []
@@ -326,6 +338,16 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
                 case "alert:error":
                     if (msg.gameId !== gameId) return;
                     setAlertError(typeof msg.error === "string" ? msg.error : "Alert failed");
+                    break;
+                case "map:battleLog":
+                    if (msg.gameId !== gameId || !msg.entry) return;
+                    for (const handler of battleLogHandlersRef.current) {
+                        try {
+                            handler(msg.entry);
+                        } catch (err) {
+                            console.error("battle log listener error", err);
+                        }
+                    }
                     break;
                 case "game:update":
                     if (msg.gameId !== gameId) return;
@@ -643,6 +665,7 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
         status: connectionState,
         connected: connectionState === "connected",
         subscribeStory,
+        subscribeBattleLog,
         requestPersona,
         respondPersona,
         personaPrompts,
