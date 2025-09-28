@@ -21,7 +21,11 @@ const LEGACY_GUIDANCE_SCALE = 7.5;
 const LEGACY_STEPS = 28;
 
 const portraitTemplate = PromptTemplate.fromTemplate(
-    "Portrait of a {race} {role}, wearing {armor}, in a {setting} background, with {expression} expression."
+    [
+        "Highly detailed portrait of a {race} {role} wearing {armor}.",
+        "Set in a {setting} background with a {expression} expression.",
+        "{details}",
+    ].join(" "),
 );
 
 function getBaseUrl() {
@@ -340,9 +344,11 @@ function buildPortraitVariables(character, overrides = {}) {
     const race = safeString(profile.race) || "mysterious adventurer";
     const role = safeString(profile.class) || safeString(profile.concept) || "hero";
     const armor = overrides.armor || inferArmor(gear) || "signature battle attire";
-    const setting = overrides.setting || safeString(profile.backgroundLocale || profile.nationality) || "dramatic fantasy scene";
+    const setting =
+        overrides.setting || safeString(profile.backgroundLocale || profile.nationality) || "dramatic fantasy scene";
     const expression = overrides.expression || safeString(profile.expression) || "determined";
     const style = overrides.style || safeString(profile.style);
+    const details = safeString(overrides.details) || gatherPortraitDetails(character, profile, gear);
 
     return {
         race,
@@ -351,7 +357,70 @@ function buildPortraitVariables(character, overrides = {}) {
         setting,
         expression,
         style,
+        details,
     };
+}
+
+function gatherPortraitDetails(character, profile, gear) {
+    const sentences = [];
+
+    const name = safeString(character?.name);
+    const gender = safeString(profile.gender || profile.pronouns || profile.sex);
+    const age = safeString(profile.age);
+    const identityBits = [
+        name ? `named ${name}` : "",
+        gender,
+        age ? `${age} years old` : "",
+    ]
+        .map((entry) => safeString(entry))
+        .filter(Boolean);
+    if (identityBits.length > 0) {
+        sentences.push(`Identity: ${identityBits.join(", ")}.`);
+    }
+
+    const appearanceTraits = [
+        profile.eye,
+        profile.hair,
+        profile.skinTone,
+        profile.height,
+        profile.build,
+        profile.appearance,
+        profile.distinguishingMarks,
+    ]
+        .map((entry) => safeString(entry))
+        .filter(Boolean)
+        .slice(0, 6);
+    if (appearanceTraits.length > 0) {
+        sentences.push(`Appearance: ${appearanceTraits.join(", ")}.`);
+    }
+
+    const personalityTraits = [
+        profile.personality,
+        profile.mannerisms,
+        profile.quirks,
+        profile.ideal,
+        profile.bond,
+        profile.flaw,
+        profile.notes,
+    ]
+        .map((entry) => safeString(entry))
+        .filter(Boolean)
+        .slice(0, 3);
+    if (personalityTraits.length > 0) {
+        sentences.push(`Personality: ${personalityTraits.join(" ")}.`);
+    }
+
+    const background = safeString(profile.background);
+    if (background) {
+        sentences.push(`Background: ${background}.`);
+    }
+
+    const equipment = summarizeEquipment(gear);
+    if (equipment) {
+        sentences.push(`Signature gear: ${equipment}.`);
+    }
+
+    return sentences.slice(0, 4).join(" ");
 }
 
 function inferArmor(gear) {
