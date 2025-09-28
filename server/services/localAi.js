@@ -4,7 +4,12 @@ import { StringOutputParser } from "@langchain/core/output_parsers";
 import { envString } from "../config/env.js";
 
 const DEFAULT_BASE_URL = "https://jack-ai.darkmatterservers.com";
-const DEFAULT_CHAT_PATH = "/chat/all-hands_openhands-lm-7b-v0.1";
+const DEFAULT_CHAT_PATHS = [
+    "/chat/all-hands_openhands-lm-7b-v0.1",
+    "/v1/chat/completions",
+    "/chat/completions",
+];
+const DEFAULT_CHAT_MODEL = "all-hands_openhands-lm-7b-v0.1";
 const DEFAULT_IMAGE_MODEL = "dreamshaper";
 const DEFAULT_IMAGE_PATHS = ["/v1/images/generations", "/text2image/dreamshaper"];
 const DEFAULT_NEGATIVE_PROMPT =
@@ -46,13 +51,36 @@ function toAbsoluteUrl(pathOrUrl, defaultPath = "") {
     return "";
 }
 
-function getChatEndpoint() {
+function getChatEndpoints() {
     const explicit = envString("LOCAL_AI_CHAT_ENDPOINT", "");
     if (explicit) {
-        return toAbsoluteUrl(explicit, explicit);
+        return [toAbsoluteUrl(explicit, explicit)];
     }
-    const path = envString("LOCAL_AI_CHAT_PATH", DEFAULT_CHAT_PATH) || DEFAULT_CHAT_PATH;
-    return toAbsoluteUrl(path, DEFAULT_CHAT_PATH);
+
+    const configuredPath = envString("LOCAL_AI_CHAT_PATH", "");
+    const candidates = [];
+    if (configuredPath) {
+        candidates.push(configuredPath);
+    }
+    for (const fallback of DEFAULT_CHAT_PATHS) {
+        if (!candidates.includes(fallback)) {
+            candidates.push(fallback);
+        }
+    }
+
+    const seen = new Set();
+    const endpoints = [];
+    for (const candidate of candidates) {
+        const url = toAbsoluteUrl(candidate, candidate);
+        if (!url || seen.has(url)) continue;
+        endpoints.push(url);
+        seen.add(url);
+    }
+    return endpoints;
+}
+
+function getChatModel() {
+    return envString("LOCAL_AI_CHAT_MODEL", DEFAULT_CHAT_MODEL) || DEFAULT_CHAT_MODEL;
 }
 
 function detectImageApiStyle(url) {
@@ -122,39 +150,56 @@ const backgroundPrompt = ChatPromptTemplate.fromMessages([
 
 const callChatEndpoint = new RunnableLambda({
     func: async (messages) => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 60_000);
-        try {
-            const endpoint = getChatEndpoint();
-            const response = await fetch(endpoint, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                signal: controller.signal,
-                body: JSON.stringify({
-                    messages,
-                    temperature: 0.8,
-                    max_tokens: 600,
-                    stream: false,
-                }),
-            });
-
-            if (!response.ok) {
-                const text = await response.text().catch(() => "");
-                throw new Error(`Chat model request failed (${response.status}): ${text || response.statusText}`);
-            }
-
-            const payload = await response.json();
-            const content =
-                payload?.choices?.[0]?.message?.content || payload?.message?.content || payload?.content || "";
-            if (!content) {
-                throw new Error("Chat model returned an empty response.");
-            }
-            return content;
-        } finally {
-            clearTimeout(timeout);
+        const endpoints = getChatEndpoints();
+        if (endpoints.length === 0) {
+            throw new Error("No chat endpoint is configured.");
         }
+
+        const payload = {
+            model: getChatModel(),
+            messages,
+            temperature: 0.8,
+            max_tokens: 600,
+            stream: false,
+        };
+
+        const errors = [];
+        for (const endpoint of endpoints) {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 60_000);
+            try {
+                const response = await fetch(endpoint, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    signal: controller.signal,
+                    body: JSON.stringify(payload),
+                });
+
+                if (!response.ok) {
+                    const text = await response.text().catch(() => "");
+                    throw new Error(`Chat model request failed (${response.status}): ${text || response.statusText}`);
+                }
+
+                const data = await response.json();
+                const content =
+                    data?.choices?.[0]?.message?.content || data?.message?.content || data?.content || "";
+                if (!content) {
+                    throw new Error("Chat model returned an empty response.");
+                }
+                return content;
+            } catch (error) {
+                errors.push({ endpoint, error });
+            } finally {
+                clearTimeout(timeout);
+            }
+        }
+
+        const detail = errors
+            .map(({ endpoint, error }) => `${endpoint}: ${error?.message || String(error)}`)
+            .join("; ");
+        throw new Error(`Chat model request failed after ${errors.length} attempt(s): ${detail || "unknown error"}`);
     },
 });
 
