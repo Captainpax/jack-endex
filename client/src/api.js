@@ -657,6 +657,12 @@ export const Games = {
             method: 'POST',
             quiet: true,
         }),
+    logBattleEvent: (id, entry) =>
+        api(`/api/games/${encodeURIComponent(id)}/map/battle-log`, {
+            method: 'POST',
+            body: entry,
+            quiet: true,
+        }),
     startCombat: (id, payload) =>
         api(`/api/games/${encodeURIComponent(id)}/map/combat/start`, {
             method: 'POST',

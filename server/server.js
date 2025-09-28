@@ -88,6 +88,9 @@ const DEFAULT_COMBAT_STATE = Object.freeze({
     order: [],
     lastUpdatedAt: null,
 });
+const MAP_BATTLE_LOG_LIMIT = 200;
+const MAX_BATTLE_LOG_ACTION_LENGTH = 120;
+const MAX_BATTLE_LOG_MESSAGE_LENGTH = 400;
 const DEFAULT_DB_PATH = path.join(__dirname, 'data', 'db.json');
 let legacySeedPromise = null;
 
@@ -882,6 +885,9 @@ function applyMapSnapshot(game, snapshot) {
         updatedAt: timestamp,
         drawer: { ...(normalized.drawer || DEFAULT_MAP_DRAWER) },
         combat: normalizeCombatState(normalized.combat || current.combat),
+        battleLog: Array.isArray(current.battleLog)
+            ? current.battleLog.slice(Math.max(0, current.battleLog.length - MAP_BATTLE_LOG_LIMIT))
+            : [],
     };
     return game.map;
 }
@@ -928,6 +934,101 @@ function normalizeMapStroke(entry, extras = {}) {
     const createdAt = typeof entry.createdAt === 'string' ? entry.createdAt : new Date().toISOString();
     const createdBy = typeof entry.createdBy === 'string' ? entry.createdBy : extras.createdBy || null;
     return { id, size, color, points, createdAt, createdBy, mode };
+}
+
+function sanitizeBattleLogText(value, maxLength) {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    if (!trimmed) return '';
+    if (!maxLength || trimmed.length <= maxLength) return trimmed;
+    return trimmed.slice(0, maxLength);
+}
+
+function normalizeBattleLogDetails(details) {
+    if (details === undefined) return undefined;
+    if (details === null) return null;
+    if (typeof details === 'string') {
+        return details.length > 500 ? details.slice(0, 500) : details;
+    }
+    if (typeof details === 'number' || typeof details === 'boolean') {
+        return details;
+    }
+    if (Array.isArray(details) || typeof details === 'object') {
+        try {
+            return JSON.parse(JSON.stringify(details));
+        } catch (err) {
+            console.warn('Failed to serialize battle log details', err);
+            return null;
+        }
+    }
+    return undefined;
+}
+
+function normalizeStoredBattleLogEntry(entry) {
+    if (!entry || typeof entry !== 'object') return null;
+    const id = typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : null;
+    if (!id) return null;
+    const action = sanitizeBattleLogText(entry.action, MAX_BATTLE_LOG_ACTION_LENGTH);
+    if (!action) return null;
+    const message = sanitizeBattleLogText(entry.message || '', MAX_BATTLE_LOG_MESSAGE_LENGTH);
+    const createdAt = typeof entry.createdAt === 'string' ? entry.createdAt : new Date().toISOString();
+    const actorId = typeof entry.actorId === 'string' && entry.actorId.trim() ? entry.actorId.trim() : null;
+    const normalized = { id, action, message, createdAt, actorId };
+    if (entry.details !== undefined) {
+        const details = normalizeBattleLogDetails(entry.details);
+        if (details !== undefined) normalized.details = details;
+    }
+    return normalized;
+}
+
+function createBattleLogEntry(payload, { actorId } = {}) {
+    if (!payload || typeof payload !== 'object') return null;
+    const action = sanitizeBattleLogText(payload.action, MAX_BATTLE_LOG_ACTION_LENGTH);
+    if (!action) return null;
+    const message = sanitizeBattleLogText(payload.message || '', MAX_BATTLE_LOG_MESSAGE_LENGTH);
+    const entry = {
+        id: uuid(),
+        action,
+        message,
+        createdAt: new Date().toISOString(),
+    };
+    if (actorId) entry.actorId = actorId;
+    if (payload.details !== undefined) {
+        const details = normalizeBattleLogDetails(payload.details);
+        if (details !== undefined) entry.details = details;
+    }
+    return entry;
+}
+
+function presentBattleLogEntry(entry) {
+    const normalized = normalizeStoredBattleLogEntry(entry);
+    if (!normalized) return null;
+    const presented = {
+        id: normalized.id,
+        action: normalized.action,
+        message: normalized.message,
+        createdAt: normalized.createdAt,
+    };
+    if (normalized.actorId) {
+        presented.actorId = normalized.actorId;
+    }
+    if (Object.prototype.hasOwnProperty.call(normalized, 'details')) {
+        try {
+            presented.details = JSON.parse(JSON.stringify(normalized.details));
+        } catch {
+            presented.details = null;
+        }
+    }
+    return presented;
+}
+
+function presentBattleLog(list) {
+    if (!Array.isArray(list)) return [];
+    const normalized = list.map((entry) => presentBattleLogEntry(entry)).filter(Boolean);
+    if (normalized.length > MAP_BATTLE_LOG_LIMIT) {
+        return normalized.slice(normalized.length - MAP_BATTLE_LOG_LIMIT);
+    }
+    return normalized;
 }
 
 function buildPlayerTooltip(player) {
@@ -1077,6 +1178,12 @@ function ensureMapState(game) {
     if (shapes.length > MAX_MAP_SHAPES) {
         shapes = shapes.slice(-MAX_MAP_SHAPES);
     }
+    let battleLog = Array.isArray(raw.battleLog)
+        ? raw.battleLog.map((entry) => normalizeStoredBattleLogEntry(entry)).filter(Boolean)
+        : [];
+    if (battleLog.length > MAP_BATTLE_LOG_LIMIT) {
+        battleLog = battleLog.slice(battleLog.length - MAP_BATTLE_LOG_LIMIT);
+    }
     const updatedAt = typeof raw.updatedAt === 'string' ? raw.updatedAt : new Date().toISOString();
     const drawerRaw = raw.drawer && typeof raw.drawer === 'object' ? raw.drawer : {};
     let drawerUserId = typeof drawerRaw.userId === 'string' ? drawerRaw.userId : null;
@@ -1110,12 +1217,13 @@ function ensureMapState(game) {
             assignedAt: drawerAssignedAt,
         },
         combat: normalizeCombatState(raw.combat),
+        battleLog,
     };
     game.map = mapState;
     return mapState;
 }
 
-function presentMapState(map) {
+function presentMapState(map, { includeBattleLog = false } = {}) {
     if (!map || typeof map !== 'object') {
         return {
             strokes: [],
@@ -1157,6 +1265,7 @@ function presentMapState(map) {
             assignedAt: drawerAssignedAt,
         },
         combat: presentCombatState(map.combat),
+        ...(includeBattleLog ? { battleLog: presentBattleLog(map.battleLog) } : {}),
     };
 }
 
@@ -1368,7 +1477,7 @@ function presentGame(game, { includeSecrets = false } = {}) {
         combatSkills,
         media: presentMediaState(normalized.media),
         music: presentMusicState(normalized.music),
-        map: presentMapState(normalized.map),
+        map: presentMapState(normalized.map, { includeBattleLog: includeSecrets }),
         ...(includeSecrets ? { mapLibrary: presentMapLibrary(normalized.mapLibrary) } : {}),
     };
 }
@@ -2326,6 +2435,17 @@ function broadcastGameUpdate(gameId, extra = {}) {
     if (extra && extra.reason) payload.reason = extra.reason;
     if (extra && extra.actorId) payload.actorId = extra.actorId;
     broadcastGameMessage(gameId, payload);
+}
+
+function broadcastBattleLogEntry(gameId, entry) {
+    if (!gameId) return;
+    const payload = presentBattleLogEntry(entry);
+    if (!payload) return;
+    broadcastGameMessage(gameId, {
+        type: 'map:battleLog',
+        gameId,
+        entry: payload,
+    });
 }
 
 function broadcastMediaState(game) {
@@ -4078,6 +4198,7 @@ app.post('/api/games', requireAuth, async (req, res) => {
             paused: false,
             background: defaultMapBackground(),
             updatedAt: new Date().toISOString(),
+            battleLog: [],
         },
         mapLibrary: [],
     };
@@ -4237,7 +4358,8 @@ app.get('/api/games/:id/map', requireAuth, async (req, res) => {
     }
 
     const map = ensureMapState(game);
-    res.json(presentMapState(map));
+    const includeLog = isDM(game, req.session.userId);
+    res.json(presentMapState(map, { includeBattleLog: includeLog }));
 });
 
 app.put('/api/games/:id/map/settings', requireAuth, async (req, res) => {
@@ -4297,7 +4419,7 @@ app.put('/api/games/:id/map/settings', requireAuth, async (req, res) => {
     }
 
     if (!changed) {
-        return res.json(presentMapState(map));
+        return res.json(presentMapState(map, { includeBattleLog: true }));
     }
 
     map.updatedAt = new Date().toISOString();
@@ -4306,7 +4428,51 @@ app.put('/api/games/:id/map/settings', requireAuth, async (req, res) => {
         actorId: req.session.userId,
         broadcast: true,
     });
-    res.json(presentMapState(map));
+    res.json(presentMapState(map, { includeBattleLog: true }));
+});
+
+app.post('/api/games/:id/map/battle-log', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
+    const map = ensureMapState(game);
+    const entry = createBattleLogEntry(req.body || {}, { actorId: req.session.userId });
+    if (!entry) {
+        return res.status(400).json({ error: 'invalid_entry' });
+    }
+
+    map.battleLog.push(entry);
+    if (map.battleLog.length > MAP_BATTLE_LOG_LIMIT) {
+        map.battleLog = map.battleLog.slice(map.battleLog.length - MAP_BATTLE_LOG_LIMIT);
+    }
+
+    const update = await Game.updateOne(
+        { id: game.id },
+        {
+            $push: {
+                'map.battleLog': {
+                    $each: [entry],
+                    $slice: -MAP_BATTLE_LOG_LIMIT,
+                },
+            },
+        },
+    );
+
+    if (!update?.acknowledged || update.modifiedCount === 0) {
+        map.battleLog.pop();
+        return res.status(500).json({ error: 'battle_log_failed' });
+    }
+
+    const payload = presentBattleLogEntry(entry);
+    if (payload) {
+        broadcastBattleLogEntry(game.id, payload);
+    }
+
+    res.status(201).json(payload);
 });
 
 app.post('/api/games/:id/map/combat/start', requireAuth, async (req, res) => {
@@ -4701,7 +4867,7 @@ app.post('/api/games/:id/map/clear', requireAuth, async (req, res) => {
         broadcast: !map.paused,
     });
 
-    res.json(presentMapState(map));
+    res.json(presentMapState(map, { includeBattleLog: true }));
 });
 
 app.post('/api/games/:id/map/tokens', requireAuth, async (req, res) => {
@@ -4951,7 +5117,11 @@ app.post('/api/games/:id/map/library/:entryId/load', requireAuth, async (req, re
         broadcast: true,
     });
 
-    res.json({ map: presentMapState(map), entry: presentMapLibraryEntry(entry), maps: presentMapLibrary(game.mapLibrary) });
+    res.json({
+        map: presentMapState(map, { includeBattleLog: true }),
+        entry: presentMapLibraryEntry(entry),
+        maps: presentMapLibrary(game.mapLibrary),
+    });
 });
 
 // --- World skills ---
