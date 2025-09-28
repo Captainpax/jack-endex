@@ -1,15 +1,110 @@
 import { PromptTemplate, ChatPromptTemplate } from "@langchain/core/prompts";
 import { RunnableSequence, RunnableLambda } from "@langchain/core/runnables";
 import { StringOutputParser } from "@langchain/core/output_parsers";
+import { envString } from "../config/env.js";
 
-const CHAT_ENDPOINT = "https://jack-ai.darkmatterservers.com/chat/all-hands_openhands-lm-7b-v0.1";
-const IMAGE_ENDPOINT = "https://jack-ai.darkmatterservers.com/text2image/dreamshaper";
+const DEFAULT_BASE_URL = "https://jack-ai.darkmatterservers.com";
+const DEFAULT_CHAT_PATH = "/chat/all-hands_openhands-lm-7b-v0.1";
+const DEFAULT_IMAGE_MODEL = "dreamshaper";
+const DEFAULT_IMAGE_PATHS = ["/v1/images/generations", "/text2image/dreamshaper"];
 const DEFAULT_NEGATIVE_PROMPT =
     "blurry, distorted, extra limbs, duplicate face, deformed, low quality, watermark, signature";
+const OPENAI_IMAGE_SIZE = "512x512";
+const LEGACY_IMAGE_WIDTH = 512;
+const LEGACY_IMAGE_HEIGHT = 521;
+const LEGACY_GUIDANCE_SCALE = 7.5;
+const LEGACY_STEPS = 28;
 
 const portraitTemplate = PromptTemplate.fromTemplate(
     "Portrait of a {race} {role}, wearing {armor}, in a {setting} background, with {expression} expression."
 );
+
+function getBaseUrl() {
+    const base = envString("LOCAL_AI_BASE_URL", DEFAULT_BASE_URL).trim();
+    if (!base) {
+        return "";
+    }
+    return base.replace(/\/+$/, "");
+}
+
+function toAbsoluteUrl(pathOrUrl, defaultPath = "") {
+    const raw = (pathOrUrl || "").trim();
+    if (raw) {
+        if (/^https?:\/\//i.test(raw)) {
+            return raw;
+        }
+        const base = getBaseUrl();
+        if (!base) {
+            throw new Error("LOCAL_AI_BASE_URL is not configured.");
+        }
+        const normalizedPath = raw.startsWith("/") ? raw : `/${raw}`;
+        return `${base}${normalizedPath}`;
+    }
+    if (defaultPath) {
+        return toAbsoluteUrl(defaultPath, "");
+    }
+    return "";
+}
+
+function getChatEndpoint() {
+    const explicit = envString("LOCAL_AI_CHAT_ENDPOINT", "");
+    if (explicit) {
+        return toAbsoluteUrl(explicit, explicit);
+    }
+    const path = envString("LOCAL_AI_CHAT_PATH", DEFAULT_CHAT_PATH) || DEFAULT_CHAT_PATH;
+    return toAbsoluteUrl(path, DEFAULT_CHAT_PATH);
+}
+
+function detectImageApiStyle(url) {
+    try {
+        const parsed = new URL(url);
+        if (/\/v1\/images\//.test(parsed.pathname)) {
+            return "openai";
+        }
+    } catch {
+        // ignore URL parsing issues and assume legacy behaviour
+    }
+    return "legacy";
+}
+
+function getImageEndpointConfigs() {
+    const explicit = envString("LOCAL_AI_IMAGE_ENDPOINT", "");
+    const configuredPath = envString("LOCAL_AI_IMAGE_PATH", "");
+    const candidates = [];
+    if (explicit) {
+        candidates.push(explicit);
+    }
+    if (configuredPath && configuredPath !== explicit) {
+        candidates.push(configuredPath);
+    }
+    for (const fallback of DEFAULT_IMAGE_PATHS) {
+        if (!candidates.includes(fallback)) {
+            candidates.push(fallback);
+        }
+    }
+
+    const seen = new Set();
+    const configs = [];
+    for (const candidate of candidates) {
+        const url = toAbsoluteUrl(candidate, candidate);
+        if (!url || seen.has(url)) continue;
+        configs.push({ url, style: detectImageApiStyle(url) });
+        seen.add(url);
+    }
+    return configs;
+}
+
+function getImageModel() {
+    return envString("LOCAL_AI_IMAGE_MODEL", DEFAULT_IMAGE_MODEL) || DEFAULT_IMAGE_MODEL;
+}
+
+function getImageBackend() {
+    return envString("LOCAL_AI_IMAGE_BACKEND", "").trim();
+}
+
+function getNegativePrompt() {
+    return envString("LOCAL_AI_NEGATIVE_PROMPT", DEFAULT_NEGATIVE_PROMPT) || DEFAULT_NEGATIVE_PROMPT;
+}
 
 const backgroundPrompt = ChatPromptTemplate.fromMessages([
     [
@@ -30,7 +125,8 @@ const callChatEndpoint = new RunnableLambda({
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 60_000);
         try {
-            const response = await fetch(CHAT_ENDPOINT, {
+            const endpoint = getChatEndpoint();
+            const response = await fetch(endpoint, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -251,50 +347,169 @@ const imageChain = RunnableSequence.from([
 ]);
 
 async function callImageEndpoint(prompt, style) {
+    const finalPrompt = style ? `${prompt} Art style: ${style}.`.trim() : prompt;
+    const negativePrompt = getNegativePrompt();
+    const backend = getImageBackend();
+    const configs = getImageEndpointConfigs();
+
+    if (configs.length === 0) {
+        throw new Error("No image endpoint is configured for LocalAI.");
+    }
+
+    const errors = [];
+    for (const config of configs) {
+        const payload = buildImagePayload({
+            apiStyle: config.style,
+            prompt: finalPrompt,
+            negativePrompt,
+            backend,
+        });
+
+        try {
+            const response = await fetch(config.url, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(payload),
+            });
+
+            if (!response.ok) {
+                const text = await response.text().catch(() => "");
+                throw new Error(
+                    `Image request failed (${response.status}${response.statusText ? ` ${response.statusText}` : ""})${
+                        text ? `: ${text}` : ""
+                    }`,
+                );
+            }
+
+            const image = await extractImageFromResponse(response);
+            if (!image) {
+                throw new Error("Image response did not include image data.");
+            }
+            return image;
+        } catch (error) {
+            errors.push({ url: config.url, error });
+        }
+    }
+
+    const detail = errors
+        .map(({ url, error }) => `${url}: ${error?.message || String(error)}`)
+        .join("; ");
+    throw new Error(`Image generation failed after ${errors.length} attempt(s): ${detail || "unknown error"}`);
+}
+
+function buildImagePayload({ apiStyle, prompt, negativePrompt, backend }) {
+    if (apiStyle === "openai") {
+        const payload = {
+            model: getImageModel(),
+            prompt,
+            negative_prompt: negativePrompt,
+            size: OPENAI_IMAGE_SIZE,
+            response_format: "b64_json",
+            n: 1,
+        };
+        if (backend) payload.backend = backend;
+        return payload;
+    }
+
     const payload = {
         prompt,
-        negative_prompt: DEFAULT_NEGATIVE_PROMPT,
-        width: 512,
-        height: 521,
-        guidance_scale: 7.5,
-        steps: 28,
+        negative_prompt: negativePrompt,
+        width: LEGACY_IMAGE_WIDTH,
+        height: LEGACY_IMAGE_HEIGHT,
+        guidance_scale: LEGACY_GUIDANCE_SCALE,
+        steps: LEGACY_STEPS,
     };
+    if (backend) payload.backend = backend;
+    return payload;
+}
 
-    if (style) {
-        payload.prompt = `${prompt} Art style: ${style}.`.trim();
-    }
-
-    const response = await fetch(IMAGE_ENDPOINT, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-        const text = await response.text().catch(() => "");
-        throw new Error(`Image generation failed (${response.status}): ${text || response.statusText}`);
-    }
-
+async function extractImageFromResponse(response) {
     const contentType = response.headers.get("content-type") || "";
     if (contentType.includes("application/json")) {
         const data = await response.json();
-        const raw = data?.image || data?.images?.[0];
-        if (!raw || typeof raw !== "string") {
-            throw new Error("Image response did not include image data.");
+        const { raw, format } = extractImageFromJson(data);
+        if (!raw) {
+            return "";
         }
-        if (raw.startsWith("data:")) {
-            return raw;
-        }
-        const format = data?.format || "image/png";
-        return `data:${format};base64,${raw}`;
+        return normalizeImageData(raw, format);
     }
 
     const buffer = await response.arrayBuffer();
     const mime = contentType || "image/png";
     const base64 = Buffer.from(buffer).toString("base64");
     return `data:${mime};base64,${base64}`;
+}
+
+function extractImageFromJson(data) {
+    if (!data || typeof data !== "object") {
+        return { raw: "", format: "" };
+    }
+
+    const entries = [];
+
+    if (typeof data.image === "string") {
+        entries.push({ raw: data.image, format: data.format || data.mime_type || "" });
+    }
+
+    if (Array.isArray(data.images)) {
+        for (const item of data.images) {
+            if (typeof item === "string") {
+                entries.push({ raw: item, format: data.format || data.mime_type || "" });
+            } else if (item && typeof item === "object") {
+                const raw = typeof item.image === "string" ? item.image : typeof item.base64 === "string" ? item.base64 : "";
+                if (raw) {
+                    entries.push({ raw, format: item.format || item.mime_type || data.format || data.mime_type || "" });
+                }
+            }
+        }
+    }
+
+    if (Array.isArray(data.data)) {
+        for (const item of data.data) {
+            if (!item || typeof item !== "object") continue;
+            if (typeof item.b64_json === "string") {
+                entries.push({ raw: item.b64_json, format: item.mime_type || item.format || data.format || "image/png" });
+            } else if (typeof item.base64 === "string") {
+                entries.push({ raw: item.base64, format: item.mime_type || item.format || data.format || "image/png" });
+            } else if (typeof item.image === "string") {
+                entries.push({ raw: item.image, format: item.mime_type || item.format || data.format || "image/png" });
+            } else if (typeof item.url === "string") {
+                entries.push({ raw: item.url, format: item.mime_type || item.format || data.format || "" });
+            }
+        }
+    }
+
+    if (typeof data.b64_json === "string") {
+        entries.push({ raw: data.b64_json, format: data.mime_type || data.format || "image/png" });
+    }
+
+    if (typeof data.url === "string") {
+        entries.push({ raw: data.url, format: data.mime_type || data.format || "" });
+    }
+
+    for (const entry of entries) {
+        if (entry.raw) {
+            return entry;
+        }
+    }
+
+    return { raw: "", format: "" };
+}
+
+function normalizeImageData(raw, format = "image/png") {
+    if (!raw || typeof raw !== "string") {
+        return "";
+    }
+    if (raw.startsWith("data:")) {
+        return raw;
+    }
+    if (/^https?:\/\//i.test(raw)) {
+        return raw;
+    }
+    const safeFormat = format || "image/png";
+    return `data:${safeFormat};base64,${raw}`;
 }
 
 export async function generateCharacterImage(character, overrides = {}) {
