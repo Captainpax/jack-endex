@@ -104,6 +104,18 @@ const MusicContext = createContext({
 const MUSIC_VOLUME_KEY = "amz:musicVolume";
 const MUSIC_MUTED_KEY = "amz:musicMuted";
 
+const ALIGNMENT_OPTIONS = [
+    { value: "Lawful Good", label: "Lawful Good" },
+    { value: "Neutral Good", label: "Neutral Good" },
+    { value: "Chaotic Good", label: "Chaotic Good" },
+    { value: "Lawful Neutral", label: "Lawful Neutral" },
+    { value: "True Neutral", label: "True Neutral" },
+    { value: "Chaotic Neutral", label: "Chaotic Neutral" },
+    { value: "Lawful Evil", label: "Lawful Evil" },
+    { value: "Neutral Evil", label: "Neutral Evil" },
+    { value: "Chaotic Evil", label: "Chaotic Evil" },
+];
+
 function clampVolume(value, fallback = 0.2) {
     const num = Number(value);
     if (!Number.isFinite(num)) return fallback;
@@ -6755,7 +6767,7 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                                         "profile.arcana",
                                         ARCANA_DATA.map((opt) => ({ ...opt, value: opt.label }))
                                     )}
-                                    {textField("Alignment", "profile.alignment")}
+                                    {selectField("Alignment", "profile.alignment", ALIGNMENT_OPTIONS)}
                                     {textField("Race / origin", "profile.race")}
                                     {textField("Age", "profile.age")}
                                     {textField("Gender", "profile.gender")}
