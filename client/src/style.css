@@ -3249,6 +3249,31 @@ label {
 .sheet-spotlight__stat-value { font-size: 1.2rem; font-weight: 700; display: flex; gap: 4px; align-items: baseline; }
 .sheet-spotlight__stat-extra { font-size: 0.85rem; color: var(--muted); }
 .sheet-spotlight__stat-detail { font-size: 0.75rem; color: var(--muted); }
+.sheet-spotlight__gear {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    padding: 12px;
+    display: grid;
+    gap: 8px;
+}
+.sheet-spotlight__gear-header h4 { margin: 0; font-size: 1rem; }
+.sheet-spotlight__gear-list {
+    margin: 0;
+    padding-left: 18px;
+    display: grid;
+    gap: 6px;
+}
+.sheet-spotlight__gear-item {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: baseline;
+}
+.sheet-spotlight__gear-slot { font-weight: 600; }
+.sheet-spotlight__gear-name { font-weight: 500; }
+.sheet-spotlight__gear-detail { color: var(--muted); }
+.sheet-spotlight__gear-empty { margin: 0; }
 .sheet-spotlight__notes { margin: 0; }
 .sheet-portrait {
     flex: 0 0 220px;
