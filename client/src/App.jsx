@@ -4390,7 +4390,9 @@ function MapTab({ game, me }) {
                                 dragPreview && dragPreview.kind === 'token' && dragPreview.id === token.id
                                     ? { ...token, x: dragPreview.x, y: dragPreview.y }
                                     : token;
-                            const showTooltip = token.showTooltip && token.tooltip;
+                            const enemyTooltipHasContent =
+                                token.kind === 'enemy' && token.enemyInfo && enemyHasVisibleContent(token.enemyInfo);
+                            const showTooltip = !!token.showTooltip && (!!token.tooltip || enemyTooltipHasContent);
                             const canDrag = canMoveToken(token);
                             const label = token.label || (player ? describePlayerName(player) : demon ? demon.name : 'Marker');
                             return (
