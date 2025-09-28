@@ -1597,6 +1597,7 @@ const MAP_DEFAULT_SETTINGS = Object.freeze({
 
 const MAP_BRUSH_COLORS = ['#f97316', '#38bdf8', '#a855f7', '#22c55e', '#f472b6'];
 const MAP_BRUSH_STORAGE_KEY = 'battlemap.brushPalette';
+const MAP_TOKEN_TOOLTIP_PREF_KEY = 'battlemap.tokenTooltips';
 const MAP_UNDO_STACK_LIMIT = 5;
 
 function isHexColor(value) {
@@ -1629,6 +1630,21 @@ function loadStoredBrushPalette() {
     } catch (err) {
         console.warn('Failed to load stored brush palette', err);
         return [...MAP_BRUSH_COLORS];
+    }
+}
+
+function loadStoredTokenTooltipPreference() {
+    if (typeof window === 'undefined') {
+        return true;
+    }
+    try {
+        const raw = window.localStorage.getItem(MAP_TOKEN_TOOLTIP_PREF_KEY);
+        if (raw === 'false') return false;
+        if (raw === 'true') return true;
+        return true;
+    } catch (err) {
+        console.warn('Failed to load token tooltip preference', err);
+        return true;
     }
 }
 const MAP_ENEMY_DEFAULT_COLOR = '#ef4444';
@@ -2297,6 +2313,9 @@ function MapTab({ game, me }) {
     const isDM = game.dmId === me.id;
     const [mapState, setMapState] = useState(() => normalizeClientMapState(game?.map));
     const [mapLibrary, setMapLibrary] = useState(() => normalizeMapLibrary(game?.mapLibrary));
+    const [tokenTooltipsEnabled, setTokenTooltipsEnabled] = useState(
+        () => loadStoredTokenTooltipPreference(),
+    );
     const [backgroundDraft, setBackgroundDraft] = useState(() => mapState.background);
     const backgroundDraftRef = useRef(mapState.background);
     const latestBackgroundRef = useRef(mapState.background);
@@ -2307,6 +2326,17 @@ function MapTab({ game, me }) {
     useEffect(() => {
         setMapLibrary(normalizeMapLibrary(game?.mapLibrary));
     }, [game.id, game?.mapLibrary]);
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        try {
+            window.localStorage.setItem(
+                MAP_TOKEN_TOOLTIP_PREF_KEY,
+                tokenTooltipsEnabled ? 'true' : 'false',
+            );
+        } catch (err) {
+            console.warn('Failed to store token tooltip preference', err);
+        }
+    }, [tokenTooltipsEnabled]);
     useEffect(() => {
         setBackgroundDraft(mapState.background);
     }, [mapState.background]);
@@ -3992,6 +4022,14 @@ function MapTab({ game, me }) {
                         <span className={`pill ${mapState.paused ? 'warn' : 'success'}`}>
                             {mapState.paused ? 'Updates paused' : 'Live updates'}
                         </span>
+                        <label className="perm-toggle" title="Show or hide token tooltip popovers on the map.">
+                            <input
+                                type="checkbox"
+                                checked={tokenTooltipsEnabled}
+                                onChange={(event) => setTokenTooltipsEnabled(event.target.checked)}
+                            />
+                            <span className="perm-toggle__text">Token tooltips</span>
+                        </label>
                         {isDM && (
                             <button type="button" className="btn btn-small" onClick={handleTogglePause}>
                                 {mapState.paused ? 'Resume sharing' : 'Pause updates'}
@@ -4392,7 +4430,10 @@ function MapTab({ game, me }) {
                                     : token;
                             const enemyTooltipHasContent =
                                 token.kind === 'enemy' && token.enemyInfo && enemyHasVisibleContent(token.enemyInfo);
-                            const showTooltip = !!token.showTooltip && (!!token.tooltip || enemyTooltipHasContent);
+                            const showTooltip =
+                                tokenTooltipsEnabled &&
+                                !!token.showTooltip &&
+                                (!!token.tooltip || enemyTooltipHasContent);
                             const canDrag = canMoveToken(token);
                             const label = token.label || (player ? describePlayerName(player) : demon ? demon.name : 'Marker');
                             return (
