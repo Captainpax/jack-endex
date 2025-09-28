@@ -2,20 +2,350 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Games, Items } from "../api";
 import MathField from "./MathField";
-import { formatHealingEffect, isGearCategory } from "../utils/items";
+import {
+    formatHealingEffect,
+    formatTriggerEffect,
+    isConsumableType,
+    isGearCategory,
+} from "../utils/items";
 
-function ItemsTab({ game, me, onUpdate }) {
+const INVENTORY_SORT_OPTIONS = [
+    { value: "name", label: "Name" },
+    { value: "type", label: "Type" },
+    { value: "quantity", label: "Quantity" },
+    { value: "recent", label: "Recently updated" },
+];
+
+function getItemTimestamp(item) {
+    if (!item || typeof item !== "object") return 0;
+    const raw = item.updatedAt || item.createdAt;
+    const timestamp = raw ? Date.parse(raw) : NaN;
+    if (Number.isFinite(timestamp)) return timestamp;
+    const numericId = Number.parseInt(String(item.id).replace(/[^0-9]/g, ""), 10);
+    return Number.isFinite(numericId) ? numericId : 0;
+}
+
+function normalizePlayerLabel(player) {
+    if (!player) return "Unnamed Player";
+    if (player.character?.name) {
+        const name = player.character.name.trim();
+        if (name) return name;
+    }
+    if (player.username) {
+        return player.username.trim();
+    }
+    if (player.userId) {
+        return `Player ${player.userId.slice(0, 6)}`;
+    }
+    return "Unnamed Player";
+}
+
+function generateLocalId() {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    return `fx-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function makeEffectDraft(effect = {}) {
+    return {
+        id: effect.id || generateLocalId(),
+        kind: effect.kind || "",
+        trigger: effect.trigger || "",
+        value: effect.value || "",
+        notes: effect.notes || "",
+        interval:
+            effect.interval === undefined || effect.interval === null
+                ? ""
+                : String(effect.interval),
+        duration:
+            effect.duration === undefined || effect.duration === null
+                ? ""
+                : String(effect.duration),
+    };
+}
+
+function prepareEffectsForSave(effects) {
+    if (!Array.isArray(effects)) return [];
+    const seen = new Set();
+    const output = [];
+    for (const raw of effects) {
+        if (!raw) continue;
+        const draft = makeEffectDraft(raw);
+        const intervalNum = Number(draft.interval);
+        const durationNum = Number(draft.duration);
+        const interval = Number.isFinite(intervalNum) && intervalNum > 0 ? Math.round(intervalNum) : null;
+        const duration = Number.isFinite(durationNum) && durationNum > 0 ? Math.round(durationNum) : null;
+        const normalized = {
+            ...(draft.id ? { id: draft.id } : {}),
+            kind: draft.kind.trim(),
+            trigger: draft.trigger.trim(),
+            value: draft.value.trim(),
+            notes: draft.notes.trim(),
+            ...(interval ? { interval } : {}),
+            ...(duration ? { duration } : {}),
+        };
+        if (
+            !normalized.kind &&
+            !normalized.trigger &&
+            !normalized.value &&
+            !normalized.notes &&
+            !interval &&
+            !duration
+        ) {
+            continue;
+        }
+        const key =
+            normalized.id ||
+            `${normalized.kind}|${normalized.trigger}|${normalized.value}|${interval || ""}|${duration || ""}|${normalized.notes}`;
+        if (key && seen.has(key)) continue;
+        if (key) seen.add(key);
+        output.push(normalized);
+    }
+    return output;
+}
+
+function parseTagInput(value) {
+    if (Array.isArray(value)) {
+        return value
+            .map((tag) => (typeof tag === "string" ? tag.trim() : ""))
+            .filter(Boolean)
+            .slice(0, 12);
+    }
+    if (typeof value !== "string") return [];
+    return value
+        .split(/[,#]/g)
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+        .slice(0, 12);
+}
+
+function useItemFavorites(gameId, userId) {
+    const storageKey = useMemo(() => {
+        if (!gameId || !userId) return null;
+        return `jack-endex:favorites:${gameId}:${userId}`;
+    }, [gameId, userId]);
+    const [favorites, setFavorites] = useState(() => new Set());
+
+    useEffect(() => {
+        if (typeof window === "undefined" || !storageKey) {
+            setFavorites(new Set());
+            return;
+        }
+        try {
+            const raw = window.localStorage.getItem(storageKey);
+            if (!raw) {
+                setFavorites(new Set());
+                return;
+            }
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                setFavorites(new Set(parsed.filter((id) => typeof id === "string" && id)));
+            } else {
+                setFavorites(new Set());
+            }
+        } catch (err) {
+            console.warn("Failed to read item favorites", err);
+            setFavorites(new Set());
+        }
+    }, [storageKey]);
+
+    const persist = useCallback(
+        (next) => {
+            if (typeof window === "undefined" || !storageKey) return;
+            try {
+                window.localStorage.setItem(storageKey, JSON.stringify(Array.from(next)));
+            } catch (err) {
+                console.warn("Failed to persist item favorites", err);
+            }
+        },
+        [storageKey],
+    );
+
+    const toggleFavorite = useCallback(
+        (itemId) => {
+            if (!itemId) return;
+            setFavorites((prev) => {
+                const next = new Set(prev);
+                if (next.has(itemId)) {
+                    next.delete(itemId);
+                } else {
+                    next.add(itemId);
+                }
+                persist(next);
+                return next;
+            });
+        },
+        [persist],
+    );
+
+    const isFavorite = useCallback((itemId) => favorites.has(itemId), [favorites]);
+
+    const clearMissing = useCallback(
+        (validIds) => {
+            setFavorites((prev) => {
+                const next = new Set(Array.from(prev).filter((id) => validIds.has(id)));
+                if (next.size !== prev.size) {
+                    persist(next);
+                }
+                return next;
+            });
+        },
+        [persist],
+    );
+
+    return { favorites, toggleFavorite, isFavorite, clearMissing };
+}
+
+function EffectEditor({ title = "Trigger effects", effects, onChange, disabled }) {
+    const handleUpdate = useCallback(
+        (index, patch) => {
+            if (!onChange) return;
+            const list = Array.isArray(effects) ? effects : [];
+            const next = list.map((effect, idx) => (idx === index ? { ...effect, ...patch } : effect));
+            onChange(next);
+        },
+        [effects, onChange],
+    );
+
+    const handleRemove = useCallback(
+        (index) => {
+            if (!onChange) return;
+            const list = Array.isArray(effects) ? effects : [];
+            const next = list.filter((_, idx) => idx !== index);
+            onChange(next);
+        },
+        [effects, onChange],
+    );
+
+    const handleAdd = useCallback(() => {
+        if (!onChange) return;
+        const list = Array.isArray(effects) ? effects : [];
+        onChange([...list, makeEffectDraft()]);
+    }, [effects, onChange]);
+
+    const list = Array.isArray(effects) ? effects : [];
+
+    return (
+        <div className="item-effect-editor">
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                <span className="text-small" style={{ fontWeight: 600 }}>
+                    {title}
+                </span>
+                <button
+                    type="button"
+                    className="btn ghost btn-small"
+                    onClick={handleAdd}
+                    disabled={disabled}
+                >
+                    Add effect
+                </button>
+            </div>
+            {list.length === 0 ? (
+                <p className="text-muted text-small" style={{ marginTop: 4 }}>
+                    No over-time effects configured.
+                </p>
+            ) : (
+                <div className="item-effect-editor__list">
+                    {list.map((effect, index) => (
+                        <div key={effect.id || index}>
+                            <div className="row wrap" style={{ gap: 8 }}>
+                                <label className="field" style={{ flex: "1 1 160px", minWidth: 140 }}>
+                                    <span className="field__label">Effect</span>
+                                    <input
+                                        value={effect.kind || ""}
+                                        onChange={(e) => handleUpdate(index, { kind: e.target.value })}
+                                        disabled={disabled}
+                                        placeholder="Regeneration, Poison…"
+                                    />
+                                </label>
+                                <label className="field" style={{ flex: "1 1 160px", minWidth: 140 }}>
+                                    <span className="field__label">Trigger</span>
+                                    <input
+                                        value={effect.trigger || ""}
+                                        onChange={(e) => handleUpdate(index, { trigger: e.target.value })}
+                                        disabled={disabled}
+                                        placeholder="Start of turn"
+                                    />
+                                </label>
+                                <label className="field" style={{ width: 120 }}>
+                                    <span className="field__label">Interval</span>
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        value={effect.interval}
+                                        onChange={(e) => handleUpdate(index, { interval: e.target.value })}
+                                        disabled={disabled}
+                                        placeholder="Turns"
+                                    />
+                                </label>
+                                <label className="field" style={{ width: 120 }}>
+                                    <span className="field__label">Duration</span>
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        value={effect.duration}
+                                        onChange={(e) => handleUpdate(index, { duration: e.target.value })}
+                                        disabled={disabled}
+                                        placeholder="Rounds"
+                                    />
+                                </label>
+                            </div>
+                            <label className="field" style={{ marginTop: 8 }}>
+                                <span className="field__label">Effect value</span>
+                                <input
+                                    value={effect.value || ""}
+                                    onChange={(e) => handleUpdate(index, { value: e.target.value })}
+                                    disabled={disabled}
+                                    placeholder="5 HP per turn"
+                                />
+                            </label>
+                            <label className="field" style={{ marginTop: 8 }}>
+                                <span className="field__label">Notes</span>
+                                <textarea
+                                    rows={2}
+                                    value={effect.notes || ""}
+                                    onChange={(e) => handleUpdate(index, { notes: e.target.value })}
+                                    disabled={disabled}
+                                    placeholder="Additional reminders or conditions"
+                                />
+                            </label>
+                            <div className="row" style={{ justifyContent: "flex-end", marginTop: 8 }}>
+                                <button
+                                    type="button"
+                                    className="btn ghost btn-small"
+                                    onClick={() => handleRemove(index)}
+                                    disabled={disabled}
+                                >
+                                    Remove
+                                </button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function ItemsTab({ game, me, onUpdate, realtime }) {
     const [premade, setPremade] = useState([]);
-    const [form, setForm] = useState({ name: "", type: "", desc: "", libraryItemId: "" });
+    const [form, setForm] = useState({ name: "", type: "", desc: "", libraryItemId: "", tags: [], effects: [] });
     const [editing, setEditing] = useState(null);
     const [busySave, setBusySave] = useState(false);
     const [busyRow, setBusyRow] = useState(null);
     const [busyRowAction, setBusyRowAction] = useState(null);
     const [selectedPlayerId, setSelectedPlayerId] = useState("");
     const [giveBusyId, setGiveBusyId] = useState(null);
+    const [searchTerm, setSearchTerm] = useState("");
+    const [sortMode, setSortMode] = useState(INVENTORY_SORT_OPTIONS[0]?.value || "name");
+    const [favoritesOnly, setFavoritesOnly] = useState(false);
 
     const isDM = game.dmId === me.id;
     const canEdit = isDM || game.permissions?.canEditItems;
+
+    const { favorites, toggleFavorite, isFavorite, clearMissing } = useItemFavorites(game.id, me.id);
+    const tradeActions = realtime?.tradeActions || null;
 
     const libraryCatalog = useMemo(() => {
         const map = new Map();
@@ -27,7 +357,7 @@ function ItemsTab({ game, me, onUpdate }) {
 
     const resetForm = useCallback(() => {
         setEditing(null);
-        setForm({ name: "", type: "", desc: "", libraryItemId: "" });
+        setForm({ name: "", type: "", desc: "", libraryItemId: "", tags: [], effects: [] });
     }, []);
 
     const applyLibraryToForm = useCallback(
@@ -42,6 +372,10 @@ function ItemsTab({ game, me, onUpdate }) {
                     next.name = linked.name || "";
                     next.type = linked.type || "";
                     next.desc = linked.desc || "";
+                    next.tags = parseTagInput(linked.tags);
+                    next.effects = Array.isArray(linked.effects)
+                        ? linked.effects.map((effect) => makeEffectDraft(effect))
+                        : [];
                 }
                 return next;
             });
@@ -68,6 +402,9 @@ function ItemsTab({ game, me, onUpdate }) {
 
     useEffect(() => {
         resetForm();
+        setSearchTerm("");
+        setSortMode(INVENTORY_SORT_OPTIONS[0]?.value || "name");
+        setFavoritesOnly(false);
     }, [game.id, resetForm]);
 
     const formLinked = form.libraryItemId ? libraryCatalog.get(form.libraryItemId) : null;
@@ -80,6 +417,8 @@ function ItemsTab({ game, me, onUpdate }) {
                 name: (source.name || "").trim(),
                 type: (source.type || "").trim(),
                 desc: (source.desc || "").trim(),
+                tags: parseTagInput(source.tags),
+                effects: prepareEffectsForSave(source.effects),
             };
             if (!payload.name) {
                 alert("Item needs a name");
@@ -177,11 +516,16 @@ function ItemsTab({ game, me, onUpdate }) {
             players.map((p, idx) => ({
                 data: p,
                 value: p.userId || `player-${idx}`,
-                label:
-                    p.character?.name?.trim() ||
-                    `Player ${p.userId?.slice?.(0, 6) || ""}` ||
-                    "Unnamed Player",
+                label: normalizePlayerLabel(p),
             })),
+        [players],
+    );
+
+    const tradeTargets = useMemo(
+        () =>
+            players
+                .filter((p) => p && typeof p.userId === "string" && p.userId)
+                .map((p) => ({ id: p.userId, label: normalizePlayerLabel(p) })),
         [players],
     );
 
@@ -210,11 +554,7 @@ function ItemsTab({ game, me, onUpdate }) {
     const selectedPlayer = isDM ? visiblePlayers[0] : null;
     const selectedPlayerLabel = useMemo(() => {
         if (!selectedPlayer) return "";
-        return (
-            selectedPlayer.character?.name?.trim() ||
-            selectedPlayer.username ||
-            (selectedPlayer.userId ? `Player ${selectedPlayer.userId.slice(0, 6)}` : "Unclaimed slot")
-        );
+        return normalizePlayerLabel(selectedPlayer);
     }, [selectedPlayer]);
     const canGiveToSelected = isDM && !!selectedPlayer?.userId;
 
@@ -290,11 +630,38 @@ function ItemsTab({ game, me, onUpdate }) {
                             </button>
                         )}
                     </div>
+                    <div className="row" style={{ gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                        <input
+                            placeholder="Tags (comma separated)"
+                            value={form.tags.join(", ")}
+                            onChange={(e) => setForm({ ...form, tags: parseTagInput(e.target.value) })}
+                            style={{ flex: 1, minWidth: 220 }}
+                            disabled={!canEdit}
+                        />
+                    </div>
+                    <EffectEditor
+                        title="Trigger over-time effects"
+                        effects={form.effects}
+                        onChange={(next) => setForm((prev) => ({ ...prev, effects: next }))}
+                        disabled={!canEdit || busySave}
+                    />
                     {formLinked ? (
                         <div className="text-muted text-small" style={{ marginTop: -4 }}>
                             Linked to <b>{formLinked.name}</b>
                             {formLinked.type ? ` · ${formLinked.type}` : ""}
                             {formLinkedEffect && <div>Effect: {formLinkedEffect}</div>}
+                            {Array.isArray(formLinked.effects) && formLinked.effects.length > 0 && (
+                                <div>
+                                    Triggers:
+                                    <ul className="item-effect-summary">
+                                        {formLinked.effects.map((effect) => (
+                                            <li key={effect.id || effect.trigger}>
+                                                {formatTriggerEffect(effect)}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
                         </div>
                     ) : form.libraryItemId ? (
                         <div className="text-small warn" style={{ marginTop: -4 }}>
@@ -327,6 +694,19 @@ function ItemsTab({ game, me, onUpdate }) {
                             const rowBusy = busyRow === it.id;
                             const unlinking = rowBusy && busyRowAction === "unlink";
                             const removing = rowBusy && busyRowAction === "remove";
+                            const tags = parseTagInput(it.tags);
+                            const combinedEffects = [
+                                ...(Array.isArray(linked?.effects) ? linked.effects : []),
+                                ...(Array.isArray(it.effects) ? it.effects : []),
+                            ];
+                            const effectSummaries = combinedEffects
+                                .map((effect, idx) => ({
+                                    key:
+                                        effect.id ||
+                                        `${it.id || "custom"}-effect-${effect.kind || "effect"}-${effect.trigger || idx}-${idx}`,
+                                    label: formatTriggerEffect(effect),
+                                }))
+                                .filter((entry) => entry.label);
                             return (
                                 <div
                                     key={it.id}
@@ -346,6 +726,15 @@ function ItemsTab({ game, me, onUpdate }) {
                                         {it.desc && (
                                             <div style={{ opacity: 0.8, fontSize: 12, marginTop: 4 }}>{it.desc}</div>
                                         )}
+                                        {tags.length > 0 && (
+                                            <div className="item-card__tags" style={{ marginTop: 4 }}>
+                                                {tags.map((tag) => (
+                                                    <span key={`${it.id}-tag-${tag}`} className="item-tag">
+                                                        #{tag}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
                                         {linked ? (
                                             <div className="text-muted text-small" style={{ marginTop: 4 }}>
                                                 Linked to <b>{linked.name}</b>
@@ -357,6 +746,18 @@ function ItemsTab({ game, me, onUpdate }) {
                                                 Linked premade item not found.
                                             </div>
                                         ) : null}
+                                        {effectSummaries.length > 0 && (
+                                            <div className="item-card__effects" style={{ marginTop: 4 }}>
+                                                <span className="item-card__section-title text-small">
+                                                    Trigger effects
+                                                </span>
+                                                <ul className="item-card__effect-list">
+                                                    {effectSummaries.map((entry) => (
+                                                        <li key={entry.key}>{entry.label}</li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                        )}
                                     </div>
                                     <div
                                         className="row"
@@ -400,6 +801,10 @@ function ItemsTab({ game, me, onUpdate }) {
                                                             type: it.type || "",
                                                             desc: it.desc || "",
                                                             libraryItemId: it.libraryItemId || "",
+                                                            tags: parseTagInput(it.tags),
+                                                            effects: Array.isArray(it.effects)
+                                                                ? it.effects.map((effect) => makeEffectDraft(effect))
+                                                                : [],
                                                         });
                                                     }}
                                                     disabled={busySave}
@@ -492,6 +897,43 @@ function ItemsTab({ game, me, onUpdate }) {
                         </select>
                     </div>
                 )}
+                {players.length > 0 && (
+                    <div className="item-filter-bar">
+                        <div className="item-filter-bar__field">
+                            <input
+                                id="player-inventory-search"
+                                type="search"
+                                placeholder="Search items by name, type, tag, or effect"
+                                value={searchTerm}
+                                onChange={(event) => setSearchTerm(event.target.value)}
+                                autoComplete="off"
+                            />
+                        </div>
+                        <div className="item-filter-bar__controls">
+                            <label className="item-filter-bar__control">
+                                <span className="text-small">Sort by</span>
+                                <select
+                                    value={sortMode}
+                                    onChange={(event) => setSortMode(event.target.value)}
+                                >
+                                    {INVENTORY_SORT_OPTIONS.map((option) => (
+                                        <option key={option.value} value={option.value}>
+                                            {option.label}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                            <label className="item-filter-bar__control item-filter-bar__favorites">
+                                <input
+                                    type="checkbox"
+                                    checked={favoritesOnly}
+                                    onChange={(event) => setFavoritesOnly(event.target.checked)}
+                                />
+                                <span>Favorites only</span>
+                            </label>
+                        </div>
+                    </div>
+                )}
                 {players.length === 0 ? (
                     <div style={{ opacity: 0.7 }}>No players have joined yet.</div>
                 ) : visiblePlayers.length === 0 ? (
@@ -501,7 +943,7 @@ function ItemsTab({ game, me, onUpdate }) {
                             : "No inventory available for your character yet."}
                     </div>
                 ) : (
-                    <div className="list" style={{ gap: 20 }}>
+                    <div className="item-card-grid">
                         {visiblePlayers.map((p) => {
                             const canEditItems =
                                 isDM || (game.permissions?.canEditItems && me.id === p.userId);
@@ -518,6 +960,15 @@ function ItemsTab({ game, me, onUpdate }) {
                                         libraryCatalog={libraryCatalog}
                                         currentUserId={me.id}
                                         isDM={isDM}
+                                        tradeActions={tradeActions}
+                                        tradeTargets={tradeTargets}
+                                        searchTerm={searchTerm}
+                                        sortMode={sortMode}
+                                        favoritesOnly={favoritesOnly}
+                                        favorites={favorites}
+                                        toggleFavorite={toggleFavorite}
+                                        isFavorite={isFavorite}
+                                        clearFavorites={clearMissing}
                                     />
                                     <PlayerGearStashCard
                                         player={p}
@@ -536,8 +987,34 @@ function ItemsTab({ game, me, onUpdate }) {
     );
 }
 
-function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems, libraryCatalog, isDM, currentUserId }) {
-    const [form, setForm] = useState({ name: "", type: "", desc: "", amount: "1", libraryItemId: "" });
+function PlayerInventoryCard({
+    player,
+    canEdit,
+    gameId,
+    onUpdate,
+    libraryItems,
+    libraryCatalog,
+    isDM,
+    currentUserId,
+    tradeActions,
+    tradeTargets,
+    searchTerm,
+    sortMode,
+    favoritesOnly,
+    favorites,
+    toggleFavorite,
+    isFavorite,
+    clearFavorites,
+}) {
+    const [form, setForm] = useState({
+        name: "",
+        type: "",
+        desc: "",
+        amount: "1",
+        libraryItemId: "",
+        tags: [],
+        effects: [],
+    });
     const [editing, setEditing] = useState(null);
     const [busySave, setBusySave] = useState(false);
     const [busyRow, setBusyRow] = useState(null);
@@ -547,7 +1024,10 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems, 
     const [maccaBusy, setMaccaBusy] = useState(false);
     const [maccaNotice, setMaccaNotice] = useState(null);
 
-    const inventory = Array.isArray(player.inventory) ? player.inventory : [];
+    const inventory = useMemo(
+        () => (Array.isArray(player.inventory) ? player.inventory : []),
+        [player.inventory],
+    );
     const playerId = player?.userId || "";
     const available = Array.isArray(libraryItems) ? libraryItems : [];
     const libraryMap = useMemo(() => {
@@ -559,7 +1039,7 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems, 
 
     const resetForm = useCallback(() => {
         setEditing(null);
-        setForm({ name: "", type: "", desc: "", amount: "1", libraryItemId: "" });
+        setForm({ name: "", type: "", desc: "", amount: "1", libraryItemId: "", tags: [], effects: [] });
     }, []);
 
     useEffect(() => {
@@ -579,6 +1059,7 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems, 
 
     const formLinked = form.libraryItemId ? libraryMap.get(form.libraryItemId) : null;
     const formLinkedEffect = formLinked ? formatHealingEffect(formLinked.healing) : "";
+    const formLinkedTriggers = Array.isArray(formLinked?.effects) ? formLinked.effects : [];
 
     const handleLibrarySelect = useCallback(
         (value) => {
@@ -592,6 +1073,10 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems, 
                     next.name = linked.name || "";
                     next.type = linked.type || "";
                     next.desc = linked.desc || "";
+                    next.tags = parseTagInput(linked.tags);
+                    next.effects = Array.isArray(linked.effects)
+                        ? linked.effects.map((effect) => makeEffectDraft(effect))
+                        : [];
                 }
                 return next;
             });
@@ -613,6 +1098,8 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems, 
             desc: form.desc.trim(),
             amount: editing ? amount : amount <= 0 ? 1 : amount,
             libraryItemId: typeof form.libraryItemId === "string" ? form.libraryItemId.trim() : "",
+            tags: parseTagInput(form.tags),
+            effects: prepareEffectsForSave(form.effects),
         };
         try {
             setBusySave(true);
@@ -638,6 +1125,10 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems, 
             desc: item.desc || "",
             amount: String(item.amount ?? 1),
             libraryItemId: item.libraryItemId || "",
+            tags: parseTagInput(item.tags),
+            effects: Array.isArray(item.effects)
+                ? item.effects.map((effect) => makeEffectDraft(effect))
+                : [],
         });
     }, []);
 
@@ -687,33 +1178,54 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems, 
             try {
                 setBusyUse(item.id);
                 const result = await Games.consumePlayerItem(gameId, playerId, item.id);
+                const headline = `Used ${item.name || "item"}.`;
+                const messageParts = [headline];
+
                 if (result?.applied) {
                     const { applied, remaining } = result;
-                    const parts = [];
-                    if (applied.revived) parts.push("Revived");
+                    const appliedParts = [];
+                    if (applied.revived) appliedParts.push("Revived");
                     if (
                         typeof applied.hpBefore === "number" &&
                         typeof applied.hpAfter === "number" &&
                         applied.hpAfter !== applied.hpBefore
                     ) {
-                        parts.push(`HP ${applied.hpBefore} → ${applied.hpAfter}`);
+                        appliedParts.push(`HP ${applied.hpBefore} → ${applied.hpAfter}`);
                     }
                     if (
                         typeof applied.mpBefore === "number" &&
                         typeof applied.mpAfter === "number" &&
                         applied.mpAfter !== applied.mpBefore
                     ) {
-                        parts.push(`MP ${applied.mpBefore} → ${applied.mpAfter}`);
+                        appliedParts.push(`MP ${applied.mpBefore} → ${applied.mpAfter}`);
                     }
                     if (typeof remaining === "number") {
-                        parts.push(`Remaining: ${remaining}`);
+                        appliedParts.push(`Remaining: ${remaining}`);
                     }
-                    if (parts.length > 0) {
-                        alert(`Used ${item.name || "item"}. ${parts.join(", ")}`);
-                    } else {
-                        alert(`Used ${item.name || "item"}.`);
+                    if (appliedParts.length > 0) {
+                        messageParts.push(appliedParts.join(", "));
                     }
                 }
+
+                if (result?.message) {
+                    messageParts.push(result.message);
+                } else if (result?.notice === "manual_update_required") {
+                    messageParts.push("No effect found. Please update the status manually.");
+                }
+
+                if (Array.isArray(result?.effects) && result.effects.length > 0) {
+                    const effectLines = result.effects
+                        .map((effect) => formatTriggerEffect(effect))
+                        .filter(Boolean);
+                    if (effectLines.length > 0) {
+                        messageParts.push([
+                            "Ongoing effects:",
+                            ...effectLines.map((line) => `• ${line}`),
+                        ].join("\n"));
+                    }
+                }
+
+                alert(messageParts.join("\n\n"));
                 await onUpdate?.();
             } catch (e) {
                 alert(e.message);
@@ -776,6 +1288,179 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems, 
     const maccaRaw = Number(player.character?.resources?.macca);
     const macca = Number.isFinite(maccaRaw) ? maccaRaw : 0;
     const maccaLabel = Number.isFinite(maccaRaw) ? macca.toLocaleString() : "0";
+
+    const favoritesSet = useMemo(
+        () => (favorites instanceof Set ? favorites : new Set()),
+        [favorites],
+    );
+
+    const filteredTradeTargets = useMemo(() => {
+        if (!Array.isArray(tradeTargets)) return [];
+        return tradeTargets.filter((target) => target && target.id && target.id !== playerId);
+    }, [playerId, tradeTargets]);
+
+    const [tradeTargetId, setTradeTargetId] = useState(() => filteredTradeTargets[0]?.id || "");
+    const [tradeFeedback, setTradeFeedback] = useState(null);
+
+    useEffect(() => {
+        setTradeFeedback(null);
+        const firstId = filteredTradeTargets[0]?.id || "";
+        setTradeTargetId((prev) => {
+            if (!prev) return firstId;
+            const exists = filteredTradeTargets.some((target) => target.id === prev);
+            return exists ? prev : firstId;
+        });
+    }, [filteredTradeTargets]);
+
+    useEffect(() => {
+        if (typeof clearFavorites !== "function") return;
+        const validIds = new Set(
+            inventory
+                .map((item) => (item && typeof item.id === "string" ? item.id : null))
+                .filter(Boolean),
+        );
+        clearFavorites(validIds);
+    }, [clearFavorites, inventory]);
+
+    const processedItems = useMemo(() => {
+        const normalizedSearch = (searchTerm || "").trim().toLowerCase();
+        const checkFavorite =
+            typeof isFavorite === "function"
+                ? isFavorite
+                : (itemId) => favoritesSet.has(itemId);
+        const entries = inventory
+            .filter((item) => item && typeof item === "object")
+            .map((item) => {
+                const amount = parseAmount(item.amount, 0);
+                const linked = item.libraryItemId ? libraryMap.get(item.libraryItemId) : null;
+                const linkedEffects = Array.isArray(linked?.effects) ? linked.effects : [];
+                const entryEffects = Array.isArray(item.effects) ? item.effects : [];
+                const combinedEffects = [...linkedEffects, ...entryEffects];
+                const healingLabel = linked ? formatHealingEffect(linked.healing) : "";
+                const ownTags = parseTagInput(item.tags);
+                const libraryTags = parseTagInput(linked?.tags);
+                const tagSet = new Set([...(ownTags || []), ...(libraryTags || [])]);
+                const tags = Array.from(tagSet);
+                const effectDetails = combinedEffects
+                    .map((effect, index) => {
+                        const label = formatTriggerEffect(effect);
+                        if (!label) return null;
+                        const key =
+                            effect.id ||
+                            `${effect.kind || "effect"}-${effect.trigger || index}-${effect.value || index}-${index}`;
+                        return { key, label };
+                    })
+                    .filter(Boolean);
+                const effectSummaries = effectDetails.map((detail) => detail.label);
+                const searchBlob = [
+                    item.name,
+                    item.type,
+                    item.desc,
+                    healingLabel,
+                    linked?.name,
+                    linked?.type,
+                    ...tags,
+                    ...effectSummaries,
+                ]
+                    .filter(Boolean)
+                    .join("\n")
+                    .toLowerCase();
+                return {
+                    item,
+                    amount,
+                    linked,
+                    missingLink: !!(item.libraryItemId && !linked),
+                    combinedEffects,
+                    effectSummaries,
+                    effectDetails,
+                    healingLabel,
+                    tags,
+                    searchBlob,
+                    isFavorite: checkFavorite(item.id),
+                    isConsumable: isConsumableType(item.type),
+                };
+            });
+
+        let filtered = entries;
+        if (favoritesOnly) {
+            filtered = filtered.filter((entry) => entry.isFavorite);
+        }
+        if (normalizedSearch) {
+            filtered = filtered.filter((entry) => entry.searchBlob.includes(normalizedSearch));
+        }
+
+        const collator = new Intl.Collator(undefined, { sensitivity: "base" });
+
+        const sorted = filtered.slice().sort((a, b) => {
+            if (sortMode === "type") {
+                const typeCompare = collator.compare(a.item.type || "", b.item.type || "");
+                if (typeCompare !== 0) return typeCompare;
+                return collator.compare(a.item.name || "", b.item.name || "");
+            }
+            if (sortMode === "quantity") {
+                const diff = b.amount - a.amount;
+                if (diff !== 0) return diff;
+                return collator.compare(a.item.name || "", b.item.name || "");
+            }
+            if (sortMode === "recent") {
+                const diff = getItemTimestamp(b.item) - getItemTimestamp(a.item);
+                if (diff !== 0) return diff;
+                return collator.compare(a.item.name || "", b.item.name || "");
+            }
+            return collator.compare(a.item.name || "", b.item.name || "");
+        });
+
+        return sorted;
+    }, [favoritesOnly, favoritesSet, inventory, isFavorite, libraryMap, parseAmount, searchTerm, sortMode]);
+
+    const selectedTradeTarget = useMemo(
+        () => filteredTradeTargets.find((target) => target.id === tradeTargetId) || null,
+        [filteredTradeTargets, tradeTargetId],
+    );
+
+    const tradeSelectId = `trade-target-${playerId || "player"}`;
+    const totalItems = inventory.length;
+    const hasFilteredItems = processedItems.length > 0;
+
+    const handleToggleFavorite = useCallback(
+        (itemId) => {
+            if (typeof toggleFavorite === "function" && itemId) {
+                toggleFavorite(itemId);
+            }
+        },
+        [toggleFavorite],
+    );
+
+    const handleStartTrade = useCallback(
+        (item) => {
+            if (!tradeActions?.start) {
+                setTradeFeedback({ type: "error", message: "Trading is unavailable right now." });
+                return;
+            }
+            if (!tradeTargetId) {
+                setTradeFeedback({ type: "error", message: "Select a trade partner first." });
+                return;
+            }
+            try {
+                const note = item?.name ? `Proposing trade: ${item.name}` : undefined;
+                tradeActions.start(tradeTargetId, note);
+                const label = selectedTradeTarget?.label || "your partner";
+                setTradeFeedback({
+                    type: "success",
+                    message: `Trade started with ${label}. Add items from the trade overlay to complete the offer.`,
+                });
+            } catch (err) {
+                setTradeFeedback({ type: "error", message: err.message || "Failed to start trade." });
+            }
+        },
+        [selectedTradeTarget?.label, tradeActions, tradeTargetId],
+    );
+
+    useEffect(() => {
+        if (!tradeFeedback || typeof window === "undefined") return undefined;
+        const timer = window.setTimeout(() => setTradeFeedback(null), 4000);
+        return () => window.clearTimeout(timer);
+    }, [tradeFeedback]);
 
     return (
         <div className="card" style={{ padding: 12 }}>
@@ -880,6 +1565,18 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems, 
                     Linked to <b>{formLinked.name}</b>
                     {formLinked.type ? ` · ${formLinked.type}` : ""}
                     {formLinkedEffect && <div>Effect: {formLinkedEffect}</div>}
+                    {formLinkedTriggers.length > 0 && (
+                        <div>
+                            Triggers:
+                            <ul className="item-effect-summary">
+                                {formLinkedTriggers.map((effect) => (
+                                    <li key={effect.id || effect.trigger}>
+                                        {formatTriggerEffect(effect)}
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
                 </div>
             ) : form.libraryItemId ? (
                 <div className="text-small warn" style={{ marginTop: canEdit ? -4 : 8 }}>
@@ -920,6 +1617,20 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems, 
                 />
             </div>
             <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                <input
+                    placeholder="Tags (comma separated)"
+                    value={form.tags.join(", ")}
+                    onChange={(e) => setForm({ ...form, tags: parseTagInput(e.target.value) })}
+                    style={{ flex: 1, minWidth: 200 }}
+                    disabled={!canEdit}
+                />
+            </div>
+            <EffectEditor
+                effects={form.effects}
+                onChange={(next) => setForm((prev) => ({ ...prev, effects: next }))}
+                disabled={!canEdit || busySave}
+            />
+            <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                 <button className="btn" onClick={save} disabled={!canEdit || busySave}>
                     {busySave ? "…" : editing ? "Save" : "Add"}
                 </button>
@@ -930,63 +1641,161 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems, 
                 )}
             </div>
 
-            <div className="list" style={{ marginTop: 16 }}>
-                {inventory.map((item) => {
-                    const linked = item.libraryItemId ? libraryMap.get(item.libraryItemId) : null;
-                    const effectLabel = linked ? formatHealingEffect(linked.healing) : "";
-                    const missingLink = item.libraryItemId && !linked;
-                    const amount = parseAmount(item.amount, 0);
-                    const rowBusy = busyRow === item.id;
+            {filteredTradeTargets.length > 0 && (
+                <div className="item-trade-bar">
+                    <label className="item-trade-bar__label" htmlFor={tradeSelectId}>
+                        Trade with
+                    </label>
+                    <select
+                        id={tradeSelectId}
+                        value={tradeTargetId}
+                        onChange={(event) => setTradeTargetId(event.target.value)}
+                    >
+                        {filteredTradeTargets.map((target) => (
+                            <option key={target.id} value={target.id}>
+                                {target.label}
+                            </option>
+                        ))}
+                    </select>
+                    {tradeFeedback && (
+                        <div
+                            className={`item-trade-bar__notice${
+                                tradeFeedback.type === "error" ? " is-error" : " is-success"
+                            }`}
+                        >
+                            {tradeFeedback.message}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            <div className="item-card-grid" style={{ marginTop: 16 }}>
+                {processedItems.map((entry) => {
+                    const {
+                        item,
+                        amount,
+                        linked,
+                        missingLink,
+                        combinedEffects,
+                        effectDetails,
+                        effectSummaries,
+                        healingLabel,
+                        tags,
+                        isFavorite: isFavorited,
+                        isConsumable,
+                    } = entry;
+                    const itemId = item.id;
+                    const rowBusy = busyRow === itemId;
                     const unlinking = rowBusy && busyRowAction === "unlink";
                     const removing = rowBusy && busyRowAction === "remove";
-                    const canUse = canUseItems && linked?.healing && amount > 0;
+                    const useAllowed =
+                        canUseItems && amount > 0 && (isConsumable || healingLabel || combinedEffects.length > 0);
+                    const tradeAllowed = filteredTradeTargets.length > 0 && !!tradeActions?.start;
+                    const tooltipParts = [item.desc, healingLabel, ...(effectSummaries || [])].filter(Boolean);
+                    const tooltip = tooltipParts.join("\n\n");
+                    const cardClassName = `item-card${isFavorited ? " is-favorite" : ""}`;
+                    const amountLabel = amount > 1 ? `x${amount}` : "x1";
+
                     return (
-                        <div
-                            key={item.id}
-                            className="row"
-                            style={{ gap: 12, flexWrap: "wrap", alignItems: "flex-start", justifyContent: "space-between" }}
-                        >
-                            <div style={{ flex: 1, minWidth: 220 }}>
-                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                                    <b>{item.name || "Unnamed item"}</b>
-                                    {item.type && <span className="pill">{item.type}</span>}
-                                    <span className="pill light">x{amount}</span>
+                        <div key={itemId || item.name} className={cardClassName} title={tooltip || undefined}>
+                            <div className="item-card__header">
+                                <div className="item-card__title-group">
+                                    <div className="item-card__title">{item.name || "Unnamed item"}</div>
+                                    <div className="item-card__meta">
+                                        {item.type && <span className="pill">{item.type}</span>}
+                                        <span className="pill light">{amountLabel}</span>
+                                    </div>
                                 </div>
-                                {item.desc && <div style={{ opacity: 0.8, fontSize: 12 }}>{item.desc}</div>}
-                                {linked ? (
-                                    <div className="text-muted text-small" style={{ marginTop: 4 }}>
-                                        Linked to <b>{linked.name}</b>
-                                        {linked.type ? ` · ${linked.type}` : ""}
-                                        {effectLabel && <div>Effect: {effectLabel}</div>}
-                                    </div>
-                                ) : missingLink ? (
-                                    <div className="text-small warn" style={{ marginTop: 4 }}>
-                                        Linked premade item not found.
-                                    </div>
-                                ) : null}
+                                <button
+                                    type="button"
+                                    className={`favorite-toggle${isFavorited ? " is-active" : ""}`}
+                                    onClick={() => handleToggleFavorite(itemId)}
+                                    aria-pressed={isFavorited}
+                                    title={isFavorited ? "Remove from favorites" : "Add to favorites"}
+                                >
+                                    ★
+                                </button>
                             </div>
-                            <div className="row" style={{ gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                                {canUse && (
+                            {item.desc && <div className="item-card__desc">{item.desc}</div>}
+                            {tags.length > 0 && (
+                                <div className="item-card__tags">
+                                    {tags.map((tag) => (
+                                        <span key={`${itemId}-tag-${tag}`} className="item-tag">
+                                            #{tag}
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+                            {linked ? (
+                                <div className="item-card__linked text-small">
+                                    Linked to <b>{linked.name}</b>
+                                    {linked.type ? ` · ${linked.type}` : ""}
+                                </div>
+                            ) : missingLink ? (
+                                <div className="item-card__warning text-small warn">
+                                    Linked premade item not found.
+                                </div>
+                            ) : null}
+                            {healingLabel && (
+                                <div className="item-card__effect text-small">{healingLabel}</div>
+                            )}
+                            {effectDetails.length > 0 && (
+                                <div className="item-card__effects">
+                                    <span className="item-card__section-title text-small">Trigger effects</span>
+                                    <ul className="item-card__effect-list">
+                                        {effectDetails.map((effect) => (
+                                            <li key={effect.key}>{effect.label}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+                            <div className="item-card__actions">
+                                {useAllowed && (
                                     <button
-                                        className="btn secondary"
+                                        type="button"
+                                        className="btn secondary btn-small"
                                         onClick={() => handleUse(item)}
-                                        disabled={busyUse === item.id}
-                                        title={effectLabel || "Use item"}
+                                        disabled={busyUse === itemId}
                                     >
-                                        {busyUse === item.id ? "…" : "Use"}
+                                        {busyUse === itemId ? "Using…" : "Use"}
+                                    </button>
+                                )}
+                                {tradeAllowed && (
+                                    <button
+                                        type="button"
+                                        className="btn secondary btn-small"
+                                        onClick={() => handleStartTrade(item)}
+                                        disabled={!tradeTargetId}
+                                    >
+                                        Trade
                                     </button>
                                 )}
                                 {canEdit && item.libraryItemId && (
-                                    <button className="btn ghost" onClick={() => unlink(item.id)} disabled={unlinking}>
+                                    <button
+                                        type="button"
+                                        className="btn ghost btn-small"
+                                        onClick={() => unlink(itemId)}
+                                        disabled={unlinking}
+                                    >
                                         {unlinking ? "…" : "Unlink"}
                                     </button>
                                 )}
                                 {canEdit && (
                                     <>
-                                        <button className="btn" onClick={() => startEdit(item)} disabled={busySave}>
+                                        <button
+                                            type="button"
+                                            className="btn btn-small"
+                                            onClick={() => startEdit(item)}
+                                            disabled={busySave}
+                                        >
                                             Edit
                                         </button>
-                                        <button className="btn" onClick={() => remove(item.id)} disabled={removing}>
+                                        <button
+                                            type="button"
+                                            className="btn btn-small"
+                                            onClick={() => remove(itemId)}
+                                            disabled={removing}
+                                        >
                                             {removing ? "…" : "Remove"}
                                         </button>
                                     </>
@@ -995,8 +1804,18 @@ function PlayerInventoryCard({ player, canEdit, gameId, onUpdate, libraryItems, 
                         </div>
                     );
                 })}
-                {inventory.length === 0 && <div style={{ opacity: 0.7 }}>No items in inventory.</div>}
             </div>
+
+            {totalItems === 0 && (
+                <div className="text-muted" style={{ marginTop: 8 }}>
+                    No items in inventory.
+                </div>
+            )}
+            {totalItems > 0 && !hasFilteredItems && (
+                <div className="text-muted" style={{ marginTop: 8 }}>
+                    No items match your filters.
+                </div>
+            )}
         </div>
     );
 }

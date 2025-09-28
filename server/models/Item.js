@@ -11,6 +11,19 @@ const healingSchema = new mongoose.Schema(
     { _id: false, minimize: false },
 );
 
+const effectSchema = new mongoose.Schema(
+    {
+        id: { type: String, default: '' },
+        kind: { type: String, default: '' },
+        trigger: { type: String, default: '' },
+        interval: { type: Number, default: null },
+        duration: { type: Number, default: null },
+        value: { type: String, default: '' },
+        notes: { type: String, default: '' },
+    },
+    { _id: false, minimize: false },
+);
+
 const itemSchema = new mongoose.Schema(
     {
         slug: { type: String, required: true, unique: true, index: true },
@@ -23,6 +36,7 @@ const itemSchema = new mongoose.Schema(
         tags: { type: [String], default: [] },
         order: { type: Number, default: 0 },
         healing: { type: healingSchema, default: undefined },
+        effects: { type: [effectSchema], default: undefined },
     },
     {
         timestamps: true,

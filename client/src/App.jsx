@@ -1476,6 +1476,7 @@ function GameView({
                                 const full = await Games.get(game.id);
                                 setActive(full);
                             }}
+                            realtime={realtime}
                         />
                     )}
 
@@ -2150,6 +2151,59 @@ function normalizeMapLibrary(list) {
     return list.map((entry) => normalizeMapLibraryEntry(entry)).filter(Boolean);
 }
 
+const DEFAULT_CLIENT_COMBAT = {
+    active: false,
+    order: [],
+    turn: 0,
+    round: 0,
+    lastUpdatedAt: null,
+};
+
+function CombatTimeline({ entries, ariaLabel = 'Turn order timeline' }) {
+    if (!Array.isArray(entries) || entries.length === 0) return null;
+    return (
+        <div className="map-combat-timeline" role="list" aria-label={ariaLabel}>
+            {entries.map((entry) => {
+                const className = [
+                    'map-combat-timeline__entry',
+                    entry.isCurrent ? 'is-current' : '',
+                    entry.isComplete ? 'is-complete' : '',
+                ]
+                    .filter(Boolean)
+                    .join(' ');
+                return (
+                    <div key={entry.id} role="listitem" className={className}>
+                        <span className="map-combat-timeline__step">{entry.position}</span>
+                        <span className="map-combat-timeline__label">{entry.label}</span>
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
+function normalizeClientCombatState(state) {
+    if (!state || typeof state !== 'object') {
+        return { ...DEFAULT_CLIENT_COMBAT };
+    }
+    const active = !!state.active;
+    const order = Array.isArray(state.order)
+        ? state.order
+              .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+              .filter(Boolean)
+              .slice(0, 32)
+        : [];
+    const turnRaw = Number(state.turn);
+    const roundRaw = Number(state.round);
+    const turn = Number.isFinite(turnRaw) && turnRaw > 0 ? Math.round(turnRaw) : active ? 1 : 0;
+    const round = Number.isFinite(roundRaw) && roundRaw > 0 ? Math.round(roundRaw) : active ? 1 : 0;
+    const lastUpdatedAt = typeof state.lastUpdatedAt === 'string' ? state.lastUpdatedAt : null;
+    if (!active) {
+        return { ...DEFAULT_CLIENT_COMBAT, order };
+    }
+    return { active: true, order, turn, round, lastUpdatedAt };
+}
+
 function normalizeClientMapState(map) {
     if (!map || typeof map !== 'object') {
         return {
@@ -2161,6 +2215,7 @@ function normalizeClientMapState(map) {
             background: { ...MAP_DEFAULT_BACKGROUND },
             updatedAt: null,
             drawer: { ...MAP_DEFAULT_DRAWER },
+            combat: { ...DEFAULT_CLIENT_COMBAT },
         };
     }
     const strokes = Array.isArray(map.strokes)
@@ -2199,6 +2254,7 @@ function normalizeClientMapState(map) {
         background: normalizeClientMapBackground(map.background),
         updatedAt: typeof map.updatedAt === 'string' ? map.updatedAt : null,
         drawer,
+        combat: normalizeClientCombatState(map.combat),
     };
 }
 
@@ -2367,6 +2423,13 @@ function MapTab({ game, me }) {
     const [undoStack, setUndoStack] = useState([]);
     const [undoInFlight, setUndoInFlight] = useState(false);
     const [drawerUpdating, setDrawerUpdating] = useState(false);
+    const combatState = mapState.combat || DEFAULT_CLIENT_COMBAT;
+    const combatOrderString = combatState.order.join('\n');
+    const [combatOrderDraft, setCombatOrderDraft] = useState(() => combatOrderString);
+    const [combatRoundDraft, setCombatRoundDraft] = useState(() => (combatState.round || 1).toString());
+    const [combatTurnDraft, setCombatTurnDraft] = useState(() => (combatState.turn || 1).toString());
+    const [combatBusy, setCombatBusy] = useState(false);
+    const [combatNotice, setCombatNotice] = useState(null);
     const resetEnemyForm = useCallback(() => {
         setEnemyForm(createEnemyFormState());
         setEnemyDemonChoice('');
@@ -2420,6 +2483,24 @@ function MapTab({ game, me }) {
         return () => observer.disconnect();
     }, []);
 
+    useEffect(() => {
+        setCombatOrderDraft(combatOrderString);
+    }, [combatOrderString]);
+
+    useEffect(() => {
+        setCombatRoundDraft((combatState.round || 1).toString());
+    }, [combatState.round]);
+
+    useEffect(() => {
+        setCombatTurnDraft((combatState.turn || 1).toString());
+    }, [combatState.turn]);
+
+    useEffect(() => {
+        if (!combatNotice || typeof window === 'undefined') return undefined;
+        const timer = window.setTimeout(() => setCombatNotice(null), 3500);
+        return () => window.clearTimeout(timer);
+    }, [combatNotice]);
+
     const activeDrawerId = mapState.drawer?.userId || game.dmId || null;
     const isActiveDrawer = activeDrawerId === me.id;
     const canDraw =
@@ -2435,6 +2516,43 @@ function MapTab({ game, me }) {
         canPaint || isBackgroundTool || isBucketTool || (isDM && isShapeTool) ? 'none' : 'auto';
     const shapeLayerPointerEvents = isDM && isShapeTool ? 'auto' : 'none';
     const canvasPointerEvents = isBackgroundTool || isShapeTool ? 'none' : 'auto';
+    const combatOrderPreview = combatState.order.join(' → ');
+    const combatTimeline = useMemo(() => {
+        const order = Array.isArray(combatState.order) ? combatState.order : [];
+        if (order.length === 0) return [];
+        const activeIndex = combatState.active
+            ? Math.max(0, Math.min(order.length - 1, Math.round(combatState.turn || 1) - 1))
+            : -1;
+        return order.map((rawLabel, index) => {
+            const label = typeof rawLabel === 'string' && rawLabel.trim() ? rawLabel.trim() : `Entry ${index + 1}`;
+            const safeId = `${label.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'entry'}-${index}`;
+            return {
+                id: `active-${safeId}`,
+                label,
+                position: index + 1,
+                isCurrent: activeIndex === index,
+                isComplete: activeIndex !== -1 && index < activeIndex,
+            };
+        });
+    }, [combatState.active, combatState.order, combatState.turn]);
+    const combatTimelineDraft = useMemo(() => {
+        if (!combatOrderDraft) return [];
+        const lines = combatOrderDraft
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .slice(0, 32);
+        return lines.map((label, index) => {
+            const safeId = `${label.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'entry'}-${index}`;
+            return {
+                id: `draft-${safeId}`,
+                label,
+                position: index + 1,
+                isCurrent: false,
+                isComplete: false,
+            };
+        });
+    }, [combatOrderDraft]);
 
     useEffect(() => {
         if (!canDraw && (tool === 'draw' || tool === 'erase')) {
@@ -3698,6 +3816,71 @@ function MapTab({ game, me }) {
         }
     }, [game.id, isDM]);
 
+    const parseCombatOrderInput = useCallback((value) => {
+        return (value || '')
+            .split(/\r?\n|,/)
+            .map((entry) => entry.trim())
+            .filter(Boolean)
+            .slice(0, 32);
+    }, []);
+
+    const handleStartCombat = useCallback(async () => {
+        if (!isDM) return;
+        const order = parseCombatOrderInput(combatOrderDraft);
+        if (order.length === 0) {
+            setCombatNotice({ type: 'error', message: 'Add at least one combatant to start combat.' });
+            return;
+        }
+        const roundValue = Math.max(1, Math.round(Number(combatRoundDraft) || 1));
+        const turnValueRaw = Math.max(1, Math.round(Number(combatTurnDraft) || 1));
+        const turnValue = Math.min(turnValueRaw, order.length);
+        try {
+            setCombatBusy(true);
+            setCombatNotice(null);
+            const response = await Games.startCombat(game.id, {
+                order,
+                round: roundValue,
+                turn: turnValue,
+            });
+            setMapState((prev) => ({ ...prev, combat: normalizeClientCombatState(response) }));
+            setCombatNotice({ type: 'success', message: 'Combat started.' });
+        } catch (err) {
+            setCombatNotice({ type: 'error', message: err.message || 'Failed to start combat.' });
+        } finally {
+            setCombatBusy(false);
+        }
+    }, [combatOrderDraft, combatRoundDraft, combatTurnDraft, game.id, isDM, parseCombatOrderInput]);
+
+    const handleNextCombatTurn = useCallback(async () => {
+        if (!isDM || !combatState.active) return;
+        try {
+            setCombatBusy(true);
+            setCombatNotice(null);
+            const response = await Games.nextCombatTurn(game.id, { order: combatState.order });
+            setMapState((prev) => ({ ...prev, combat: normalizeClientCombatState(response) }));
+            setCombatNotice({ type: 'success', message: 'Advanced to next turn.' });
+        } catch (err) {
+            setCombatNotice({ type: 'error', message: err.message || 'Failed to advance turn.' });
+        } finally {
+            setCombatBusy(false);
+        }
+    }, [combatState.active, combatState.order, game.id, isDM]);
+
+    const handleEndCombat = useCallback(async () => {
+        if (!isDM || !combatState.active) return;
+        try {
+            setCombatBusy(true);
+            setCombatNotice(null);
+            const response = await Games.endCombat(game.id);
+            setMapState((prev) => ({ ...prev, combat: normalizeClientCombatState(response) }));
+            setCombatNotice({ type: 'success', message: 'Combat ended.' });
+        } catch (err) {
+            setCombatNotice({ type: 'error', message: err.message || 'Failed to end combat.' });
+        } finally {
+            setCombatBusy(false);
+        }
+    }, [combatState.active, game.id, isDM]);
+
     return (
         <div className="map-tab">
             <div className="map-toolbar card">
@@ -3841,6 +4024,135 @@ function MapTab({ game, me }) {
                         )}
                     </div>
                 </div>
+                {(isDM || combatState.active) && (
+                    <div className="map-toolbar__row map-toolbar__combat">
+                        {isDM ? (
+                            <div className="map-combat-card">
+                                <div className="map-combat-card__summary">
+                                    {combatState.active ? (
+                                        <>
+                                            <span className="pill success">Combat active</span>
+                                            <span className="text-small">
+                                                Round {combatState.round} · Turn {combatState.turn}
+                                            </span>
+                                            {combatOrderPreview && (
+                                                <span className="text-small map-combat-card__order">
+                                                    {combatOrderPreview}
+                                                </span>
+                                            )}
+                                        </>
+                                    ) : (
+                                        <span className="text-small">
+                                            Plan initiative order and start combat.
+                                        </span>
+                                    )}
+                                </div>
+                                {combatState.active && combatTimeline.length > 0 && (
+                                    <CombatTimeline
+                                        entries={combatTimeline}
+                                        ariaLabel="Active turn order"
+                                    />
+                                )}
+                                {!combatState.active && combatTimelineDraft.length > 0 && (
+                                    <CombatTimeline
+                                        entries={combatTimelineDraft}
+                                        ariaLabel="Planned turn order"
+                                    />
+                                )}
+                                <div className="map-combat-card__form">
+                                    {!combatState.active ? (
+                                        <>
+                                            <label className="field" style={{ width: '100%' }}>
+                                                <span className="field__label">Initiative order</span>
+                                                <textarea
+                                                    rows={3}
+                                                    value={combatOrderDraft}
+                                                    onChange={(event) => setCombatOrderDraft(event.target.value)}
+                                                    placeholder={'One combatant per line'}
+                                                    disabled={combatBusy}
+                                                />
+                                            </label>
+                                            <div className="map-combat-card__inputs">
+                                                <label className="field" style={{ width: 120 }}>
+                                                    <span className="field__label">Round</span>
+                                                    <input
+                                                        type="number"
+                                                        min={1}
+                                                        value={combatRoundDraft}
+                                                        onChange={(event) => setCombatRoundDraft(event.target.value)}
+                                                        disabled={combatBusy}
+                                                    />
+                                                </label>
+                                                <label className="field" style={{ width: 120 }}>
+                                                    <span className="field__label">Turn</span>
+                                                    <input
+                                                        type="number"
+                                                        min={1}
+                                                        value={combatTurnDraft}
+                                                        onChange={(event) => setCombatTurnDraft(event.target.value)}
+                                                        disabled={combatBusy}
+                                                    />
+                                                </label>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                className="btn btn-small"
+                                                onClick={handleStartCombat}
+                                                disabled={combatBusy}
+                                            >
+                                                {combatBusy ? 'Starting…' : 'Start Combat'}
+                                            </button>
+                                        </>
+                                    ) : (
+                                        <div className="map-combat-card__actions">
+                                            <button
+                                                type="button"
+                                                className="btn btn-small"
+                                                onClick={handleNextCombatTurn}
+                                                disabled={combatBusy}
+                                            >
+                                                {combatBusy ? 'Processing…' : 'Next Turn'}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="btn btn-small secondary"
+                                                onClick={handleEndCombat}
+                                                disabled={combatBusy}
+                                            >
+                                                End Combat
+                                            </button>
+                                        </div>
+                                    )}
+                                    {combatNotice && (
+                                        <div
+                                            className={`map-combat-card__notice${
+                                                combatNotice.type === 'error' ? ' text-error' : ' text-muted'
+                                            }`}
+                                        >
+                                            {combatNotice.message}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        ) : combatState.active ? (
+                            <div className="map-combat-card map-combat-card--readonly">
+                                <span className="pill success">Combat active</span>
+                                <span className="text-small">
+                                    Round {combatState.round} · Turn {combatState.turn}
+                                </span>
+                                {combatOrderPreview && (
+                                    <span className="text-small map-combat-card__order">{combatOrderPreview}</span>
+                                )}
+                                {combatTimeline.length > 0 && (
+                                    <CombatTimeline
+                                        entries={combatTimeline}
+                                        ariaLabel="Active turn order"
+                                    />
+                                )}
+                            </div>
+                        ) : null}
+                    </div>
+                )}
                 {canDraw && (
                     <div className="map-toolbar__row map-toolbar__brush">
                         <div>

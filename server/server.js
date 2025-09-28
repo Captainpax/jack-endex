@@ -81,6 +81,13 @@ const DEFAULT_BACKGROUND_COLOR = '#0f172a';
 const MAP_SHAPE_TYPES = new Set(['rectangle', 'circle', 'line', 'diamond', 'triangle', 'cone', 'image']);
 const MIN_SHAPE_SIZE = 0.02;
 const DEFAULT_MAP_DRAWER = Object.freeze({ userId: null, assignedAt: null });
+const DEFAULT_COMBAT_STATE = Object.freeze({
+    active: false,
+    turn: 0,
+    round: 0,
+    order: [],
+    lastUpdatedAt: null,
+});
 const DEFAULT_DB_PATH = path.join(__dirname, 'data', 'db.json');
 let legacySeedPromise = null;
 
@@ -555,6 +562,62 @@ function presentMapShape(shape) {
     return { ...normalized };
 }
 
+function normalizeCombatOrder(order) {
+    if (!Array.isArray(order)) return [];
+    const seen = new Set();
+    const out = [];
+    for (const entry of order) {
+        const label = sanitizeText(entry).trim().slice(0, 120);
+        if (!label) continue;
+        const key = label.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(label);
+        if (out.length >= 32) break;
+    }
+    return out;
+}
+
+function normalizeCombatState(entry) {
+    if (!entry || typeof entry !== 'object') {
+        return { ...DEFAULT_COMBAT_STATE };
+    }
+    const order = normalizeCombatOrder(entry.order);
+    const active = toBoolean(entry.active, false);
+    const turnRaw = Number(entry.turn);
+    const roundRaw = Number(entry.round);
+    const lastUpdatedAt = typeof entry.lastUpdatedAt === 'string' ? entry.lastUpdatedAt : null;
+    const baseTurn = Number.isFinite(turnRaw) && turnRaw >= 0 ? Math.round(turnRaw) : 0;
+    const baseRound = Number.isFinite(roundRaw) && roundRaw >= 0 ? Math.round(roundRaw) : 0;
+    if (!active) {
+        return {
+            active: false,
+            turn: 0,
+            round: 0,
+            order,
+            lastUpdatedAt: null,
+        };
+    }
+    return {
+        active: true,
+        turn: Math.max(1, baseTurn),
+        round: Math.max(1, baseRound || 1),
+        order,
+        lastUpdatedAt,
+    };
+}
+
+function presentCombatState(state) {
+    const normalized = normalizeCombatState(state);
+    return {
+        active: normalized.active,
+        turn: normalized.turn,
+        round: normalized.round,
+        order: normalized.order,
+        lastUpdatedAt: normalized.lastUpdatedAt,
+    };
+}
+
 function findMapShape(map, shapeId) {
     if (!map || !Array.isArray(map.shapes)) return null;
     return map.shapes.find((shape) => shape && shape.id === shapeId) || null;
@@ -727,6 +790,7 @@ function captureMapSnapshot(game) {
         background: { ...(map.background || defaultMapBackground()) },
         settings: { ...(map.settings || {}) },
         drawer: { ...(map.drawer || DEFAULT_MAP_DRAWER) },
+        combat: { ...(map.combat || DEFAULT_COMBAT_STATE) },
     };
 }
 
@@ -740,6 +804,7 @@ function normalizeMapSnapshot(snapshot, game) {
         background: { ...(map.background || defaultMapBackground()) },
         settings: { ...(map.settings || {}) },
         drawer: { ...(map.drawer || DEFAULT_MAP_DRAWER) },
+        combat: { ...(map.combat || DEFAULT_COMBAT_STATE) },
     };
 }
 
@@ -816,6 +881,7 @@ function applyMapSnapshot(game, snapshot) {
         paused: current.paused,
         updatedAt: timestamp,
         drawer: { ...(normalized.drawer || DEFAULT_MAP_DRAWER) },
+        combat: normalizeCombatState(normalized.combat || current.combat),
     };
     return game.map;
 }
@@ -1043,6 +1109,7 @@ function ensureMapState(game) {
             userId: drawerUserId || null,
             assignedAt: drawerAssignedAt,
         },
+        combat: normalizeCombatState(raw.combat),
     };
     game.map = mapState;
     return mapState;
@@ -1089,6 +1156,7 @@ function presentMapState(map) {
             userId: drawerUserId || null,
             assignedAt: drawerAssignedAt,
         },
+        combat: presentCombatState(map.combat),
     };
 }
 
@@ -1319,6 +1387,7 @@ function presentLibraryItem(doc) {
         tags = [],
         order = 0,
         healing = null,
+        effects = [],
     } = raw;
     if (!slug || !name) return null;
     const normalizedHealing = healing && typeof healing === 'object' && Object.keys(healing).length > 0
@@ -1330,6 +1399,7 @@ function presentLibraryItem(doc) {
               ...(healing.revive ? { revive: healing.revive } : {}),
           }
         : null;
+    const normalizedEffects = normalizeItemEffects(effects);
     return {
         id: slug,
         slug,
@@ -1342,6 +1412,7 @@ function presentLibraryItem(doc) {
         tags: Array.isArray(tags) ? tags : [],
         order,
         ...(normalizedHealing ? { healing: normalizedHealing } : {}),
+        ...(normalizedEffects.length ? { effects: normalizedEffects } : {}),
     };
 }
 
@@ -1353,6 +1424,8 @@ function ensureInventoryItem(item) {
         type: sanitizeText(item.type),
         desc: sanitizeText(item.desc),
         amount: normalizeCount(item.amount, 0),
+        tags: normalizeItemTags(item.tags),
+        effects: normalizeItemEffects(item.effects),
     };
     const { provided, value } = readLibraryItemId(item);
     if (provided) {
@@ -3228,6 +3301,60 @@ function sanitizeText(value) {
     return String(value).slice(0, 500);
 }
 
+function normalizeItemTags(value) {
+    const tags = [];
+    const source = Array.isArray(value)
+        ? value
+        : typeof value === 'string'
+            ? value.split(/[,#]/g)
+            : [];
+    const seen = new Set();
+    for (const entry of source) {
+        const raw = sanitizeText(entry).trim();
+        if (!raw) continue;
+        const normalized = raw.slice(0, 40);
+        const key = normalized.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        tags.push(normalized);
+        if (tags.length >= 12) break;
+    }
+    return tags;
+}
+
+function normalizeItemEffect(effect) {
+    if (!effect || typeof effect !== 'object') return null;
+    const id = sanitizeText(effect.id).trim().slice(0, 60);
+    const kind = sanitizeText(effect.kind).trim().slice(0, 80);
+    const trigger = sanitizeText(effect.trigger).trim().slice(0, 120);
+    const value = sanitizeText(effect.value).trim().slice(0, 120);
+    const notes = sanitizeText(effect.notes).trim().slice(0, 240);
+    const intervalRaw = Number(effect.interval);
+    const durationRaw = Number(effect.duration);
+    const interval = Number.isFinite(intervalRaw) && intervalRaw > 0 ? Math.round(intervalRaw) : null;
+    const duration = Number.isFinite(durationRaw) && durationRaw > 0 ? Math.round(durationRaw) : null;
+    if (!kind && !trigger && !value && !notes && !interval && !duration) {
+        return null;
+    }
+    return {
+        ...(id ? { id } : {}),
+        kind,
+        trigger,
+        value,
+        notes,
+        interval,
+        duration,
+    };
+}
+
+function normalizeItemEffects(list) {
+    if (!Array.isArray(list)) return [];
+    return list
+        .map((entry) => normalizeItemEffect(entry))
+        .filter(Boolean)
+        .slice(0, 12);
+}
+
 function normalizeLibraryItemId(value) {
     if (typeof value !== 'string') return '';
     const trimmed = value.trim().toLowerCase();
@@ -3273,6 +3400,14 @@ async function syncInventoryEntryWithLibrary(entry, libraryItemId, { overwrite =
     }
     if (overwrite || !entry.name) {
         entry.name = sanitizeText(libraryItem.name);
+    }
+    const libraryTags = Array.isArray(libraryItem.tags) ? libraryItem.tags.map((tag) => sanitizeText(tag).trim()).filter(Boolean) : [];
+    if (overwrite || !Array.isArray(entry.tags) || entry.tags.length === 0) {
+        entry.tags = normalizeItemTags(libraryTags);
+    }
+    const libraryEffects = normalizeItemEffects(libraryItem.effects);
+    if (overwrite || !Array.isArray(entry.effects) || entry.effects.length === 0) {
+        entry.effects = libraryEffects;
     }
     return libraryItem;
 }
@@ -4172,6 +4307,111 @@ app.put('/api/games/:id/map/settings', requireAuth, async (req, res) => {
         broadcast: true,
     });
     res.json(presentMapState(map));
+});
+
+app.post('/api/games/:id/map/combat/start', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const map = ensureMapState(game);
+    const payload = req.body || {};
+    const now = new Date().toISOString();
+    const order = normalizeCombatOrder(payload.order);
+    const turnRaw = Number(payload.turn);
+    const roundRaw = Number(payload.round);
+    map.combat = normalizeCombatState({
+        active: true,
+        order,
+        turn: Number.isFinite(turnRaw) && turnRaw > 0 ? Math.round(turnRaw) : 1,
+        round: Number.isFinite(roundRaw) && roundRaw > 0 ? Math.round(roundRaw) : 1,
+        lastUpdatedAt: now,
+    });
+    map.updatedAt = now;
+
+    await persistGame(db, game, {
+        reason: 'map:combat:start',
+        actorId: req.session.userId,
+        broadcast: !map.paused,
+    });
+
+    res.status(201).json(presentCombatState(map.combat));
+});
+
+app.post('/api/games/:id/map/combat/next', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const map = ensureMapState(game);
+    if (!map.combat?.active) {
+        return res.status(400).json({ error: 'combat_inactive' });
+    }
+    const payload = req.body || {};
+    const now = new Date().toISOString();
+    const order = normalizeCombatOrder(
+        Object.prototype.hasOwnProperty.call(payload, 'order') ? payload.order : map.combat.order,
+    );
+    const length = Math.max(order.length, 1);
+    let turn = map.combat.turn + 1;
+    let round = map.combat.round;
+    if (turn > length) {
+        turn = 1;
+        round = Math.max(1, round + 1);
+    }
+    map.combat = normalizeCombatState({
+        active: true,
+        order,
+        turn,
+        round,
+        lastUpdatedAt: now,
+    });
+    map.updatedAt = now;
+
+    await persistGame(db, game, {
+        reason: 'map:combat:next',
+        actorId: req.session.userId,
+        broadcast: !map.paused,
+    });
+
+    res.json(presentCombatState(map.combat));
+});
+
+app.post('/api/games/:id/map/combat/end', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const map = ensureMapState(game);
+    const now = new Date().toISOString();
+    map.combat = { ...DEFAULT_COMBAT_STATE };
+    map.updatedAt = now;
+
+    await persistGame(db, game, {
+        reason: 'map:combat:end',
+        actorId: req.session.userId,
+        broadcast: !map.paused,
+    });
+
+    res.json(presentCombatState(map.combat));
 });
 
 app.post('/api/games/:id/map/strokes', requireAuth, async (req, res) => {
@@ -5087,6 +5327,9 @@ function validateCustomItem(item) {
         type: sanitizeText(item?.type),
         desc: sanitizeText(item?.desc),
     };
+    const tags = normalizeItemTags(item?.tags);
+    payload.tags = tags;
+    payload.effects = normalizeItemEffects(item?.effects);
     const { provided, value } = readLibraryItemId(item);
     if (provided) {
         payload.libraryItemId = value;
@@ -5230,6 +5473,8 @@ app.post('/api/games/:id/players/:playerId/items', requireAuth, async (req, res)
         type,
         desc,
         amount,
+        tags: normalizeItemTags(payload.tags),
+        effects: normalizeItemEffects(payload.effects),
     };
 
     if (libraryProvided) {
@@ -5283,6 +5528,12 @@ app.put('/api/games/:id/players/:playerId/items/:itemId', requireAuth, async (re
     }
     if (Object.prototype.hasOwnProperty.call(payload, 'amount') || Object.prototype.hasOwnProperty.call(payload, 'qty')) {
         entry.amount = normalizeCount(payload.amount ?? payload.qty, entry.amount);
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'tags')) {
+        entry.tags = normalizeItemTags(payload.tags);
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'effects')) {
+        entry.effects = normalizeItemEffects(payload.effects);
     }
     const { provided: updateLibrary, value: nextLibraryId } = readLibraryItemId(payload);
     if (updateLibrary) {
@@ -5362,8 +5613,9 @@ app.post('/api/games/:id/players/:playerId/items/:itemId/use', requireAuth, asyn
     character.resources = character.resources && typeof character.resources === 'object' ? character.resources : {};
 
     let healing = null;
+    let libraryItem = null;
     if (entry.libraryItemId) {
-        const libraryItem = await findLibraryItemById(entry.libraryItemId);
+        libraryItem = await findLibraryItemById(entry.libraryItemId);
         if (libraryItem?.healing) {
             healing = libraryItem.healing;
         }
@@ -5372,13 +5624,39 @@ app.post('/api/games/:id/players/:playerId/items/:itemId/use', requireAuth, asyn
         const parsed = parseHealingEffect(entry.desc);
         if (parsed) healing = parsed;
     }
-    if (!healing) {
-        return res.status(400).json({ error: 'item_not_usable' });
+
+    const entryEffects = normalizeItemEffects(entry.effects);
+    entry.effects = entryEffects;
+    const libraryEffects = libraryItem ? normalizeItemEffects(libraryItem.effects) : [];
+    const seenEffects = new Set();
+    const combinedEffects = [];
+    const collectEffect = (effect) => {
+        if (!effect) return;
+        const key = effect.id || `${effect.kind}|${effect.trigger}|${effect.value}|${effect.interval}|${effect.duration}|${effect.notes}`;
+        if (key && seenEffects.has(key)) return;
+        if (key) seenEffects.add(key);
+        combinedEffects.push(effect);
+    };
+    for (const effect of libraryEffects) collectEffect(effect);
+    for (const effect of entryEffects) collectEffect(effect);
+
+    let applied = null;
+    if (healing) {
+        const result = applyHealingEffect(character.resources, healing);
+        if (!result.changed) {
+            return res.status(400).json({ error: 'no_effect' });
+        }
+        applied = result;
     }
 
-    const result = applyHealingEffect(character.resources, healing);
-    if (!result.changed) {
-        return res.status(400).json({ error: 'no_effect' });
+    let notice = null;
+    let message = null;
+    if (!healing && combinedEffects.length === 0) {
+        notice = 'manual_update_required';
+        message = 'No effect found. Please update the status manually.';
+    } else if (!healing && combinedEffects.length > 0) {
+        notice = 'effects_only';
+        message = 'Apply the ongoing effects to your combat tracker.';
     }
 
     const remaining = Math.max(0, currentAmount - 1);
@@ -5393,7 +5671,10 @@ app.post('/api/games/:id/players/:playerId/items/:itemId/use', requireAuth, asyn
         ok: true,
         itemId,
         remaining,
-        applied: result,
+        applied: applied,
+        effects: combinedEffects,
+        notice,
+        message,
     });
 });
 

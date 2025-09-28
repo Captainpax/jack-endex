@@ -657,6 +657,23 @@ export const Games = {
             method: 'POST',
             quiet: true,
         }),
+    startCombat: (id, payload) =>
+        api(`/api/games/${encodeURIComponent(id)}/map/combat/start`, {
+            method: 'POST',
+            body: payload,
+            quiet: true,
+        }),
+    nextCombatTurn: (id, payload) =>
+        api(`/api/games/${encodeURIComponent(id)}/map/combat/next`, {
+            method: 'POST',
+            body: payload,
+            quiet: true,
+        }),
+    endCombat: (id) =>
+        api(`/api/games/${encodeURIComponent(id)}/map/combat/end`, {
+            method: 'POST',
+            quiet: true,
+        }),
     addMapToken: (id, token) =>
         api(`/api/games/${encodeURIComponent(id)}/map/tokens`, {
             method: 'POST',
