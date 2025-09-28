@@ -834,6 +834,23 @@ export const StoryLogs = {
         }),
 };
 
+export const LocalAI = {
+    generatePortrait: (payload) =>
+        api('/api/ai/portrait', {
+            method: 'POST',
+            body: payload,
+            timeoutMs: 120_000,
+            noRetry: true,
+        }),
+    enhanceBackground: (payload) =>
+        api('/api/ai/background', {
+            method: 'POST',
+            body: payload,
+            timeoutMs: 120_000,
+            noRetry: true,
+        }),
+};
+
 // ---------------- Helper: SSE (Server-Sent Events) ----------------
 // If you later expose real-time updates from the server, you can wire them here.
 /*

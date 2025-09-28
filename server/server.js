@@ -13,6 +13,7 @@ import { fileURLToPath } from 'url';
 import cors from 'cors';
 
 import personas from './routes/personas.routes.js';
+import localAiRoutes from './routes/localai.routes.js';
 import { createDiscordWatcher } from './discordWatcher.js';
 import { loadEnv, envString, envNumber, envBoolean } from './config/env.js';
 import User from './models/User.js';
@@ -7116,6 +7117,7 @@ app.get('/api/help/docs', async (_req, res) => {
 });
 
 // Persona proxy routes
+app.use('/api/ai', localAiRoutes);
 app.use('/api/personas', personas);
 
 // Static files (if built)

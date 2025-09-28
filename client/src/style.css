@@ -3283,6 +3283,22 @@ label {
     margin: 0;
     font-size: 0.8rem;
 }
+.sheet-portrait__messages { display: grid; gap: 4px; }
+.sheet-portrait__prompt {
+    font-size: 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    background: var(--surface);
+}
+.sheet-portrait__prompt summary {
+    cursor: pointer;
+    font-weight: 600;
+}
+.sheet-portrait__prompt p {
+    margin: 6px 0 0;
+    white-space: pre-wrap;
+}
 
 @media (max-width: 600px) {
     .sheet-portrait {
@@ -3327,8 +3343,33 @@ label {
 .sheet-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
 .sheet-grid--stretch { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 .sheet-grid--resources { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.ai-suggestion {
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.ai-suggestion__header h5 {
+    margin: 0;
+    font-size: 1rem;
+}
+.ai-suggestion__header p {
+    margin: 4px 0 0;
+}
+.ai-suggestion__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
 .field { display: flex; flex-direction: column; gap: 6px; font-size: 0.95rem; }
 .field__label { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.field__header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.field--with-action { gap: 10px; }
+.field__error { margin: 0; font-size: 0.8rem; }
 .field input,
 .field select,
 .field textarea { font: inherit; }
