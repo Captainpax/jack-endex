@@ -177,23 +177,17 @@ If no per-campaign token is supplied, the server falls back to `DISCORD_PRIMARY_
 
 ### Slash command codex lookup
 
-A lightweight gateway client powers the `/lookup demon <name>` slash command. To enable it:
+A lightweight gateway client powers the `/demonLookup <name>` slash command. It also exposes `/link <username>` so players can bind their Discord account to a Jack Endex profile. To enable it:
 
-1. Set `DISCORD_APPLICATION_ID` and `DISCORD_PRIMARY_BOT_TOKEN` in your `.env`. Optionally set `DISCORD_COMMAND_GUILD_ID` for per-guild registration and `DISCORD_PRIMARY_BOT_INVITE` so DMs can invite the shared bot to their own servers.
+1. Set `DISCORD_APPLICATION_ID` and `DISCORD_PRIMARY_BOT_TOKEN` in your `.env`. Optionally set `DISCORD_COMMAND_GUILD_ID` for per-guild command registration and `DISCORD_PRIMARY_BOT_INVITE` so DMs can invite the shared bot to their own servers.
 
-2. Register the command with Discord:
-
-   ```bash
-   npm run register:discord
-   ```
-
-3. Run the lookup bot (ensure MongoDB is reachable so it can query the codex):
+2. Run the lookup bot (ensure MongoDB is reachable so it can query the codex):
 
    ```bash
    npm run bot:demon
    ```
 
-The bot listens for slash-command interactions and responds with a formatted codex summary, including close-match suggestions for typos.
+The bot automatically registers or updates its slash commands at startup. `/demonLookup` responds with a formatted codex summary (including close-match suggestions for typos), and `/link` stores the invoking Discord user’s ID on the matching Jack Endex account.
 
 ## Helpful scripts
 
@@ -201,7 +195,7 @@ The bot listens for slash-command interactions and responds with a formatted cod
 | --- | --- |
 | `npm run import:demons` | Convert `server/data/demons.json` into MongoDB documents (use `--dry-run` to preview). |
 | `npm run test:import` | Runs the demon import in dry-run mode to confirm the mapping step. |
-| `npm run register:discord` | Registers or updates the `/lookup demon` slash command. |
+| `npm run register:discord` | (Legacy) Manual slash-command registration. The bot now registers commands automatically on start. |
 | `npm run bot:demon` | Starts the Discord gateway bot that powers the slash command. |
 | `npm run dev` | Runs the API server and Vite dev client together. |
 | `npm run start` | Launches the API server only (expects a built client in `dist/`). |

@@ -12,6 +12,12 @@ const userSchema = new mongoose.Schema(
             unique: true,
             sparse: true,
         },
+        discordId: {
+            type: String,
+            unique: true,
+            sparse: true,
+            index: true,
+        },
         banned: { type: Boolean, default: false },
     },
     {
