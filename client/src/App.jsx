@@ -9200,12 +9200,36 @@ function Party({ game, selectedPlayerId, onSelectPlayer, mode = "player", curren
     );
     const presenceMap = realtime?.onlineUsers || EMPTY_OBJECT;
 
+    const allowInspect = mode !== "dm";
+    const [inspectedPlayerId, setInspectedPlayerId] = useState(null);
+    const inspectedPlayer = useMemo(() => {
+        if (!inspectedPlayerId) return null;
+        return (
+            players.find((entry) => entry?.userId === inspectedPlayerId) || null
+        );
+    }, [players, inspectedPlayerId]);
+
+    useEffect(() => {
+        if (!allowInspect && inspectedPlayerId) {
+            setInspectedPlayerId(null);
+        }
+    }, [allowInspect, inspectedPlayerId]);
+
+    useEffect(() => {
+        if (!allowInspect || !inspectedPlayerId) return;
+        const exists = players.some((p) => p?.userId === inspectedPlayerId);
+        if (!exists) {
+            setInspectedPlayerId(null);
+        }
+    }, [allowInspect, inspectedPlayerId, players]);
+
     const canSelect = typeof onSelectPlayer === "function";
+    const isInteractive = canSelect || allowInspect;
     const title = mode === "dm" ? "Party roster" : "Party lineup";
     const subtitle =
         mode === "dm"
             ? "Tap a player to open their character sheet."
-            : "Everyone currently adventuring alongside you.";
+            : "Tap a party member to review their sheet, inventory, and gear.";
 
     return (
         <div className="card">
@@ -9255,19 +9279,28 @@ function Party({ game, selectedPlayerId, onSelectPlayer, mode = "player", curren
                             <div
                                 key={key}
                                 className={`party-row${isSelected ? " is-active" : ""}${
-                                    canSelect ? " is-clickable" : ""
+                                    isInteractive ? " is-clickable" : ""
                                 }`}
-                                role={canSelect ? "button" : undefined}
-                                tabIndex={canSelect ? 0 : undefined}
+                                role={isInteractive ? "button" : undefined}
+                                tabIndex={isInteractive ? 0 : undefined}
                                 onClick={() => {
-                                    if (!canSelect || !p.userId) return;
-                                    onSelectPlayer(p);
+                                    if (canSelect && p.userId) {
+                                        onSelectPlayer(p);
+                                        return;
+                                    }
+                                    if (allowInspect && p.userId) {
+                                        setInspectedPlayerId(p.userId);
+                                    }
                                 }}
                                 onKeyDown={(evt) => {
-                                    if (!canSelect) return;
+                                    if (!isInteractive) return;
                                     if (evt.key === "Enter" || evt.key === " ") {
                                         evt.preventDefault();
-                                        if (p.userId) onSelectPlayer(p);
+                                        if (canSelect && p.userId) {
+                                            onSelectPlayer(p);
+                                        } else if (allowInspect && p.userId) {
+                                            setInspectedPlayerId(p.userId);
+                                        }
                                     }
                                 }}
                             >
@@ -9300,6 +9333,426 @@ function Party({ game, selectedPlayerId, onSelectPlayer, mode = "player", curren
                         );
                     })
                 )}
+            </div>
+            {allowInspect && inspectedPlayer && (
+                <PartyInspectModal
+                    player={inspectedPlayer}
+                    onClose={() => setInspectedPlayerId(null)}
+                    viewerId={currentUserId}
+                />
+            )}
+        </div>
+    );
+}
+
+const PARTY_GEAR_SLOT_ORDER = ["weapon", "armor", "accessory"];
+
+function PartyInspectModal({ player, onClose, viewerId }) {
+    const labelId = useId();
+    const descriptionId = useId();
+
+    useEffect(() => {
+        const handleKey = (evt) => {
+            if (evt.key === "Escape") {
+                evt.preventDefault();
+                onClose?.();
+            }
+        };
+        window.addEventListener("keydown", handleKey);
+        return () => window.removeEventListener("keydown", handleKey);
+    }, [onClose]);
+
+    const character = useMemo(() => {
+        if (!player?.character) return null;
+        return normalizeCharacter(player.character);
+    }, [player?.character]);
+
+    const displayName =
+        (character?.name || "").trim() ||
+        (player?.character?.name || "").trim() ||
+        player?.username ||
+        "Player";
+
+    const profile = character?.profile || EMPTY_OBJECT;
+    const levelRaw = character?.resources?.level;
+    const level = Number(levelRaw);
+    const levelLabel = Number.isFinite(level) && level > 0 ? `Level ${level}` : "";
+    const classLabel = typeof profile.class === "string" ? profile.class.trim() : "";
+    const raceLabel = typeof profile.race === "string" ? profile.race.trim() : "";
+    const alignment =
+        typeof profile.alignment === "string" ? profile.alignment.trim() : "";
+    const isSelf = viewerId && player?.userId === viewerId;
+    const roleLabel =
+        typeof player?.role === "string" && player.role.trim().toLowerCase() !== "player"
+            ? player.role.trim()
+            : "";
+
+    const headerChips = [
+        classLabel,
+        levelLabel,
+        raceLabel,
+        alignment,
+        roleLabel,
+        isSelf ? "You" : "",
+    ].filter((value) => typeof value === "string" && value);
+
+    const abilitySummaries = useMemo(() => {
+        if (!character) return [];
+        return ABILITY_DEFS.map((ability) => {
+            const raw = character.stats?.[ability.key];
+            const parsed = Number(raw);
+            const score =
+                raw === undefined || raw === null || raw === ""
+                    ? null
+                    : Number.isFinite(parsed)
+                    ? parsed
+                    : null;
+            const modifier = score === null ? null : abilityModifier(score);
+            return {
+                key: ability.key,
+                label: ability.label,
+                score,
+                modifier,
+            };
+        });
+    }, [character]);
+
+    const resources = character?.resources || EMPTY_OBJECT;
+    const parseResource = (value) => {
+        const num = Number(value);
+        return Number.isFinite(num) ? num : null;
+    };
+    const hp = parseResource(resources.hp);
+    const maxHP = parseResource(resources.maxHP);
+    const mp = parseResource(resources.mp);
+    const maxMP = parseResource(resources.maxMP);
+    const tp = parseResource(resources.tp);
+    const maxTP = parseResource(resources.maxTP);
+    const sp = parseResource(resources.sp);
+    const macca = parseResource(resources.macca);
+    const initiative = parseResource(resources.initiative);
+
+    const resourceChips = [];
+    if (hp !== null || maxHP !== null) {
+        const valueLabel =
+            maxHP !== null && maxHP > 0
+                ? `${hp !== null ? Math.max(0, hp) : 0}/${Math.max(0, maxHP)}`
+                : hp !== null
+                ? String(Math.max(0, hp))
+                : "—";
+        resourceChips.push({ label: "HP", value: valueLabel });
+    }
+    if (mp !== null || maxMP !== null) {
+        const valueLabel =
+            maxMP !== null && maxMP > 0
+                ? `${mp !== null ? Math.max(0, mp) : 0}/${Math.max(0, maxMP)}`
+                : mp !== null
+                ? String(Math.max(0, mp))
+                : "—";
+        resourceChips.push({ label: "MP", value: valueLabel });
+    }
+    if (tp !== null || maxTP !== null) {
+        const valueLabel =
+            maxTP !== null && maxTP > 0
+                ? `${tp !== null ? Math.max(0, tp) : 0}/${Math.max(0, maxTP)}`
+                : tp !== null
+                ? String(Math.max(0, tp))
+                : "—";
+        resourceChips.push({ label: "TP", value: valueLabel });
+    }
+    if (sp !== null) {
+        resourceChips.push({ label: "SP", value: String(Math.max(0, sp)) });
+    }
+    if (macca !== null) {
+        resourceChips.push({ label: "Macca", value: String(Math.max(0, macca)) });
+    }
+    if (initiative !== null) {
+        resourceChips.push({ label: "Initiative", value: formatModifier(initiative) });
+    }
+
+    const profileDetails = [
+        { label: "Background", value: profile.background },
+        { label: "Origin", value: profile.nationality || profile.homeland },
+        { label: "Pronouns", value: profile.pronouns || profile.gender },
+        { label: "Age", value: profile.age },
+    ].filter((entry) => typeof entry.value === "string" && entry.value.trim());
+
+    const profileNotes =
+        typeof profile.notes === "string" && profile.notes.trim()
+            ? profile.notes.trim()
+            : "";
+
+    const inventory = Array.isArray(player?.inventory) ? player.inventory : EMPTY_ARRAY;
+    const gearBag = Array.isArray(player?.gear?.bag) ? player.gear.bag : EMPTY_ARRAY;
+    const gearSlots =
+        player?.gear?.slots && typeof player.gear.slots === "object"
+            ? player.gear.slots
+            : EMPTY_OBJECT;
+
+    const bagMap = useMemo(() => {
+        const map = new Map();
+        for (const item of gearBag) {
+            if (!item || typeof item !== "object") continue;
+            const id = typeof item.id === "string" ? item.id : null;
+            if (!id) continue;
+            map.set(id, item);
+        }
+        return map;
+    }, [gearBag]);
+
+    const slotKeys = useMemo(() => {
+        const keys = [];
+        const seen = new Set();
+        for (const key of PARTY_GEAR_SLOT_ORDER) {
+            if (Object.prototype.hasOwnProperty.call(gearSlots, key)) {
+                keys.push(key);
+                seen.add(key);
+            }
+        }
+        for (const key of Object.keys(gearSlots)) {
+            if (!seen.has(key)) keys.push(key);
+        }
+        return keys;
+    }, [gearSlots]);
+
+    const formatSlotLabel = (key) => {
+        if (!key) return "Slot";
+        switch (key) {
+            case "weapon":
+                return "Weapon";
+            case "armor":
+                return "Armor";
+            case "accessory":
+                return "Accessory";
+            default:
+                return key
+                    .replace(/[-_]+/g, " ")
+                    .replace(/\b\w/g, (char) => char.toUpperCase());
+        }
+    };
+
+    const resolveSlotItem = (key) => {
+        const slotEntry = gearSlots?.[key];
+        if (!slotEntry) return null;
+        if (slotEntry.itemId && bagMap.has(slotEntry.itemId)) {
+            return bagMap.get(slotEntry.itemId);
+        }
+        if (slotEntry.item && typeof slotEntry.item === "object") {
+            return slotEntry.item;
+        }
+        const legacy = player?.gear?.[key];
+        if (legacy && typeof legacy === "object") return legacy;
+        return null;
+    };
+
+    const handleBackdropClick = (evt) => {
+        evt.stopPropagation();
+        onClose?.();
+    };
+
+    const stopPropagation = (evt) => {
+        evt.stopPropagation();
+    };
+
+    const descriptionText =
+        headerChips.length > 0
+            ? `${displayName} · ${headerChips.join(" · ")}`
+            : `${displayName}'s character overview`;
+
+    return (
+        <div className="party-inspect-backdrop" role="presentation" onClick={handleBackdropClick}>
+            <div
+                className="party-inspect-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby={labelId}
+                aria-describedby={descriptionId}
+                onClick={stopPropagation}
+            >
+                <header className="party-inspect-modal__header">
+                    <div>
+                        <h3 id={labelId}>{displayName}</h3>
+                        <p id={descriptionId} className="text-muted text-small">
+                            {descriptionText}
+                        </p>
+                        {headerChips.length > 0 && (
+                            <div className="party-inspect-chip-row">
+                                {headerChips.map((chip) => (
+                                    <span key={chip} className="pill">
+                                        {chip}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    <button type="button" className="btn ghost" onClick={onClose}>
+                        Close
+                    </button>
+                </header>
+                <div className="party-inspect-modal__body">
+                    {character ? (
+                        <section className="party-inspect-section">
+                            <h4>Character sheet</h4>
+                            {abilitySummaries.length > 0 && (
+                                <div className="party-inspect-stats">
+                                    {abilitySummaries.map((entry) => (
+                                        <div key={entry.key} className="party-inspect-stat">
+                                            <span className="text-muted text-small">{entry.label}</span>
+                                            <strong className="party-inspect-stat__value">
+                                                {entry.score ?? "—"}
+                                            </strong>
+                                            {entry.modifier !== null && (
+                                                <span className="text-muted text-small">
+                                                    Mod {formatModifier(entry.modifier)}
+                                                </span>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            {resourceChips.length > 0 && (
+                                <div className="party-inspect-resource-grid">
+                                    {resourceChips.map((row) => (
+                                        <div key={row.label} className="party-inspect-resource">
+                                            <span className="text-muted text-small">{row.label}</span>
+                                            <strong>{row.value}</strong>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            {profileDetails.length > 0 && (
+                                <div className="party-inspect-profile">
+                                    {profileDetails.map((detail) => (
+                                        <div key={detail.label} className="party-inspect-profile__row">
+                                            <span className="text-muted text-small">{detail.label}</span>
+                                            <span>{detail.value}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            {profileNotes && (
+                                <div className="party-inspect-notes">
+                                    <span className="text-muted text-small">Notes</span>
+                                    <p>{profileNotes}</p>
+                                </div>
+                            )}
+                        </section>
+                    ) : (
+                        <section className="party-inspect-section">
+                            <h4>Character sheet</h4>
+                            <p className="text-muted text-small">
+                                This adventurer hasn&apos;t shared a character sheet yet.
+                            </p>
+                        </section>
+                    )}
+
+                    <section className="party-inspect-section">
+                        <h4>Inventory</h4>
+                        {inventory.length === 0 ? (
+                            <p className="text-muted text-small">No items in their pack.</p>
+                        ) : (
+                            <div className="party-inspect-item-list">
+                                {inventory.map((item) => {
+                                    if (!item || typeof item !== "object") return null;
+                                    const key = item.id || `${item.name || "item"}-${item.type || ""}`;
+                                    const quantity = Number(item.amount);
+                                    const amountLabel = Number.isFinite(quantity) && quantity > 0 ? `×${quantity}` : "";
+                                    const metaParts = [
+                                        typeof item.type === "string" ? item.type.trim() : "",
+                                        amountLabel,
+                                    ].filter(Boolean);
+                                    const tags = Array.isArray(item.tags) ? item.tags : EMPTY_ARRAY;
+                                    return (
+                                        <div key={key} className="party-inspect-item">
+                                            <div className="party-inspect-item__header">
+                                                <strong>{item.name || "Unnamed item"}</strong>
+                                                {metaParts.length > 0 && (
+                                                    <span className="text-muted text-small">
+                                                        {metaParts.join(" · ")}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {item.desc && <p>{item.desc}</p>}
+                                            {tags.length > 0 && (
+                                                <div className="party-inspect-tags">
+                                                    {tags.map((tag) => (
+                                                        <span key={tag} className="pill light">
+                                                            {tag}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </section>
+
+                    <section className="party-inspect-section">
+                        <h4>Gear</h4>
+                        <div className="party-inspect-gear">
+                            <div>
+                                <h5>Equipped</h5>
+                                {slotKeys.length === 0 ? (
+                                    <p className="text-muted text-small">No gear slots shared.</p>
+                                ) : (
+                                    <div className="party-inspect-slot-list">
+                                        {slotKeys.map((slotKey) => {
+                                            const resolved = resolveSlotItem(slotKey);
+                                            const label = formatSlotLabel(slotKey);
+                                            const description = resolved?.type
+                                                ? resolved.type
+                                                : resolved?.desc || "";
+                                            return (
+                                                <div key={slotKey} className="party-inspect-slot">
+                                                    <div>
+                                                        <span className="text-muted text-small">{label}</span>
+                                                        <strong>{resolved?.name || "Empty"}</strong>
+                                                    </div>
+                                                    {description && (
+                                                        <span className="text-muted text-small">
+                                                            {description}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                            <div>
+                                <h5>Bag</h5>
+                                {gearBag.length === 0 ? (
+                                    <p className="text-muted text-small">No spare gear listed.</p>
+                                ) : (
+                                    <div className="party-inspect-item-list">
+                                        {gearBag.map((item) => {
+                                            if (!item || typeof item !== "object") return null;
+                                            const key = item.id || `${item.name || "gear"}-${item.type || ""}`;
+                                            const meta = [
+                                                typeof item.type === "string" ? item.type.trim() : "",
+                                            ].filter(Boolean);
+                                            return (
+                                                <div key={key} className="party-inspect-item">
+                                                    <div className="party-inspect-item__header">
+                                                        <strong>{item.name || "Unnamed gear"}</strong>
+                                                        {meta.length > 0 && (
+                                                            <span className="text-muted text-small">
+                                                                {meta.join(" · ")}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    {item.desc && <p>{item.desc}</p>}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </section>
+                </div>
             </div>
         </div>
     );
