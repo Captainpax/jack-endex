@@ -1941,6 +1941,8 @@ const MAP_SHAPE_LABELS = {
 };
 const ENEMY_TOOLTIP_PREFIX = '__enemy__v1:';
 const ENEMY_TOOLTIP_MAX_LENGTH = 480;
+const TOKEN_TOOLTIP_PREFIX = '__token__v1:';
+const TOKEN_TOOLTIP_MAX_LENGTH = 460;
 const MAP_SIDEBAR_TABS = [
     { key: 'tokens', label: 'Tokens', description: 'Manage player, demon, and enemy markers.' },
     { key: 'overlays', label: 'Overlays', description: 'Add images and fog layers to the board.' },
@@ -2026,6 +2028,151 @@ function clampText(value, max = 200) {
     const trimmed = value.trim();
     if (trimmed.length <= max) return trimmed;
     return trimmed.slice(0, max).trim();
+}
+
+function encodeTokenTooltip(meta) {
+    if (!meta || typeof meta !== 'object') return '';
+    const base = { ...meta, version: 1 };
+    const attempt = (payload) => {
+        try {
+            return JSON.stringify(payload);
+        } catch {
+            return '';
+        }
+    };
+    let json = attempt(base);
+    if (!json) return '';
+    if (json.length > TOKEN_TOOLTIP_MAX_LENGTH) {
+        const slim = { ...base };
+        if (slim.notes) delete slim.notes;
+        json = attempt(slim);
+        if (!json || json.length > TOKEN_TOOLTIP_MAX_LENGTH) {
+            if (Array.isArray(slim.items)) {
+                slim.items = slim.items.slice(0, 6);
+                json = attempt(slim);
+            }
+        }
+        if (!json || json.length > TOKEN_TOOLTIP_MAX_LENGTH) {
+            if (slim.text) slim.text = clampText(slim.text, 240);
+            json = attempt(slim);
+        }
+        if (!json || json.length > TOKEN_TOOLTIP_MAX_LENGTH) {
+            json = attempt({ kind: slim.kind, text: clampText(slim.text || '', 200), version: slim.version });
+        }
+    }
+    if (!json) return '';
+    if (json.length > TOKEN_TOOLTIP_MAX_LENGTH) {
+        json = json.slice(0, TOKEN_TOOLTIP_MAX_LENGTH);
+        const lastBrace = json.lastIndexOf('}');
+        if (lastBrace > -1) {
+            json = json.slice(0, lastBrace + 1);
+        }
+    }
+    return `${TOKEN_TOOLTIP_PREFIX}${json}`;
+}
+
+function decodeTokenTooltip(raw) {
+    if (typeof raw !== 'string') return null;
+    const trimmed = raw.trim();
+    if (!trimmed.startsWith(TOKEN_TOOLTIP_PREFIX)) return null;
+    try {
+        const payload = JSON.parse(trimmed.slice(TOKEN_TOOLTIP_PREFIX.length));
+        if (!payload || typeof payload !== 'object') return null;
+        return payload;
+    } catch {
+        return null;
+    }
+}
+
+function normalizeNpcItems(items, { allowCost = false, allowTrade = false } = {}) {
+    const list = [];
+    const source = Array.isArray(items) ? items : [];
+    for (const entry of source) {
+        if (!entry || typeof entry !== 'object') continue;
+        const name = clampText(entry.name, 80);
+        const description = clampText(entry.description || entry.notes, 160);
+        const idRaw = typeof entry.id === 'string' ? entry.id : '';
+        const id = clampText(idRaw, 40) || `npc-item-${Math.random().toString(36).slice(2, 10)}`;
+        const cost = allowCost ? clampText(entry.cost, 40) : '';
+        const trade = allowTrade ? clampText(entry.trade, 80) : '';
+        if (!name && !description) continue;
+        const normalized = { id, name };
+        if (description) normalized.description = description;
+        if (allowCost && cost) normalized.cost = cost;
+        if (allowTrade && trade) normalized.trade = trade;
+        list.push(normalized);
+        if (list.length >= 12) break;
+    }
+    return list;
+}
+
+function normalizeTokenMeta(meta, { fallbackKind = '', fallbackLabel = '' } = {}) {
+    if (!meta || typeof meta !== 'object') return null;
+    const version = Number(meta.version) || 1;
+    const kind = typeof meta.kind === 'string' ? meta.kind : fallbackKind;
+    const text = clampText(typeof meta.text === 'string' ? meta.text : meta.tooltip || '', 420);
+    const image = clampText(meta.image, 280);
+    const showTooltip = meta.showTooltip === undefined ? undefined : !!meta.showTooltip;
+    const lines = text
+        ? text
+              .split(/\n+/)
+              .map((line) => clampText(line, 120))
+              .filter(Boolean)
+        : [];
+    const base = {
+        version,
+        kind,
+        text,
+        lines,
+        image,
+        showTooltip,
+    };
+    if (kind === 'player') {
+        base.playerId = clampText(meta.playerId, 160);
+        base.label = clampText(meta.label || fallbackLabel, 80);
+        base.includePortrait = meta.includePortrait !== false && !!image;
+        base.fields = {
+            class: meta.fields ? !!meta.fields.class : true,
+            level: meta.fields ? !!meta.fields.level : true,
+            hp: meta.fields ? !!meta.fields.hp : true,
+            notes: meta.fields ? !!meta.fields.notes : false,
+        };
+        base.notes = clampText(meta.notes, 280);
+    } else if (kind === 'demon-ally') {
+        base.demonId = clampText(meta.demonId, 160);
+        base.label = clampText(meta.label || fallbackLabel, 80);
+        base.fields = {
+            arcana: meta.fields ? !!meta.fields.arcana : true,
+            alignment: meta.fields ? !!meta.fields.alignment : true,
+            level: meta.fields ? !!meta.fields.level : true,
+            notes: meta.fields ? !!meta.fields.notes : false,
+        };
+        base.notes = clampText(meta.notes, 240);
+    } else if (kind === 'demon-enemy') {
+        base.label = clampText(meta.label || fallbackLabel, 80);
+        base.allowAddToPool = meta.allowAddToPool !== false;
+    } else if (kind === 'npc-shop' || kind === 'npc-loot' || kind === 'npc-misc') {
+        const [, subtype] = kind.split('-');
+        const npcType = subtype || 'misc';
+        base.npcType = npcType;
+        base.label = clampText(meta.label || fallbackLabel, 80);
+        base.notes = clampText(meta.notes, 280);
+        const allowCost = npcType === 'shop';
+        const allowTrade = npcType === 'shop';
+        base.items = normalizeNpcItems(meta.items, { allowCost, allowTrade });
+        base.openButton = meta.openButton !== false;
+        base.requireApproval = npcType === 'shop' ? meta.requireApproval !== false : false;
+        base.autoClaim = npcType === 'loot' ? meta.autoClaim !== false : false;
+        base.shopId = clampText(meta.shopId, 80) || null;
+    } else if (kind === 'npc') {
+        base.npcType = 'misc';
+        base.label = clampText(meta.label || fallbackLabel, 80);
+        base.notes = clampText(meta.notes, 280);
+        base.items = normalizeNpcItems(meta.items);
+        base.openButton = meta.openButton !== false;
+        base.shopId = clampText(meta.shopId, 80) || null;
+    }
+    return base;
 }
 
 function normalizeEnemyStats(value, { maxLines = 6, maxLength = 100 } = {}) {
@@ -2208,6 +2355,166 @@ function createEnemyFormState() {
     };
 }
 
+function createPlayerTokenConfig(overrides = {}) {
+    return {
+        showClass: overrides.showClass !== undefined ? !!overrides.showClass : true,
+        showLevel: overrides.showLevel !== undefined ? !!overrides.showLevel : true,
+        showHp: overrides.showHp !== undefined ? !!overrides.showHp : true,
+        showNotes: overrides.showNotes !== undefined ? !!overrides.showNotes : false,
+        notes: typeof overrides.notes === 'string' ? overrides.notes : '',
+        includePortrait: overrides.includePortrait !== undefined ? !!overrides.includePortrait : true,
+        showTooltip: overrides.showTooltip !== undefined ? !!overrides.showTooltip : true,
+        label: typeof overrides.label === 'string' ? overrides.label : '',
+    };
+}
+
+function buildPlayerTokenMeta(player, config = {}) {
+    if (!player) return null;
+    const settings = createPlayerTokenConfig(config);
+    const character = player.character || {};
+    const profile = character.profile || {};
+    const resources = character.resources || {};
+    const lines = [];
+    if (settings.showClass && profile.class) lines.push(clampText(profile.class, 80));
+    if (settings.showLevel && resources.level !== undefined && resources.level !== null && resources.level !== '') {
+        lines.push(`Level ${clampText(String(resources.level), 12)}`);
+    }
+    if (settings.showHp && resources.hp !== undefined && resources.maxHP !== undefined && resources.maxHP !== '') {
+        lines.push(`HP ${resources.hp}/${resources.maxHP}`);
+    }
+    const text = lines.join('\n').trim();
+    const notes = settings.showNotes ? clampText(settings.notes, 280) : '';
+    const portrait = typeof profile.portrait === 'string' ? profile.portrait.trim() : '';
+    const image = settings.includePortrait && portrait ? portrait : '';
+    const label = clampText(settings.label || describePlayerName(player), 80);
+    const hasTooltipContent = !!text || !!image || !!notes;
+    return {
+        kind: 'player',
+        playerId: player.userId || '',
+        label,
+        text,
+        image,
+        fields: {
+            class: settings.showClass,
+            level: settings.showLevel,
+            hp: settings.showHp,
+            notes: settings.showNotes,
+        },
+        notes,
+        includePortrait: settings.includePortrait && !!image,
+        showTooltip: settings.showTooltip && hasTooltipContent,
+    };
+}
+
+function createDemonTokenConfig(overrides = {}) {
+    return {
+        showArcana: overrides.showArcana !== undefined ? !!overrides.showArcana : true,
+        showAlignment: overrides.showAlignment !== undefined ? !!overrides.showAlignment : true,
+        showLevel: overrides.showLevel !== undefined ? !!overrides.showLevel : true,
+        showNotes: overrides.showNotes !== undefined ? !!overrides.showNotes : false,
+        notes: typeof overrides.notes === 'string' ? overrides.notes : '',
+        includePortrait: overrides.includePortrait !== undefined ? !!overrides.includePortrait : true,
+        showTooltip: overrides.showTooltip !== undefined ? !!overrides.showTooltip : true,
+        label: typeof overrides.label === 'string' ? overrides.label : '',
+    };
+}
+
+function buildDemonAllyMeta(demon, config = {}) {
+    if (!demon) return null;
+    const settings = createDemonTokenConfig(config);
+    const lines = [];
+    if (settings.showArcana && demon.arcana) lines.push(clampText(demon.arcana, 80));
+    if (settings.showAlignment && demon.alignment) lines.push(clampText(demon.alignment, 80));
+    if (settings.showLevel && demon.level !== undefined && demon.level !== null && demon.level !== '') {
+        lines.push(`Level ${clampText(String(demon.level), 12)}`);
+    }
+    const text = lines.join('\n').trim();
+    const notes = settings.showNotes ? clampText(settings.notes, 240) : '';
+    const rawImage = typeof demon.image === 'string' ? demon.image.trim() : '';
+    const image = settings.includePortrait && rawImage ? rawImage : '';
+    const demonId = demon.id || demon.slug || demon.query || '';
+    const label = clampText(settings.label || demon.name || 'Demon', 80);
+    const hasTooltipContent = !!text || !!image || !!notes;
+    return {
+        kind: 'demon-ally',
+        demonId: demonId || '',
+        label,
+        text,
+        image,
+        fields: {
+            arcana: settings.showArcana,
+            alignment: settings.showAlignment,
+            level: settings.showLevel,
+            notes: settings.showNotes,
+        },
+        notes,
+        showTooltip: settings.showTooltip && hasTooltipContent,
+    };
+}
+
+function createNpcTokenState(overrides = {}) {
+    const allowedTypes = new Set(['shop', 'loot', 'misc']);
+    const type = typeof overrides.type === 'string' && allowedTypes.has(overrides.type) ? overrides.type : 'shop';
+    return {
+        label: typeof overrides.label === 'string' ? overrides.label : '',
+        type,
+        color: overrides.color || '#10b981',
+        showTooltip: overrides.showTooltip !== undefined ? !!overrides.showTooltip : true,
+        image: typeof overrides.image === 'string' ? overrides.image : '',
+        notes: typeof overrides.notes === 'string' ? overrides.notes : '',
+        items: Array.isArray(overrides.items) ? overrides.items : [],
+        requireApproval: overrides.requireApproval !== undefined ? !!overrides.requireApproval : true,
+        allowAutoClaim: overrides.allowAutoClaim !== undefined ? !!overrides.allowAutoClaim : true,
+        openButton: overrides.openButton !== undefined ? !!overrides.openButton : true,
+        shopId: typeof overrides.shopId === 'string' ? overrides.shopId : '',
+    };
+}
+
+function buildNpcTokenMeta(form) {
+    const state = createNpcTokenState(form);
+    const labelFallback = state.type === 'shop' ? 'Shopkeeper' : state.type === 'loot' ? 'Treasure Cache' : 'NPC';
+    const label = clampText(state.label || labelFallback, 80);
+    const items = normalizeNpcItems(state.items, {
+        allowCost: state.type === 'shop',
+        allowTrade: state.type === 'shop',
+    });
+    const summaryParts = [];
+    if (state.type === 'shop') {
+        summaryParts.push(`${items.length} item${items.length === 1 ? '' : 's'} for sale`);
+    } else if (state.type === 'loot') {
+        summaryParts.push(`${items.length} reward${items.length === 1 ? '' : 's'} available`);
+    }
+    const text = summaryParts.join('\n').trim();
+    const image = clampText(state.image, 280);
+    const kind = `npc-${state.type}`;
+    const shopId = clampText(state.shopId, 80) || `shop-${Math.random().toString(36).slice(2, 9)}`;
+    const notes = clampText(state.notes, 280);
+    const hasTooltipContent = !!text || !!notes || !!image || items.length > 0;
+    return {
+        kind,
+        label,
+        text,
+        image,
+        notes,
+        items,
+        openButton: !!state.openButton,
+        requireApproval: state.type === 'shop' ? !!state.requireApproval : false,
+        autoClaim: state.type === 'loot' ? !!state.allowAutoClaim : false,
+        shopId,
+        showTooltip: !!state.showTooltip && hasTooltipContent,
+    };
+}
+
+function createNpcItem() {
+    return {
+        id: `npc-item-${Math.random().toString(36).slice(2, 8)}`,
+        name: '',
+        cost: '',
+        trade: '',
+        description: '',
+    };
+}
+
 function detailsFromEnemyInfo(info, { fallbackLabel = '' } = {}) {
     const normalized = normalizeEnemyInfo(info || {}, { fallbackLabel });
     return {
@@ -2276,13 +2583,153 @@ function MapAccordionSection({ title, description, children, defaultOpen = true 
     );
 }
 
-function EnemyTooltipCard({ info, label }) {
+function PlayerTooltipCard({ meta, label }) {
+    if (!meta) return null;
+    const displayLabel = meta.label || label;
+    const lines = Array.isArray(meta.lines) ? meta.lines.filter(Boolean) : [];
+    const notes = meta.notes || '';
+    const hasImage = !!(meta.includePortrait && meta.image);
+    if (!displayLabel && lines.length === 0 && !notes && !hasImage) {
+        return null;
+    }
+    return (
+        <div className="map-token__tooltip-card map-token__tooltip-card--player">
+            {hasImage && (
+                <div className="map-token__tooltip-image">
+                    <img src={meta.image} alt={displayLabel || 'Player portrait'} />
+                </div>
+            )}
+            <div className="map-token__tooltip-body">
+                {displayLabel && <div className="map-token__tooltip-name">{displayLabel}</div>}
+                {lines.length > 0 && (
+                    <div className="map-token__tooltip-stats">
+                        {lines.map((line, idx) => (
+                            <span key={idx}>{line}</span>
+                        ))}
+                    </div>
+                )}
+                {notes && <div className="map-token__tooltip-notes">{notes}</div>}
+            </div>
+        </div>
+    );
+}
+
+function DemonTooltipCard({ meta, label }) {
+    if (!meta) return null;
+    const displayLabel = meta.label || label;
+    const lines = Array.isArray(meta.lines) ? meta.lines.filter(Boolean) : [];
+    const notes = meta.notes || '';
+    const hasImage = !!meta.image;
+    if (!displayLabel && lines.length === 0 && !notes && !hasImage) {
+        return null;
+    }
+    return (
+        <div className="map-token__tooltip-card map-token__tooltip-card--demon">
+            {hasImage && (
+                <div className="map-token__tooltip-image">
+                    <DemonImage
+                        src={meta.image}
+                        alt={displayLabel || 'Demon portrait'}
+                        personaSlug={meta.demonId || undefined}
+                    />
+                </div>
+            )}
+            <div className="map-token__tooltip-body">
+                {displayLabel && <div className="map-token__tooltip-name">{displayLabel}</div>}
+                {lines.length > 0 && (
+                    <div className="map-token__tooltip-stats">
+                        {lines.map((line, idx) => (
+                            <span key={idx}>{line}</span>
+                        ))}
+                    </div>
+                )}
+                {notes && <div className="map-token__tooltip-notes">{notes}</div>}
+            </div>
+        </div>
+    );
+}
+
+function NpcTooltipCard({ meta, label, onOpen, isDM }) {
+    if (!meta) return null;
+    const displayLabel = meta.label || label;
+    const image = meta.image;
+    const summary = meta.text && meta.text !== meta.notes ? meta.text : '';
+    const notes = meta.notes || '';
+    const items = Array.isArray(meta.items) ? meta.items : [];
+    const hasItems = items.length > 0;
+    const type = meta.npcType || 'misc';
+    const showOpenButton = typeof onOpen === 'function' && (isDM || meta.openButton);
+    const openLabel =
+        type === 'shop' ? 'Open shop' : type === 'loot' ? 'View loot' : meta.openButton ? 'View details' : 'Open details';
+    if (!displayLabel && !summary && !notes && !image && !hasItems && !showOpenButton) {
+        return null;
+    }
+    const limitedItems = hasItems ? items.slice(0, 3) : [];
+    const remainingCount = hasItems ? Math.max(0, items.length - limitedItems.length) : 0;
+    return (
+        <div className={`map-token__tooltip-card map-token__tooltip-card--npc map-token__tooltip-card--npc-${type}`}>
+            {image && (
+                <div className="map-token__tooltip-image">
+                    <img src={image} alt={displayLabel || 'NPC portrait'} />
+                </div>
+            )}
+            <div className="map-token__tooltip-body">
+                {displayLabel && <div className="map-token__tooltip-name">{displayLabel}</div>}
+                {summary && <div className="map-token__tooltip-summary">{summary}</div>}
+                {hasItems && (
+                    <ul className="map-token__tooltip-items">
+                        {limitedItems.map((item) => (
+                            <li key={item.id || item.name} className="map-token__tooltip-item">
+                                <span className="map-token__tooltip-item-name">{item.name}</span>
+                                {type === 'shop' && (item.cost || item.trade) && (
+                                    <span className="map-token__tooltip-item-meta">
+                                        {[item.cost, item.trade ? `Trade: ${item.trade}` : '']
+                                            .filter(Boolean)
+                                            .join(' · ')}
+                                    </span>
+                                )}
+                                {item.description && (
+                                    <span className="map-token__tooltip-item-notes">{item.description}</span>
+                                )}
+                            </li>
+                        ))}
+                    </ul>
+                )}
+                {remainingCount > 0 && (
+                    <div className="map-token__tooltip-more text-small text-muted">
+                        +{remainingCount} more item{remainingCount === 1 ? '' : 's'}
+                    </div>
+                )}
+                {notes && <div className="map-token__tooltip-notes">{notes}</div>}
+                {showOpenButton && (
+                    <div className="map-token__tooltip-actions">
+                        <button
+                            type="button"
+                            className="btn btn-small"
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                onOpen();
+                            }}
+                        >
+                            {openLabel}
+                        </button>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+function EnemyTooltipCard({ info, label, actions = null }) {
     if (!info) return null;
     const hasName = info.showName && info.name;
     const hasStats = info.showStats && Array.isArray(info.stats) && info.stats.length > 0;
     const hasNotes = info.showNotes && info.notes;
     const hasImage = info.showImage && info.image;
-    if (!hasName && !hasStats && !hasNotes && !hasImage) {
+    const hasActions = !!actions;
+    if (!hasName && !hasStats && !hasNotes && !hasImage && !hasActions) {
         return null;
     }
     return (
@@ -2302,8 +2749,367 @@ function EnemyTooltipCard({ info, label }) {
                     </div>
                 )}
                 {hasNotes && <div className="map-token__tooltip-notes">{info.notes}</div>}
+                {hasActions && <div className="map-token__tooltip-actions">{actions}</div>}
             </div>
         </div>
+    );
+}
+
+function NpcOverlay({ token, onClose, isDM }) {
+    if (!token || !token.meta) return null;
+    const meta = token.meta;
+    const title = meta.label || token.label || 'NPC';
+    const type = meta.npcType || (meta.kind === 'npc-shop' ? 'shop' : meta.kind === 'npc-loot' ? 'loot' : 'misc');
+    const typeLabel = type === 'shop' ? 'Shopkeeper' : type === 'loot' ? 'Loot cache' : 'NPC details';
+    const summary = meta.text && meta.text !== meta.notes ? meta.text : '';
+    const notes = meta.notes || '';
+    const items = Array.isArray(meta.items) ? meta.items : [];
+    const requireApproval = !!meta.requireApproval;
+    const autoClaim = !!meta.autoClaim;
+    const showItems = items.length > 0;
+    const sectionHeading = type === 'shop' ? 'Shop inventory' : type === 'loot' ? 'Loot rewards' : 'Information';
+    return (
+        <div className="map-npc-overlay" role="dialog" aria-modal="true" aria-label={`${title} details`}>
+            <div className="map-npc-overlay__backdrop" onClick={onClose} />
+            <div className="map-npc-overlay__panel">
+                <div className="map-npc-overlay__header">
+                    <div>
+                        <h3>{title}</h3>
+                        <p className="text-small text-muted">{typeLabel}</p>
+                    </div>
+                    <button type="button" className="btn ghost btn-small" onClick={onClose}>
+                        Close
+                    </button>
+                </div>
+                {meta.image && (
+                    <div className="map-npc-overlay__image">
+                        <img src={meta.image} alt={title} />
+                    </div>
+                )}
+                {summary && <p className="map-npc-overlay__summary">{summary}</p>}
+                {notes && <p className="map-npc-overlay__notes">{notes}</p>}
+                {showItems && (
+                    <div className="map-npc-overlay__section">
+                        <h4>{sectionHeading}</h4>
+                        <ul className="map-npc-overlay__items">
+                            {items.map((item) => (
+                                <li key={item.id || item.name} className="map-npc-overlay__item">
+                                    <div className="map-npc-overlay__item-header">
+                                        <span className="map-npc-overlay__item-name">{item.name}</span>
+                                        {type === 'shop' && (item.cost || item.trade) && (
+                                            <span className="map-npc-overlay__item-meta">
+                                                {[item.cost, item.trade ? `Trade: ${item.trade}` : '']
+                                                    .filter(Boolean)
+                                                    .join(' · ')}
+                                            </span>
+                                        )}
+                                    </div>
+                                    {item.description && (
+                                        <p className="map-npc-overlay__item-notes">{item.description}</p>
+                                    )}
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
+                {type === 'shop' && (
+                    <p className="map-npc-overlay__hint text-small text-muted">
+                        {requireApproval
+                            ? 'Purchases require the DM to approve each trade request.'
+                            : 'Players can propose trades; the DM will confirm each sale.'}
+                    </p>
+                )}
+                {type === 'loot' && (
+                    <p className="map-npc-overlay__hint text-small text-muted">
+                        {autoClaim
+                            ? 'Players can claim items automatically when they interact with this loot.'
+                            : 'Coordinate with the DM to distribute these rewards.'}
+                    </p>
+                )}
+                {isDM && meta.shopId && (
+                    <p className="map-npc-overlay__hint text-small text-muted">
+                        Shop ID: <code>{meta.shopId}</code>
+                    </p>
+                )}
+            </div>
+        </div>
+    );
+}
+
+function EnemyTokenWorkshop({
+    enemyForm,
+    setEnemyForm,
+    enemyFormValid,
+    enemyFormHasVisibleTooltip,
+    enemyDetailsInfo,
+    enemyDemonChoice,
+    setEnemyDemonChoice,
+    enemyDemonOptions,
+    enemyQuery,
+    setEnemyQuery,
+    handleImportEnemyDemon,
+    handleSubmitEnemyToken,
+    resetEnemyForm,
+}) {
+    return (
+        <form
+            className="map-enemy-form"
+            onSubmit={(event) => {
+                event.preventDefault();
+                handleSubmitEnemyToken();
+            }}
+        >
+            <fieldset className="map-enemy-form__section">
+                <legend>Token</legend>
+                <label className="text-small" htmlFor="map-enemy-label">
+                    Enemy label
+                </label>
+                <input
+                    id="map-enemy-label"
+                    type="text"
+                    value={enemyForm.label}
+                    onChange={(event) =>
+                        setEnemyForm((prev) => ({
+                            ...prev,
+                            label: event.target.value,
+                        }))
+                    }
+                    placeholder="e.g. Shadow Trooper"
+                />
+                <div className="map-enemy-form__controls">
+                    <label className="color-input" htmlFor="map-enemy-color">
+                        <span className="text-small">Token color</span>
+                        <input
+                            id="map-enemy-color"
+                            type="color"
+                            value={enemyForm.color}
+                            style={{ backgroundColor: enemyForm.color }}
+                            onChange={(event) =>
+                                setEnemyForm((prev) => ({
+                                    ...prev,
+                                    color: event.target.value || MAP_ENEMY_DEFAULT_COLOR,
+                                }))
+                            }
+                        />
+                        <span className="text-muted text-small">
+                            {(enemyForm.color || MAP_ENEMY_DEFAULT_COLOR).toUpperCase()}
+                        </span>
+                    </label>
+                    <label className="perm-toggle">
+                        <input
+                            type="checkbox"
+                            checked={enemyForm.showTooltip}
+                            onChange={(event) =>
+                                setEnemyForm((prev) => ({
+                                    ...prev,
+                                    showTooltip: event.target.checked,
+                                }))
+                            }
+                        />
+                        <span className="perm-toggle__text">Tooltip on hover</span>
+                    </label>
+                </div>
+            </fieldset>
+            <fieldset className="map-enemy-form__section">
+                <legend>Import from codex</legend>
+                <p className="text-small text-muted">
+                    Prefill details from demons saved in this campaign.
+                </p>
+                <div className="map-enemy-form__controls map-enemy-form__controls--wrap">
+                    <input
+                        type="text"
+                        value={enemyQuery}
+                        onChange={(event) => setEnemyQuery(event.target.value)}
+                        placeholder="Search demon name…"
+                    />
+                    <select
+                        value={enemyDemonChoice}
+                        onChange={(event) => setEnemyDemonChoice(event.target.value)}
+                    >
+                        <option value="">Select a demon…</option>
+                        {enemyDemonOptions.map((option) => (
+                            <option key={option.id} value={option.id}>
+                                {option.label}
+                            </option>
+                        ))}
+                    </select>
+                    <button
+                        type="button"
+                        className="btn btn-small"
+                        onClick={handleImportEnemyDemon}
+                        disabled={!enemyDemonChoice}
+                    >
+                        Import
+                    </button>
+                </div>
+            </fieldset>
+            <fieldset className="map-enemy-form__section">
+                <legend>Tooltip details</legend>
+                <div className="map-enemy-form__detail">
+                    <div className="map-enemy-form__detail-header">
+                        <label htmlFor="map-enemy-name">Display name</label>
+                        <label className="perm-toggle">
+                            <input
+                                type="checkbox"
+                                checked={enemyForm.details.showName}
+                                onChange={(event) =>
+                                    setEnemyForm((prev) => ({
+                                        ...prev,
+                                        details: {
+                                            ...prev.details,
+                                            showName: event.target.checked,
+                                        },
+                                    }))
+                                }
+                            />
+                            <span className="perm-toggle__text">Visible</span>
+                        </label>
+                    </div>
+                    <input
+                        id="map-enemy-name"
+                        type="text"
+                        value={enemyForm.details.name}
+                        onChange={(event) =>
+                            setEnemyForm((prev) => ({
+                                ...prev,
+                                details: {
+                                    ...prev.details,
+                                    name: event.target.value,
+                                },
+                            }))
+                        }
+                        placeholder="Optional override name"
+                    />
+                </div>
+                <div className="map-enemy-form__detail">
+                    <div className="map-enemy-form__detail-header">
+                        <label htmlFor="map-enemy-image">Image URL</label>
+                        <label className="perm-toggle">
+                            <input
+                                type="checkbox"
+                                checked={enemyForm.details.showImage}
+                                onChange={(event) =>
+                                    setEnemyForm((prev) => ({
+                                        ...prev,
+                                        details: {
+                                            ...prev.details,
+                                            showImage: event.target.checked,
+                                        },
+                                    }))
+                                }
+                            />
+                            <span className="perm-toggle__text">Visible</span>
+                        </label>
+                    </div>
+                    <input
+                        id="map-enemy-image"
+                        type="text"
+                        value={enemyForm.details.image}
+                        onChange={(event) =>
+                            setEnemyForm((prev) => ({
+                                ...prev,
+                                details: {
+                                    ...prev.details,
+                                    image: event.target.value,
+                                },
+                            }))
+                        }
+                        placeholder="https://example.com/enemy.png"
+                    />
+                    <p className="text-small text-muted">
+                        Hotlinks are proxied automatically for supported demon wikis.
+                    </p>
+                </div>
+                <div className="map-enemy-form__detail">
+                    <div className="map-enemy-form__detail-header">
+                        <label htmlFor="map-enemy-stats">Stats</label>
+                        <label className="perm-toggle">
+                            <input
+                                type="checkbox"
+                                checked={enemyForm.details.showStats}
+                                onChange={(event) =>
+                                    setEnemyForm((prev) => ({
+                                        ...prev,
+                                        details: {
+                                            ...prev.details,
+                                            showStats: event.target.checked,
+                                        },
+                                    }))
+                                }
+                            />
+                            <span className="perm-toggle__text">Visible</span>
+                        </label>
+                    </div>
+                    <textarea
+                        id="map-enemy-stats"
+                        rows={3}
+                        value={enemyForm.details.stats}
+                        onChange={(event) =>
+                            setEnemyForm((prev) => ({
+                                ...prev,
+                                details: {
+                                    ...prev.details,
+                                    stats: event.target.value,
+                                },
+                            }))
+                        }
+                        placeholder={'HP 45 / 45\nWeak: Bless · Resists: Gun'}
+                    />
+                </div>
+                <div className="map-enemy-form__detail">
+                    <div className="map-enemy-form__detail-header">
+                        <label htmlFor="map-enemy-notes">Notes</label>
+                        <label className="perm-toggle">
+                            <input
+                                type="checkbox"
+                                checked={enemyForm.details.showNotes}
+                                onChange={(event) =>
+                                    setEnemyForm((prev) => ({
+                                        ...prev,
+                                        details: {
+                                            ...prev.details,
+                                            showNotes: event.target.checked,
+                                        },
+                                    }))
+                                }
+                            />
+                            <span className="perm-toggle__text">Visible</span>
+                        </label>
+                    </div>
+                    <textarea
+                        id="map-enemy-notes"
+                        rows={3}
+                        value={enemyForm.details.notes}
+                        onChange={(event) =>
+                            setEnemyForm((prev) => ({
+                                ...prev,
+                                details: {
+                                    ...prev.details,
+                                    notes: event.target.value,
+                                },
+                            }))
+                        }
+                        placeholder="Tactical reminders, conditions, or lore."
+                    />
+                </div>
+                <EnemyTooltipCard info={enemyDetailsInfo} label={enemyForm.label || 'Enemy'} />
+                <p className="text-small text-muted">
+                    {enemyForm.showTooltip && enemyFormHasVisibleTooltip
+                        ? 'Players will see the selected fields on hover.'
+                        : 'Tooltip hidden from players.'}
+                </p>
+            </fieldset>
+            <div className="map-enemy-form__actions">
+                {enemyForm.id && (
+                    <button type="button" className="btn ghost btn-small" onClick={resetEnemyForm}>
+                        Cancel edit
+                    </button>
+                )}
+                <button type="submit" className="btn btn-small" disabled={!enemyFormValid}>
+                    {enemyForm.id ? 'Save enemy' : 'Place enemy'}
+                </button>
+            </div>
+        </form>
     );
 }
 
@@ -2318,12 +3124,43 @@ function normalizeClientMapToken(token) {
     let tooltipTrimmed = tooltipSource.trim();
     let tooltip = tooltipTrimmed || label;
     let showTooltip = token.showTooltip !== false && !!tooltipTrimmed;
+    let meta = null;
+    let image = '';
     let enemyInfo = null;
     let color = typeof token.color === 'string' && token.color ? token.color : '#a855f7';
     if (!token.color) {
         if (kind === 'player') color = '#38bdf8';
         else if (kind === 'demon') color = '#f97316';
         else if (kind === 'enemy') color = MAP_ENEMY_DEFAULT_COLOR;
+        else if (kind === 'npc') color = '#10b981';
+    }
+    if (tooltipSource.trim().startsWith(TOKEN_TOOLTIP_PREFIX)) {
+        const decodedMeta = decodeTokenTooltip(tooltipSource);
+        const normalizedMeta = normalizeTokenMeta(decodedMeta, { fallbackKind: kind, fallbackLabel: label });
+        if (normalizedMeta) {
+            meta = normalizedMeta;
+            const metaText = normalizedMeta.text || '';
+            if (metaText) {
+                tooltip = metaText;
+                tooltipTrimmed = metaText.trim();
+            } else if (Array.isArray(normalizedMeta.lines) && normalizedMeta.lines.length > 0) {
+                tooltip = normalizedMeta.lines.join('\n');
+                tooltipTrimmed = tooltip.trim();
+            }
+            if (normalizedMeta.image) {
+                image = normalizedMeta.image;
+            }
+            if (normalizedMeta.notes) {
+                const merged = [tooltipTrimmed, normalizedMeta.notes].filter(Boolean).join('\n');
+                tooltip = merged || tooltip;
+                tooltipTrimmed = merged.trim();
+            }
+            if (normalizedMeta.showTooltip !== undefined) {
+                showTooltip = normalizedMeta.showTooltip && (!!tooltipTrimmed || !!image);
+            } else {
+                showTooltip = token.showTooltip !== false && (!!tooltipTrimmed || !!image);
+            }
+        }
     }
     if (kind === 'enemy') {
         const decoded = decodeEnemyTooltip(tooltipSource);
@@ -2360,6 +3197,8 @@ function normalizeClientMapToken(token) {
         x: mapClamp01(token.x),
         y: mapClamp01(token.y),
         ownerId: typeof token.ownerId === 'string' ? token.ownerId : null,
+        image,
+        ...(meta ? { meta } : {}),
         ...(enemyInfo ? { enemyInfo } : {}),
     };
 }
@@ -2834,11 +3673,17 @@ function MapTab({ game, me }) {
     const [dragPreview, setDragPreview] = useState(null);
     const [selectedShapeId, setSelectedShapeId] = useState(null);
     const [playerChoice, setPlayerChoice] = useState('');
+    const [tokenCreationTab, setTokenCreationTab] = useState('player');
+    const [playerTokenConfig, setPlayerTokenConfig] = useState(() => createPlayerTokenConfig());
+    const [demonCreationMode, setDemonCreationMode] = useState('ally');
     const [demonChoice, setDemonChoice] = useState('');
+    const [demonTokenConfig, setDemonTokenConfig] = useState(() => createDemonTokenConfig());
     const [demonQuery, setDemonQuery] = useState('');
     const [enemyForm, setEnemyForm] = useState(createEnemyFormState);
     const [enemyDemonChoice, setEnemyDemonChoice] = useState('');
     const [enemyQuery, setEnemyQuery] = useState('');
+    const [npcForm, setNpcForm] = useState(() => createNpcTokenState());
+    const [activeNpcOverlayId, setActiveNpcOverlayId] = useState(null);
     const [sidebarTab, setSidebarTab] = useState('tokens');
     const [overlayForm, setOverlayForm] = useState({
         url: '',
@@ -2850,6 +3695,10 @@ function MapTab({ game, me }) {
     const [undoStack, setUndoStack] = useState([]);
     const [undoInFlight, setUndoInFlight] = useState(false);
     const [drawerUpdating, setDrawerUpdating] = useState(false);
+    const activeNpcToken = useMemo(() => {
+        if (!activeNpcOverlayId) return null;
+        return mapState.tokens.find((entry) => entry.id === activeNpcOverlayId) || null;
+    }, [activeNpcOverlayId, mapState.tokens]);
     const combatState = mapState.combat || DEFAULT_CLIENT_COMBAT;
     const combatOrderString = combatState.order.join('\n');
     const [combatOrderDraft, setCombatOrderDraft] = useState(() => combatOrderString);
@@ -2881,6 +3730,28 @@ function MapTab({ game, me }) {
             setSelectedShapeId(null);
         }
     }, [mapState.shapes, selectedShapeId]);
+
+    useEffect(() => {
+        if (!playerChoice) return;
+        const player = playerMap.get(playerChoice);
+        if (!player) return;
+        const defaultLabel = describePlayerName(player);
+        setPlayerTokenConfig((prev) => {
+            if (prev.label) return prev;
+            return { ...prev, label: defaultLabel };
+        });
+    }, [playerChoice, playerMap]);
+
+    useEffect(() => {
+        if (!demonChoice) return;
+        const demon = findDemon(demonChoice);
+        if (!demon) return;
+        const defaultLabel = demon.name || 'Demon';
+        setDemonTokenConfig((prev) => {
+            if (prev.label) return prev;
+            return { ...prev, label: defaultLabel };
+        });
+    }, [demonChoice, findDemon]);
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
@@ -2927,6 +3798,25 @@ function MapTab({ game, me }) {
         const timer = window.setTimeout(() => setCombatNotice(null), 3500);
         return () => window.clearTimeout(timer);
     }, [combatNotice]);
+
+    useEffect(() => {
+        if (!activeNpcOverlayId) return undefined;
+        if (typeof window === 'undefined') return undefined;
+        const handleKeyDown = (event) => {
+            if (event.key === 'Escape') {
+                setActiveNpcOverlayId(null);
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [activeNpcOverlayId]);
+
+    useEffect(() => {
+        if (!activeNpcOverlayId) return;
+        if (!activeNpcToken || !activeNpcToken.meta) {
+            setActiveNpcOverlayId(null);
+        }
+    }, [activeNpcOverlayId, activeNpcToken]);
 
     const activeDrawerId = mapState.drawer?.userId || game.dmId || null;
     const isActiveDrawer = activeDrawerId === me.id;
@@ -3683,10 +4573,21 @@ function MapTab({ game, me }) {
 
     const handleAddPlayerToken = useCallback(async () => {
         if (!playerChoice) return;
+        const player = playerMap.get(playerChoice);
+        if (!player) {
+            alert('Select a valid party member.');
+            return;
+        }
+        const metaPayload = buildPlayerTokenMeta(player, playerTokenConfig);
+        if (!metaPayload) return;
+        const tooltipPayload = encodeTokenTooltip(metaPayload);
         try {
             const response = await Games.addMapToken(game.id, {
                 kind: 'player',
                 refId: playerChoice,
+                label: metaPayload.label || undefined,
+                tooltip: tooltipPayload,
+                showTooltip: metaPayload.showTooltip,
             });
             const normalized = normalizeClientMapToken(response);
             if (normalized) {
@@ -3695,8 +4596,8 @@ function MapTab({ game, me }) {
                     tokens: prev.tokens.concat(normalized),
                     updatedAt: response?.updatedAt || prev.updatedAt,
                 }));
-                const player = playerMap.get(normalized.refId);
-                const label = player ? describePlayerName(player) : normalized.label || 'Player token';
+                const playerMeta = playerMap.get(normalized.refId);
+                const label = playerMeta ? describePlayerName(playerMeta) : normalized.label || 'Player token';
                 logBattle('map:token:add', `Placed player token for ${label}`, {
                     tokenId: normalized.id,
                     kind: normalized.kind,
@@ -3704,17 +4605,30 @@ function MapTab({ game, me }) {
                 });
             }
             setPlayerChoice('');
+            setPlayerTokenConfig(createPlayerTokenConfig());
         } catch (err) {
             alert(err.message);
         }
-    }, [game.id, logBattle, playerChoice, playerMap]);
+    }, [game.id, logBattle, playerChoice, playerMap, playerTokenConfig]);
 
     const handleAddDemonToken = useCallback(async () => {
+        if (demonCreationMode !== 'ally') return;
         if (!demonChoice) return;
+        const demon = findDemon(demonChoice);
+        if (!demon) {
+            alert('Select a demon from the codex.');
+            return;
+        }
+        const metaPayload = buildDemonAllyMeta(demon, demonTokenConfig);
+        if (!metaPayload) return;
+        const tooltipPayload = encodeTokenTooltip(metaPayload);
         try {
             const response = await Games.addMapToken(game.id, {
                 kind: 'demon',
                 refId: demonChoice,
+                label: metaPayload.label || undefined,
+                tooltip: tooltipPayload,
+                showTooltip: metaPayload.showTooltip,
             });
             const normalized = normalizeClientMapToken(response);
             if (normalized) {
@@ -3723,8 +4637,8 @@ function MapTab({ game, me }) {
                     tokens: prev.tokens.concat(normalized),
                     updatedAt: response?.updatedAt || prev.updatedAt,
                 }));
-                const demon = findDemon(normalized.refId);
-                const label = demon?.name || normalized.label || 'Demon token';
+                const demonInfo = findDemon(normalized.refId);
+                const label = demonInfo?.name || normalized.label || 'Demon token';
                 logBattle('map:token:add', `Placed demon token for ${label}`, {
                     tokenId: normalized.id,
                     kind: normalized.kind,
@@ -3732,10 +4646,11 @@ function MapTab({ game, me }) {
                 });
             }
             setDemonChoice('');
+            setDemonTokenConfig(createDemonTokenConfig());
         } catch (err) {
             alert(err.message);
         }
-    }, [demonChoice, findDemon, game.id, logBattle]);
+    }, [demonChoice, demonCreationMode, demonTokenConfig, findDemon, game.id, logBattle]);
 
     const handleSubmitEnemyToken = useCallback(async () => {
         const name = enemyForm.label.trim();
@@ -3793,6 +4708,37 @@ function MapTab({ game, me }) {
             alert(err.message);
         }
     }, [enemyForm, game.id, logBattle, resetEnemyForm]);
+
+    const handleSubmitNpcToken = useCallback(async () => {
+        const metaPayload = buildNpcTokenMeta(npcForm);
+        if (!metaPayload) return;
+        try {
+            const payload = {
+                kind: 'npc',
+                label: metaPayload.label || undefined,
+                color: npcForm.color || '#10b981',
+                tooltip: encodeTokenTooltip(metaPayload),
+                showTooltip: metaPayload.showTooltip,
+            };
+            const response = await Games.addMapToken(game.id, payload);
+            const normalized = normalizeClientMapToken(response);
+            if (normalized) {
+                setMapState((prev) => ({
+                    ...prev,
+                    tokens: prev.tokens.concat(normalized),
+                    updatedAt: response?.updatedAt || prev.updatedAt,
+                }));
+                const label = normalized.label || metaPayload.label || 'NPC';
+                logBattle('map:token:add', `Placed NPC token ${label}`, {
+                    tokenId: normalized.id,
+                    kind: normalized.kind,
+                });
+            }
+            setNpcForm((prev) => createNpcTokenState({ type: prev.type }));
+        } catch (err) {
+            alert(err.message);
+        }
+    }, [game.id, logBattle, npcForm]);
 
     const handleAddShape = useCallback(
         async (type, extras = {}) => {
@@ -4088,6 +5034,8 @@ function MapTab({ game, me }) {
             });
             setEnemyDemonChoice(details.demonId || '');
             setSidebarTab('tokens');
+            setTokenCreationTab('demon');
+            setDemonCreationMode('enemy');
         },
         [isDM]
     );
@@ -4934,35 +5882,67 @@ function MapTab({ game, me }) {
                                 dragPreview && dragPreview.kind === 'token' && dragPreview.id === token.id
                                     ? { ...token, x: dragPreview.x, y: dragPreview.y }
                                     : token;
-                            const enemyTooltipHasContent =
-                                token.kind === 'enemy' && token.enemyInfo && enemyHasVisibleContent(token.enemyInfo);
-                            const showTooltip =
-                                tokenTooltipsEnabled &&
-                                !!token.showTooltip &&
-                                (!!token.tooltip || enemyTooltipHasContent);
                             const canDrag = canMoveToken(token);
                             const label = token.label || (player ? describePlayerName(player) : demon ? demon.name : 'Marker');
+                            const meta = token.meta || null;
+                            const tokenImage = meta?.image || token.image || '';
+                            const hasPortrait = !!tokenImage;
+                            let tooltipContent = null;
+                            let tooltipIsCard = false;
+                            if (token.kind === 'enemy' && token.enemyInfo && token.showTooltip) {
+                                tooltipContent = <EnemyTooltipCard info={token.enemyInfo} label={label} />;
+                                tooltipIsCard = true;
+                            } else if (meta && token.showTooltip) {
+                                if (meta.kind === 'player') {
+                                    tooltipContent = <PlayerTooltipCard meta={meta} label={label} />;
+                                    tooltipIsCard = true;
+                                } else if (meta.kind === 'demon-ally') {
+                                    tooltipContent = <DemonTooltipCard meta={meta} label={label} />;
+                                    tooltipIsCard = true;
+                                } else if (meta.kind === 'npc-shop' || meta.kind === 'npc-loot' || meta.kind === 'npc-misc' || meta.kind === 'npc') {
+                                    tooltipContent = (
+                                        <NpcTooltipCard
+                                            meta={meta}
+                                            label={label}
+                                            isDM={isDM}
+                                            onOpen={() => setActiveNpcOverlayId(token.id)}
+                                        />
+                                    );
+                                    tooltipIsCard = true;
+                                } else if (meta.kind === 'demon-enemy' && token.enemyInfo) {
+                                    tooltipContent = <EnemyTooltipCard info={token.enemyInfo} label={label} />;
+                                    tooltipIsCard = true;
+                                } else if (token.tooltip) {
+                                    tooltipContent = token.tooltip;
+                                }
+                            } else if (token.showTooltip && token.tooltip) {
+                                tooltipContent = token.tooltip;
+                            }
+                            const showTooltip = tokenTooltipsEnabled && !!tooltipContent;
+                            const tooltipClass = `map-token__tooltip${tooltipIsCard ? ' map-token__tooltip--card' : ''}`;
+                            const initials = label.slice(0, 2).toUpperCase();
                             return (
                                 <button
                                     key={token.id}
                                     type="button"
-                                    className={`map-token map-token--${token.kind}${canDrag ? ' is-draggable' : ''}`}
+                                    className={`map-token map-token--${token.kind}${hasPortrait ? ' map-token--has-portrait' : ''}${
+                                        canDrag ? ' is-draggable' : ''
+                                    }`}
                                     style={{ left: `${display.x * 100}%`, top: `${display.y * 100}%`, background: token.color }}
                                     onPointerDown={(event) => handleTokenPointerDown(token, event)}
                                     onPointerMove={(event) => handleTokenPointerMove(token, event)}
                                     onPointerUp={(event) => handleTokenPointerUp(token, event)}
                                     onPointerCancel={(event) => handleTokenPointerUp(token, event)}
                                 >
-                                    <span className="map-token__label">{label.slice(0, 2).toUpperCase()}</span>
-                                    {showTooltip && (
-                                        token.kind === 'enemy' && token.enemyInfo ? (
-                                            <span className="map-token__tooltip map-token__tooltip--card">
-                                                <EnemyTooltipCard info={token.enemyInfo} label={label} />
+                                    <span className="map-token__inner">
+                                        {hasPortrait && (
+                                            <span className="map-token__portrait" aria-hidden="true">
+                                                <img src={tokenImage} alt="" />
                                             </span>
-                                        ) : (
-                                            <span className="map-token__tooltip">{token.tooltip}</span>
-                                        )
-                                    )}
+                                        )}
+                                        <span className="map-token__label">{initials}</span>
+                                    </span>
+                                    {showTooltip && <span className={tooltipClass}>{tooltipContent}</span>}
                                 </button>
                             );
                         })}
@@ -4974,6 +5954,13 @@ function MapTab({ game, me }) {
                                 <p>The DM is preparing the battlefield. Drawings and token moves will appear once play resumes.</p>
                             </div>
                         </div>
+                    )}
+                    {activeNpcToken && activeNpcToken.meta && (
+                        <NpcOverlay
+                            token={activeNpcToken}
+                            isDM={isDM}
+                            onClose={() => setActiveNpcOverlayId(null)}
+                        />
                     )}
                 </div>
                 <aside className="map-sidebar">
@@ -5010,49 +5997,657 @@ function MapTab({ game, me }) {
                         {sidebarTab === 'tokens' && (
                             <div className="stack">
                                 <MapAccordionSection
-                                    title="Player tokens"
-                                    description="Place and manage party members on the encounter map."
+                                    title="Token workshop"
+                                    description="Choose what kind of token to place on the encounter map."
                                 >
-                                    {isDM && (
-                                        <>
-                                            {availablePlayers.length > 0 ? (
-                                                <div className="map-token-form">
-                                                    <label className="text-small" htmlFor="map-add-player">
-                                                        Add party member
-                                                    </label>
-                                                    <div className="map-token-form__controls">
-                                                        <select
-                                                            id="map-add-player"
-                                                            value={playerChoice}
-                                                            onChange={(event) => setPlayerChoice(event.target.value)}
-                                                        >
-                                                            <option value="">Select a player…</option>
-                                                            {availablePlayers.map((player) => (
-                                                                <option key={player.id} value={player.id}>
-                                                                    {player.label}
-                                                                </option>
-                                                            ))}
-                                                        </select>
+                                    {isDM ? (
+                                        <div className="map-token-workshop">
+                                            <div
+                                                className="map-token-workshop__tabs"
+                                                role="tablist"
+                                                aria-label="Token categories"
+                                            >
+                                                <button
+                                                    type="button"
+                                                    className={`map-token-workshop__tab${tokenCreationTab === 'player' ? ' is-active' : ''}`}
+                                                    onClick={() => setTokenCreationTab('player')}
+                                                >
+                                                    Player
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className={`map-token-workshop__tab${tokenCreationTab === 'demon' ? ' is-active' : ''}`}
+                                                    onClick={() => setTokenCreationTab('demon')}
+                                                >
+                                                    Demon
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className={`map-token-workshop__tab${tokenCreationTab === 'npc' ? ' is-active' : ''}`}
+                                                    onClick={() => setTokenCreationTab('npc')}
+                                                >
+                                                    NPC
+                                                </button>
+                                            </div>
+                                            {tokenCreationTab === 'player' && (
+                                                <form
+                                                    className="map-token-workshop__panel"
+                                                    onSubmit={(event) => {
+                                                        event.preventDefault();
+                                                        handleAddPlayerToken();
+                                                    }}
+                                                >
+                                                    {availablePlayers.length > 0 ? (
+                                                        <>
+                                                            <label className="field">
+                                                                <span className="field__label">Party member</span>
+                                                                <select
+                                                                    value={playerChoice}
+                                                                    onChange={(event) => setPlayerChoice(event.target.value)}
+                                                                >
+                                                                    <option value="">Select a player…</option>
+                                                                    {availablePlayers.map((player) => (
+                                                                        <option key={player.id} value={player.id}>
+                                                                            {player.label}
+                                                                        </option>
+                                                                    ))}
+                                                                </select>
+                                                            </label>
+                                                            <div className="map-token-workshop__options">
+                                                                <label className="perm-toggle">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={playerTokenConfig.showClass}
+                                                                        onChange={(event) =>
+                                                                            setPlayerTokenConfig((prev) => ({
+                                                                                ...prev,
+                                                                                showClass: event.target.checked,
+                                                                            }))
+                                                                        }
+                                                                    />
+                                                                    <span className="perm-toggle__text">Show class</span>
+                                                                </label>
+                                                                <label className="perm-toggle">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={playerTokenConfig.showLevel}
+                                                                        onChange={(event) =>
+                                                                            setPlayerTokenConfig((prev) => ({
+                                                                                ...prev,
+                                                                                showLevel: event.target.checked,
+                                                                            }))
+                                                                        }
+                                                                    />
+                                                                    <span className="perm-toggle__text">Show level</span>
+                                                                </label>
+                                                                <label className="perm-toggle">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={playerTokenConfig.showHp}
+                                                                        onChange={(event) =>
+                                                                            setPlayerTokenConfig((prev) => ({
+                                                                                ...prev,
+                                                                                showHp: event.target.checked,
+                                                                            }))
+                                                                        }
+                                                                    />
+                                                                    <span className="perm-toggle__text">Show HP</span>
+                                                                </label>
+                                                                <label className="perm-toggle">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={playerTokenConfig.showNotes}
+                                                                        onChange={(event) =>
+                                                                            setPlayerTokenConfig((prev) => ({
+                                                                                ...prev,
+                                                                                showNotes: event.target.checked,
+                                                                            }))
+                                                                        }
+                                                                    />
+                                                                    <span className="perm-toggle__text">Extra notes</span>
+                                                                </label>
+                                                            </div>
+                                                            {playerTokenConfig.showNotes && (
+                                                                <label className="field">
+                                                                    <span className="field__label">Tooltip notes</span>
+                                                                    <textarea
+                                                                        rows={2}
+                                                                        value={playerTokenConfig.notes}
+                                                                        onChange={(event) =>
+                                                                            setPlayerTokenConfig((prev) => ({
+                                                                                ...prev,
+                                                                                notes: event.target.value,
+                                                                            }))
+                                                                        }
+                                                                        placeholder="Short reminders, conditions, or RP details"
+                                                                    />
+                                                                </label>
+                                                            )}
+                                                            <label className="field">
+                                                                <span className="field__label">Token label</span>
+                                                                <input
+                                                                    type="text"
+                                                                    value={playerTokenConfig.label}
+                                                                    onChange={(event) =>
+                                                                        setPlayerTokenConfig((prev) => ({
+                                                                            ...prev,
+                                                                            label: event.target.value,
+                                                                        }))
+                                                                    }
+                                                                    placeholder="Defaults to the character name"
+                                                                />
+                                                            </label>
+                                                            <div className="map-token-workshop__options">
+                                                                <label className="perm-toggle">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={playerTokenConfig.includePortrait}
+                                                                        onChange={(event) =>
+                                                                            setPlayerTokenConfig((prev) => ({
+                                                                                ...prev,
+                                                                                includePortrait: event.target.checked,
+                                                                            }))
+                                                                        }
+                                                                    />
+                                                                    <span className="perm-toggle__text">Use character art</span>
+                                                                </label>
+                                                                <label className="perm-toggle">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={playerTokenConfig.showTooltip}
+                                                                        onChange={(event) =>
+                                                                            setPlayerTokenConfig((prev) => ({
+                                                                                ...prev,
+                                                                                showTooltip: event.target.checked,
+                                                                            }))
+                                                                        }
+                                                                    />
+                                                                    <span className="perm-toggle__text">Tooltip on hover</span>
+                                                                </label>
+                                                            </div>
+                                                            <button type="submit" className="btn btn-small" disabled={!playerChoice}>
+                                                                Place player token
+                                                            </button>
+                                                        </>
+                                                    ) : (
+                                                        <p className="text-small text-muted">
+                                                            Every party member already has a token on the board.
+                                                        </p>
+                                                    )}
+                                                </form>
+                                            )}
+                                            {tokenCreationTab === 'demon' && (
+                                                <div className="map-token-workshop__panel">
+                                                    <div
+                                                        className="map-token-workshop__tabs map-token-workshop__tabs--nested"
+                                                        role="tablist"
+                                                        aria-label="Demon token modes"
+                                                    >
                                                         <button
                                                             type="button"
-                                                            className="btn btn-small"
-                                                            onClick={handleAddPlayerToken}
-                                                            disabled={!playerChoice}
+                                                            className={`map-token-workshop__tab${demonCreationMode === 'ally' ? ' is-active' : ''}`}
+                                                            onClick={() => setDemonCreationMode('ally')}
                                                         >
-                                                            Place token
+                                                            Ally demon
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            className={`map-token-workshop__tab${demonCreationMode === 'enemy' ? ' is-active' : ''}`}
+                                                            onClick={() => setDemonCreationMode('enemy')}
+                                                        >
+                                                            Enemy demon
                                                         </button>
                                                     </div>
-                                                    <p className="text-small text-muted">
-                                                        Tokens can be dragged when the Select tool is active.
-                                                    </p>
+                                                    {demonCreationMode === 'ally' ? (
+                                                        <form
+                                                            className="map-token-workshop__panel-inner"
+                                                            onSubmit={(event) => {
+                                                                event.preventDefault();
+                                                                handleAddDemonToken();
+                                                            }}
+                                                        >
+                                                            <label className="field">
+                                                                <span className="field__label">Search codex</span>
+                                                                <input
+                                                                    type="text"
+                                                                    value={demonQuery}
+                                                                    onChange={(event) => setDemonQuery(event.target.value)}
+                                                                    placeholder="Filter demons…"
+                                                                />
+                                                            </label>
+                                                            <label className="field">
+                                                                <span className="field__label">Demon</span>
+                                                                <select
+                                                                    value={demonChoice}
+                                                                    onChange={(event) => setDemonChoice(event.target.value)}
+                                                                >
+                                                                    <option value="">Select a demon…</option>
+                                                                    {demonOptions.map((option) => (
+                                                                        <option key={option.id} value={option.id}>
+                                                                            {option.label}
+                                                                        </option>
+                                                                    ))}
+                                                                </select>
+                                                            </label>
+                                                            <div className="map-token-workshop__options">
+                                                                <label className="perm-toggle">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={demonTokenConfig.showArcana}
+                                                                        onChange={(event) =>
+                                                                            setDemonTokenConfig((prev) => ({
+                                                                                ...prev,
+                                                                                showArcana: event.target.checked,
+                                                                            }))
+                                                                        }
+                                                                    />
+                                                                    <span className="perm-toggle__text">Show arcana</span>
+                                                                </label>
+                                                                <label className="perm-toggle">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={demonTokenConfig.showAlignment}
+                                                                        onChange={(event) =>
+                                                                            setDemonTokenConfig((prev) => ({
+                                                                                ...prev,
+                                                                                showAlignment: event.target.checked,
+                                                                            }))
+                                                                        }
+                                                                    />
+                                                                    <span className="perm-toggle__text">Show alignment</span>
+                                                                </label>
+                                                                <label className="perm-toggle">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={demonTokenConfig.showLevel}
+                                                                        onChange={(event) =>
+                                                                            setDemonTokenConfig((prev) => ({
+                                                                                ...prev,
+                                                                                showLevel: event.target.checked,
+                                                                            }))
+                                                                        }
+                                                                    />
+                                                                    <span className="perm-toggle__text">Show level</span>
+                                                                </label>
+                                                                <label className="perm-toggle">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={demonTokenConfig.showNotes}
+                                                                        onChange={(event) =>
+                                                                            setDemonTokenConfig((prev) => ({
+                                                                                ...prev,
+                                                                                showNotes: event.target.checked,
+                                                                            }))
+                                                                        }
+                                                                    />
+                                                                    <span className="perm-toggle__text">Extra notes</span>
+                                                                </label>
+                                                            </div>
+                                                            {demonTokenConfig.showNotes && (
+                                                                <label className="field">
+                                                                    <span className="field__label">Tooltip notes</span>
+                                                                    <textarea
+                                                                        rows={2}
+                                                                        value={demonTokenConfig.notes}
+                                                                        onChange={(event) =>
+                                                                            setDemonTokenConfig((prev) => ({
+                                                                                ...prev,
+                                                                                notes: event.target.value,
+                                                                            }))
+                                                                        }
+                                                                        placeholder="Summoning notes or tactics"
+                                                                    />
+                                                                </label>
+                                                            )}
+                                                            <label className="field">
+                                                                <span className="field__label">Token label</span>
+                                                                <input
+                                                                    type="text"
+                                                                    value={demonTokenConfig.label}
+                                                                    onChange={(event) =>
+                                                                        setDemonTokenConfig((prev) => ({
+                                                                            ...prev,
+                                                                            label: event.target.value,
+                                                                        }))
+                                                                    }
+                                                                    placeholder="Defaults to the demon name"
+                                                                />
+                                                            </label>
+                                                            <div className="map-token-workshop__options">
+                                                                <label className="perm-toggle">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={demonTokenConfig.includePortrait}
+                                                                        onChange={(event) =>
+                                                                            setDemonTokenConfig((prev) => ({
+                                                                                ...prev,
+                                                                                includePortrait: event.target.checked,
+                                                                            }))
+                                                                        }
+                                                                    />
+                                                                    <span className="perm-toggle__text">Use codex art</span>
+                                                                </label>
+                                                                <label className="perm-toggle">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={demonTokenConfig.showTooltip}
+                                                                        onChange={(event) =>
+                                                                            setDemonTokenConfig((prev) => ({
+                                                                                ...prev,
+                                                                                showTooltip: event.target.checked,
+                                                                            }))
+                                                                        }
+                                                                    />
+                                                                    <span className="perm-toggle__text">Tooltip on hover</span>
+                                                                </label>
+                                                            </div>
+                                                            <button type="submit" className="btn btn-small" disabled={!demonChoice}>
+                                                                Place ally demon
+                                                            </button>
+                                                        </form>
+                                                    ) : (
+                                                        <EnemyTokenWorkshop
+                                                            enemyForm={enemyForm}
+                                                            setEnemyForm={setEnemyForm}
+                                                            enemyFormValid={enemyFormValid}
+                                                            enemyFormHasVisibleTooltip={enemyFormHasVisibleTooltip}
+                                                            enemyDetailsInfo={enemyDetailsInfo}
+                                                            enemyDemonChoice={enemyDemonChoice}
+                                                            setEnemyDemonChoice={setEnemyDemonChoice}
+                                                            enemyDemonOptions={enemyDemonOptions}
+                                                            enemyQuery={enemyQuery}
+                                                            setEnemyQuery={setEnemyQuery}
+                                                            handleImportEnemyDemon={handleImportEnemyDemon}
+                                                            handleSubmitEnemyToken={handleSubmitEnemyToken}
+                                                            resetEnemyForm={resetEnemyForm}
+                                                        />
+                                                    )}
                                                 </div>
-                                            ) : (
-                                                <p className="text-small text-muted">
-                                                    Every party member already has a token on the board.
-                                                </p>
                                             )}
-                                        </>
+                                            {tokenCreationTab === 'npc' && (
+                                                <form
+                                                    className="map-token-workshop__panel"
+                                                    onSubmit={(event) => {
+                                                        event.preventDefault();
+                                                        handleSubmitNpcToken();
+                                                    }}
+                                                >
+                                                    <div className="map-token-workshop__options">
+                                                        <button
+                                                            type="button"
+                                                            className={`map-token-workshop__chip${npcForm.type === 'shop' ? ' is-active' : ''}`}
+                                                            onClick={() => setNpcForm((prev) => ({ ...prev, type: 'shop' }))}
+                                                        >
+                                                            Shop
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            className={`map-token-workshop__chip${npcForm.type === 'loot' ? ' is-active' : ''}`}
+                                                            onClick={() => setNpcForm((prev) => ({ ...prev, type: 'loot' }))}
+                                                        >
+                                                            Loot
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            className={`map-token-workshop__chip${npcForm.type === 'misc' ? ' is-active' : ''}`}
+                                                            onClick={() => setNpcForm((prev) => ({ ...prev, type: 'misc' }))}
+                                                        >
+                                                            Misc
+                                                        </button>
+                                                    </div>
+                                                    <label className="field">
+                                                        <span className="field__label">Token label</span>
+                                                        <input
+                                                            type="text"
+                                                            value={npcForm.label}
+                                                            onChange={(event) =>
+                                                                setNpcForm((prev) => ({
+                                                                    ...prev,
+                                                                    label: event.target.value,
+                                                                }))
+                                                            }
+                                                            placeholder={
+                                                                npcForm.type === 'shop'
+                                                                    ? 'e.g. Akihabara Vendor'
+                                                                    : npcForm.type === 'loot'
+                                                                        ? 'Treasure cache name'
+                                                                        : 'NPC display name'
+                                                            }
+                                                        />
+                                                    </label>
+                                                    <label className="field">
+                                                        <span className="field__label">Image URL</span>
+                                                        <input
+                                                            type="text"
+                                                            value={npcForm.image}
+                                                            onChange={(event) =>
+                                                                setNpcForm((prev) => ({
+                                                                    ...prev,
+                                                                    image: event.target.value,
+                                                                }))
+                                                            }
+                                                            placeholder="https://example.com/token.png"
+                                                        />
+                                                    </label>
+                                                    <label className="field">
+                                                        <span className="field__label">Notes</span>
+                                                        <textarea
+                                                            rows={npcForm.type === 'misc' ? 4 : 2}
+                                                            value={npcForm.notes}
+                                                            onChange={(event) =>
+                                                                setNpcForm((prev) => ({
+                                                                    ...prev,
+                                                                    notes: event.target.value,
+                                                                }))
+                                                            }
+                                                            placeholder={
+                                                                npcForm.type === 'misc'
+                                                                    ? 'Flavor text or instructions'
+                                                                    : 'Optional tooltip notes'
+                                                            }
+                                                        />
+                                                    </label>
+                                                    <label className="field map-token-workshop__color">
+                                                        <span className="field__label">Token color</span>
+                                                        <input
+                                                            type="color"
+                                                            value={npcForm.color || '#10b981'}
+                                                            onChange={(event) =>
+                                                                setNpcForm((prev) => ({
+                                                                    ...prev,
+                                                                    color: event.target.value || '#10b981',
+                                                                }))
+                                                            }
+                                                        />
+                                                        <span className="text-small text-muted">
+                                                            {(npcForm.color || '#10b981').toUpperCase()}
+                                                        </span>
+                                                    </label>
+                                                    <div className="map-token-workshop__items">
+                                                        <div className="map-token-workshop__items-header">
+                                                            <span className="text-small">
+                                                                {npcForm.type === 'shop'
+                                                                    ? 'Shop inventory'
+                                                                    : npcForm.type === 'loot'
+                                                                        ? 'Loot rewards'
+                                                                        : 'Additional details'}
+                                                            </span>
+                                                            <button
+                                                                type="button"
+                                                                className="btn ghost btn-small"
+                                                                onClick={() =>
+                                                                    setNpcForm((prev) => ({
+                                                                        ...prev,
+                                                                        items: prev.items.concat(createNpcItem()),
+                                                                    }))
+                                                                }
+                                                            >
+                                                                Add item
+                                                            </button>
+                                                        </div>
+                                                        {npcForm.items.length === 0 ? (
+                                                            <p className="text-small text-muted">
+                                                                {npcForm.type === 'misc'
+                                                                    ? 'Add notes or information about this NPC.'
+                                                                    : 'Add entries so players can see what is available.'}
+                                                            </p>
+                                                        ) : (
+                                                            <div className="map-token-workshop__item-list">
+                                                                {npcForm.items.map((item, index) => (
+                                                                    <div key={item.id || index} className="map-token-workshop__item">
+                                                                        <input
+                                                                            type="text"
+                                                                            value={item.name}
+                                                                            onChange={(event) =>
+                                                                                setNpcForm((prev) => ({
+                                                                                    ...prev,
+                                                                                    items: prev.items.map((entry, idx) =>
+                                                                                        idx === index
+                                                                                            ? { ...entry, name: event.target.value }
+                                                                                            : entry
+                                                                                    ),
+                                                                                }))
+                                                                            }
+                                                                            placeholder="Name"
+                                                                        />
+                                                                        {npcForm.type === 'shop' && (
+                                                                            <div className="map-token-workshop__item-costs">
+                                                                                <input
+                                                                                    type="text"
+                                                                                    value={item.cost || ''}
+                                                                                    onChange={(event) =>
+                                                                                        setNpcForm((prev) => ({
+                                                                                            ...prev,
+                                                                                            items: prev.items.map((entry, idx) =>
+                                                                                                idx === index
+                                                                                                    ? { ...entry, cost: event.target.value }
+                                                                                                    : entry
+                                                                                            ),
+                                                                                        }))
+                                                                                    }
+                                                                                    placeholder="Cost"
+                                                                                />
+                                                                                <input
+                                                                                    type="text"
+                                                                                    value={item.trade || ''}
+                                                                                    onChange={(event) =>
+                                                                                        setNpcForm((prev) => ({
+                                                                                            ...prev,
+                                                                                            items: prev.items.map((entry, idx) =>
+                                                                                                idx === index
+                                                                                                    ? { ...entry, trade: event.target.value }
+                                                                                                    : entry
+                                                                                            ),
+                                                                                        }))
+                                                                                    }
+                                                                                    placeholder="Trade req."
+                                                                                />
+                                                                            </div>
+                                                                        )}
+                                                                        <textarea
+                                                                            rows={2}
+                                                                            value={item.description || ''}
+                                                                            onChange={(event) =>
+                                                                                setNpcForm((prev) => ({
+                                                                                    ...prev,
+                                                                                    items: prev.items.map((entry, idx) =>
+                                                                                        idx === index
+                                                                                            ? { ...entry, description: event.target.value }
+                                                                                            : entry
+                                                                                    ),
+                                                                                }))
+                                                                            }
+                                                                            placeholder="Notes or effects"
+                                                                        />
+                                                                        <button
+                                                                            type="button"
+                                                                            className="btn ghost btn-small"
+                                                                            onClick={() =>
+                                                                                setNpcForm((prev) => ({
+                                                                                    ...prev,
+                                                                                    items: prev.items.filter((_, idx) => idx !== index),
+                                                                                }))
+                                                                            }
+                                                                        >
+                                                                            Remove
+                                                                        </button>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    <div className="map-token-workshop__options">
+                                                        {npcForm.type === 'shop' && (
+                                                            <label className="perm-toggle">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={npcForm.requireApproval}
+                                                                    onChange={(event) =>
+                                                                        setNpcForm((prev) => ({
+                                                                            ...prev,
+                                                                            requireApproval: event.target.checked,
+                                                                        }))
+                                                                    }
+                                                                />
+                                                                <span className="perm-toggle__text">DM approves purchases</span>
+                                                            </label>
+                                                        )}
+                                                        {npcForm.type === 'loot' && (
+                                                            <label className="perm-toggle">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={npcForm.allowAutoClaim}
+                                                                    onChange={(event) =>
+                                                                        setNpcForm((prev) => ({
+                                                                            ...prev,
+                                                                            allowAutoClaim: event.target.checked,
+                                                                        }))
+                                                                    }
+                                                                />
+                                                                <span className="perm-toggle__text">Allow instant claims</span>
+                                                            </label>
+                                                        )}
+                                                        <label className="perm-toggle">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={npcForm.openButton}
+                                                                onChange={(event) =>
+                                                                    setNpcForm((prev) => ({
+                                                                        ...prev,
+                                                                        openButton: event.target.checked,
+                                                                    }))
+                                                                }
+                                                            />
+                                                            <span className="perm-toggle__text">Show open button</span>
+                                                        </label>
+                                                        <label className="perm-toggle">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={npcForm.showTooltip}
+                                                                onChange={(event) =>
+                                                                    setNpcForm((prev) => ({
+                                                                        ...prev,
+                                                                        showTooltip: event.target.checked,
+                                                                    }))
+                                                                }
+                                                            />
+                                                            <span className="perm-toggle__text">Tooltip on hover</span>
+                                                        </label>
+                                                    </div>
+                                                    <button type="submit" className="btn btn-small">
+                                                        Place NPC token
+                                                    </button>
+                                                </form>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <p className="text-small text-muted">Only the DM can place new tokens.</p>
                                     )}
+                                </MapAccordionSection>
+                                <MapAccordionSection
+                                    title="Player tokens"
+                                    description="Manage party members on the encounter map."
+                                >
                                     {playerTokens.length === 0 ? (
                                         <p className="map-empty text-muted">No party members on the board yet.</p>
                                     ) : (
@@ -5100,41 +6695,6 @@ function MapTab({ game, me }) {
                                     title="Companion tokens"
                                     description="Summon demons or allies from your codex."
                                 >
-                                    {isDM && (
-                                        <div className="map-token-form">
-                                            <label className="text-small" htmlFor="map-demon-search">
-                                                Search codex
-                                            </label>
-                                            <input
-                                                id="map-demon-search"
-                                                type="text"
-                                                value={demonQuery}
-                                                onChange={(event) => setDemonQuery(event.target.value)}
-                                                placeholder="Filter demons…"
-                                            />
-                                            <div className="map-token-form__controls">
-                                                <select
-                                                    value={demonChoice}
-                                                    onChange={(event) => setDemonChoice(event.target.value)}
-                                                >
-                                                    <option value="">Select a demon…</option>
-                                                    {demonOptions.map((option) => (
-                                                        <option key={option.id} value={option.id}>
-                                                            {option.label}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                                <button
-                                                    type="button"
-                                                    className="btn btn-small"
-                                                    onClick={handleAddDemonToken}
-                                                    disabled={!demonChoice}
-                                                >
-                                                    Summon
-                                                </button>
-                                            </div>
-                                        </div>
-                                    )}
                                     {demonTokens.length === 0 ? (
                                         <p className="map-empty text-muted">No companions placed.</p>
                                     ) : (
@@ -5182,273 +6742,6 @@ function MapTab({ game, me }) {
                                     title="Enemy tokens"
                                     description="Create foes with detailed tooltips, including art and stats."
                                 >
-                                    {isDM && (
-                                        <form
-                                            className="map-enemy-form"
-                                            onSubmit={(event) => {
-                                                event.preventDefault();
-                                                handleSubmitEnemyToken();
-                                            }}
-                                        >
-                                            <fieldset className="map-enemy-form__section">
-                                                <legend>Token</legend>
-                                                <label className="text-small" htmlFor="map-enemy-label">
-                                                    Enemy label
-                                                </label>
-                                                <input
-                                                    id="map-enemy-label"
-                                                    type="text"
-                                                    value={enemyForm.label}
-                                                    onChange={(event) =>
-                                                        setEnemyForm((prev) => ({
-                                                            ...prev,
-                                                            label: event.target.value,
-                                                        }))
-                                                    }
-                                                    placeholder="e.g. Shadow Trooper"
-                                                />
-                                                <div className="map-enemy-form__controls">
-                                                    <label className="color-input" htmlFor="map-enemy-color">
-                                                        <span className="text-small">Token color</span>
-                                                        <input
-                                                            id="map-enemy-color"
-                                                            type="color"
-                                                            value={enemyForm.color}
-                                                            style={{ backgroundColor: enemyForm.color }}
-                                                            onChange={(event) =>
-                                                                setEnemyForm((prev) => ({
-                                                                    ...prev,
-                                                                    color: event.target.value || MAP_ENEMY_DEFAULT_COLOR,
-                                                                }))
-                                                            }
-                                                        />
-                                                        <span className="text-muted text-small">
-                                                            {(enemyForm.color || MAP_ENEMY_DEFAULT_COLOR).toUpperCase()}
-                                                        </span>
-                                                    </label>
-                                                    <label className="perm-toggle">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={enemyForm.showTooltip}
-                                                            onChange={(event) =>
-                                                                setEnemyForm((prev) => ({
-                                                                    ...prev,
-                                                                    showTooltip: event.target.checked,
-                                                                }))
-                                                            }
-                                                        />
-                                                        <span className="perm-toggle__text">Tooltip on hover</span>
-                                                    </label>
-                                                </div>
-                                            </fieldset>
-                                            <fieldset className="map-enemy-form__section">
-                                                <legend>Import from codex</legend>
-                                                <p className="text-small text-muted">
-                                                    Prefill details from demons saved in this campaign.
-                                                </p>
-                                                <div className="map-enemy-form__controls map-enemy-form__controls--wrap">
-                                                    <input
-                                                        type="text"
-                                                        value={enemyQuery}
-                                                        onChange={(event) => setEnemyQuery(event.target.value)}
-                                                        placeholder="Search demon name…"
-                                                    />
-                                                    <select
-                                                        value={enemyDemonChoice}
-                                                        onChange={(event) => setEnemyDemonChoice(event.target.value)}
-                                                    >
-                                                        <option value="">Select a demon…</option>
-                                                        {enemyDemonOptions.map((option) => (
-                                                            <option key={option.id} value={option.id}>
-                                                                {option.label}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                    <button
-                                                        type="button"
-                                                        className="btn btn-small"
-                                                        onClick={handleImportEnemyDemon}
-                                                        disabled={!enemyDemonChoice}
-                                                    >
-                                                        Import
-                                                    </button>
-                                                </div>
-                                            </fieldset>
-                                            <fieldset className="map-enemy-form__section">
-                                                <legend>Tooltip details</legend>
-                                                <div className="map-enemy-form__detail">
-                                                    <div className="map-enemy-form__detail-header">
-                                                        <label htmlFor="map-enemy-name">Display name</label>
-                                                        <label className="perm-toggle">
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={enemyForm.details.showName}
-                                                                onChange={(event) =>
-                                                                    setEnemyForm((prev) => ({
-                                                                        ...prev,
-                                                                        details: {
-                                                                            ...prev.details,
-                                                                            showName: event.target.checked,
-                                                                        },
-                                                                    }))
-                                                                }
-                                                            />
-                                                            <span className="perm-toggle__text">Visible</span>
-                                                        </label>
-                                                    </div>
-                                                    <input
-                                                        id="map-enemy-name"
-                                                        type="text"
-                                                        value={enemyForm.details.name}
-                                                        onChange={(event) =>
-                                                            setEnemyForm((prev) => ({
-                                                                ...prev,
-                                                                details: {
-                                                                    ...prev.details,
-                                                                    name: event.target.value,
-                                                                },
-                                                            }))
-                                                        }
-                                                        placeholder="Optional override name"
-                                                    />
-                                                </div>
-                                                <div className="map-enemy-form__detail">
-                                                    <div className="map-enemy-form__detail-header">
-                                                        <label htmlFor="map-enemy-image">Image URL</label>
-                                                        <label className="perm-toggle">
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={enemyForm.details.showImage}
-                                                                onChange={(event) =>
-                                                                    setEnemyForm((prev) => ({
-                                                                        ...prev,
-                                                                        details: {
-                                                                            ...prev.details,
-                                                                            showImage: event.target.checked,
-                                                                        },
-                                                                    }))
-                                                                }
-                                                            />
-                                                            <span className="perm-toggle__text">Visible</span>
-                                                        </label>
-                                                    </div>
-                                                    <input
-                                                        id="map-enemy-image"
-                                                        type="text"
-                                                        value={enemyForm.details.image}
-                                                        onChange={(event) =>
-                                                            setEnemyForm((prev) => ({
-                                                                ...prev,
-                                                                details: {
-                                                                    ...prev.details,
-                                                                    image: event.target.value,
-                                                                },
-                                                            }))
-                                                        }
-                                                        placeholder="https://example.com/enemy.png"
-                                                    />
-                                                    <p className="text-small text-muted">
-                                                        Hotlinks are proxied automatically for supported demon wikis.
-                                                    </p>
-                                                </div>
-                                                <div className="map-enemy-form__detail">
-                                                    <div className="map-enemy-form__detail-header">
-                                                        <label htmlFor="map-enemy-stats">Stats</label>
-                                                        <label className="perm-toggle">
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={enemyForm.details.showStats}
-                                                                onChange={(event) =>
-                                                                    setEnemyForm((prev) => ({
-                                                                        ...prev,
-                                                                        details: {
-                                                                            ...prev.details,
-                                                                            showStats: event.target.checked,
-                                                                        },
-                                                                    }))
-                                                                }
-                                                            />
-                                                            <span className="perm-toggle__text">Visible</span>
-                                                        </label>
-                                                    </div>
-                                                    <textarea
-                                                        id="map-enemy-stats"
-                                                        rows={3}
-                                                        value={enemyForm.details.stats}
-                                                        onChange={(event) =>
-                                                            setEnemyForm((prev) => ({
-                                                                ...prev,
-                                                                details: {
-                                                                    ...prev.details,
-                                                                    stats: event.target.value,
-                                                                },
-                                                            }))
-                                                        }
-                                                        placeholder={'HP 45 / 45\nWeak: Bless · Resists: Gun'}
-                                                    />
-                                                </div>
-                                                <div className="map-enemy-form__detail">
-                                                    <div className="map-enemy-form__detail-header">
-                                                        <label htmlFor="map-enemy-notes">Notes</label>
-                                                        <label className="perm-toggle">
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={enemyForm.details.showNotes}
-                                                                onChange={(event) =>
-                                                                    setEnemyForm((prev) => ({
-                                                                        ...prev,
-                                                                        details: {
-                                                                            ...prev.details,
-                                                                            showNotes: event.target.checked,
-                                                                        },
-                                                                    }))
-                                                                }
-                                                            />
-                                                            <span className="perm-toggle__text">Visible</span>
-                                                        </label>
-                                                    </div>
-                                                    <textarea
-                                                        id="map-enemy-notes"
-                                                        rows={3}
-                                                        value={enemyForm.details.notes}
-                                                        onChange={(event) =>
-                                                            setEnemyForm((prev) => ({
-                                                                ...prev,
-                                                                details: {
-                                                                    ...prev.details,
-                                                                    notes: event.target.value,
-                                                                },
-                                                            }))
-                                                        }
-                                                        placeholder="Tactical reminders, conditions, or lore."
-                                                    />
-                                                </div>
-                                                <EnemyTooltipCard
-                                                    info={enemyDetailsInfo}
-                                                    label={enemyForm.label || 'Enemy'}
-                                                />
-                                                <p className="text-small text-muted">
-                                                    {enemyForm.showTooltip && enemyFormHasVisibleTooltip
-                                                        ? 'Players will see the selected fields on hover.'
-                                                        : 'Tooltip hidden from players.'}
-                                                </p>
-                                            </fieldset>
-                                            <div className="map-enemy-form__actions">
-                                                {enemyForm.id && (
-                                                    <button
-                                                        type="button"
-                                                        className="btn ghost btn-small"
-                                                        onClick={resetEnemyForm}
-                                                    >
-                                                        Cancel edit
-                                                    </button>
-                                                )}
-                                                <button type="submit" className="btn btn-small" disabled={!enemyFormValid}>
-                                                    {enemyForm.id ? 'Save enemy' : 'Place enemy'}
-                                                </button>
-                                            </div>
-                                        </form>
-                                    )}
                                     {enemyTokens.length === 0 ? (
                                         <p className="map-empty text-muted">No enemies placed.</p>
                                     ) : (
