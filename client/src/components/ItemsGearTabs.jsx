@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState, useId, useRef } from "react";
 
 import { Games, Items } from "../api";
 import MathField from "./MathField";
@@ -118,6 +118,20 @@ function parseTagInput(value) {
         .map((tag) => tag.trim())
         .filter(Boolean)
         .slice(0, 12);
+}
+
+function mapEffectDetails(effects, prefix) {
+    if (!Array.isArray(effects)) return [];
+    return effects
+        .map((effect, index) => {
+            const label = formatTriggerEffect(effect);
+            if (!label) return null;
+            const key =
+                effect.id ||
+                `${prefix}-${effect.kind || "effect"}-${effect.trigger || index}-${effect.value || index}-${index}`;
+            return { key, label };
+        })
+        .filter(Boolean);
 }
 
 function useItemFavorites(gameId, userId) {
@@ -1341,16 +1355,9 @@ function PlayerInventoryCard({
                 const libraryTags = parseTagInput(linked?.tags);
                 const tagSet = new Set([...(ownTags || []), ...(libraryTags || [])]);
                 const tags = Array.from(tagSet);
-                const effectDetails = combinedEffects
-                    .map((effect, index) => {
-                        const label = formatTriggerEffect(effect);
-                        if (!label) return null;
-                        const key =
-                            effect.id ||
-                            `${effect.kind || "effect"}-${effect.trigger || index}-${effect.value || index}-${index}`;
-                        return { key, label };
-                    })
-                    .filter(Boolean);
+                const libraryEffectDetails = mapEffectDetails(linkedEffects, "library");
+                const ownEffectDetails = mapEffectDetails(entryEffects, "item");
+                const effectDetails = [...libraryEffectDetails, ...ownEffectDetails];
                 const effectSummaries = effectDetails.map((detail) => detail.label);
                 const searchBlob = [
                     item.name,
@@ -1373,8 +1380,12 @@ function PlayerInventoryCard({
                     combinedEffects,
                     effectSummaries,
                     effectDetails,
+                    ownEffectDetails,
+                    libraryEffectDetails,
                     healingLabel,
                     tags,
+                    ownTags,
+                    libraryTags,
                     searchBlob,
                     isFavorite: checkFavorite(item.id),
                     isConsumable: isConsumableType(item.type),
@@ -1421,6 +1432,18 @@ function PlayerInventoryCard({
     const tradeSelectId = `trade-target-${playerId || "player"}`;
     const totalItems = inventory.length;
     const hasFilteredItems = processedItems.length > 0;
+    const [detailEntry, setDetailEntry] = useState(null);
+
+    useEffect(() => {
+        if (!detailEntry || typeof window === "undefined") return undefined;
+        const handleKeyDown = (event) => {
+            if (event.key === "Escape") {
+                setDetailEntry(null);
+            }
+        };
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [detailEntry]);
 
     const handleToggleFavorite = useCallback(
         (itemId) => {
@@ -1697,7 +1720,21 @@ function PlayerInventoryCard({
                     const amountLabel = amount > 1 ? `x${amount}` : "x1";
 
                     return (
-                        <div key={itemId || item.name} className={cardClassName} title={tooltip || undefined}>
+                        <div
+                            key={itemId || item.name}
+                            className={cardClassName}
+                            title={tooltip || undefined}
+                            role="button"
+                            tabIndex={0}
+                            aria-haspopup="dialog"
+                            onClick={() => setDetailEntry(entry)}
+                            onKeyDown={(event) => {
+                                if (event.key === "Enter" || event.key === " ") {
+                                    event.preventDefault();
+                                    setDetailEntry(entry);
+                                }
+                            }}
+                        >
                             <div className="item-card__header">
                                 <div className="item-card__title-group">
                                     <div className="item-card__title">{item.name || "Unnamed item"}</div>
@@ -1709,7 +1746,10 @@ function PlayerInventoryCard({
                                 <button
                                     type="button"
                                     className={`favorite-toggle${isFavorited ? " is-active" : ""}`}
-                                    onClick={() => handleToggleFavorite(itemId)}
+                                    onClick={(event) => {
+                                        event.stopPropagation();
+                                        handleToggleFavorite(itemId);
+                                    }}
                                     aria-pressed={isFavorited}
                                     title={isFavorited ? "Remove from favorites" : "Add to favorites"}
                                 >
@@ -1754,7 +1794,10 @@ function PlayerInventoryCard({
                                     <button
                                         type="button"
                                         className="btn secondary btn-small"
-                                        onClick={() => handleUse(item)}
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            handleUse(item);
+                                        }}
                                         disabled={busyUse === itemId}
                                     >
                                         {busyUse === itemId ? "Using…" : "Use"}
@@ -1764,7 +1807,10 @@ function PlayerInventoryCard({
                                     <button
                                         type="button"
                                         className="btn secondary btn-small"
-                                        onClick={() => handleStartTrade(item)}
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            handleStartTrade(item);
+                                        }}
                                         disabled={!tradeTargetId}
                                     >
                                         Trade
@@ -1774,7 +1820,10 @@ function PlayerInventoryCard({
                                     <button
                                         type="button"
                                         className="btn ghost btn-small"
-                                        onClick={() => unlink(itemId)}
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            unlink(itemId);
+                                        }}
                                         disabled={unlinking}
                                     >
                                         {unlinking ? "…" : "Unlink"}
@@ -1785,7 +1834,10 @@ function PlayerInventoryCard({
                                         <button
                                             type="button"
                                             className="btn btn-small"
-                                            onClick={() => startEdit(item)}
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                startEdit(item);
+                                            }}
                                             disabled={busySave}
                                         >
                                             Edit
@@ -1793,7 +1845,10 @@ function PlayerInventoryCard({
                                         <button
                                             type="button"
                                             className="btn btn-small"
-                                            onClick={() => remove(itemId)}
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                remove(itemId);
+                                            }}
                                             disabled={removing}
                                         >
                                             {removing ? "…" : "Remove"}
@@ -1806,6 +1861,10 @@ function PlayerInventoryCard({
                 })}
             </div>
 
+            {detailEntry && (
+                <ItemDetailDialog entry={detailEntry} onClose={() => setDetailEntry(null)} />
+            )}
+
             {totalItems === 0 && (
                 <div className="text-muted" style={{ marginTop: 8 }}>
                     No items in inventory.
@@ -1816,6 +1875,142 @@ function PlayerInventoryCard({
                     No items match your filters.
                 </div>
             )}
+        </div>
+    );
+}
+
+function ItemDetailDialog({ entry, onClose }) {
+    const titleId = useId();
+    const closeButtonRef = useRef(null);
+
+    useEffect(() => {
+        closeButtonRef.current?.focus();
+    }, []);
+
+    if (!entry) return null;
+
+    const { item, linked, amount, healingLabel, tags, ownEffectDetails, libraryEffectDetails, libraryTags } = entry;
+    const itemName = item?.name || linked?.name || "Unnamed item";
+    const quantityLabel = amount > 1 ? `×${amount}` : "×1";
+    const imageSrc = [item?.image, linked?.image]
+        .map((src) => (typeof src === "string" ? src.trim() : ""))
+        .find(Boolean);
+    const imageAlt = `${itemName} illustration`;
+    const showLibraryTags = Array.isArray(libraryTags) && libraryTags.length > 0;
+    const showLibraryEffects = Array.isArray(libraryEffectDetails) && libraryEffectDetails.length > 0;
+    const showOwnEffects = Array.isArray(ownEffectDetails) && ownEffectDetails.length > 0;
+    const hasLibraryDescription = typeof linked?.desc === "string" && linked.desc;
+    const hasLibraryHeader = linked?.name || linked?.type;
+    const hasLibraryDetails = hasLibraryDescription || showLibraryTags || showLibraryEffects || item.libraryItemId;
+
+    const handleClose = () => {
+        onClose?.();
+    };
+
+    return (
+        <div className="item-detail-overlay" role="presentation" onClick={handleClose}>
+            <div
+                className="item-detail-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby={titleId}
+                onClick={(event) => event.stopPropagation()}
+            >
+                <header className="item-detail-modal__header">
+                    <div className="item-detail-modal__title-group">
+                        <h3 id={titleId}>{itemName}</h3>
+                        <div className="item-detail-modal__meta">
+                            {item?.type && <span className="pill">{item.type}</span>}
+                            <span className="pill light">{quantityLabel}</span>
+                            {linked?.name && (
+                                <span className="pill ghost">Linked to {linked.name}</span>
+                            )}
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        className="btn ghost btn-small"
+                        onClick={handleClose}
+                        ref={closeButtonRef}
+                    >
+                        Close
+                    </button>
+                </header>
+                <div className="item-detail-modal__body">
+                    {imageSrc && (
+                        <div className="item-detail-modal__image">
+                            <img src={imageSrc} alt={imageAlt} />
+                        </div>
+                    )}
+                    <div className="item-detail-modal__section">
+                        {item?.desc && <p className="item-detail-modal__description">{item.desc}</p>}
+                        {healingLabel && <p className="item-detail-modal__healing text-small">{healingLabel}</p>}
+                        {tags.length > 0 && (
+                            <div className="item-detail-modal__tags">
+                                <span className="item-detail-modal__section-title text-small">Tags</span>
+                                <div className="item-detail-modal__tag-list">
+                                    {tags.map((tag) => (
+                                        <span key={`detail-tag-${tag}`} className="item-tag">
+                                            #{tag}
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        {showOwnEffects && (
+                            <div className="item-detail-modal__effects">
+                                <span className="item-detail-modal__section-title text-small">Item trigger effects</span>
+                                <ul>
+                                    {ownEffectDetails.map((effect) => (
+                                        <li key={`own-${effect.key}`}>{effect.label}</li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+                    </div>
+                    {hasLibraryDetails && (
+                        <div className="item-detail-modal__section item-detail-modal__section--library">
+                            <h4 className="item-detail-modal__section-heading">Linked library item</h4>
+                            {hasLibraryHeader && (
+                                <p className="item-detail-modal__library-title text-small">
+                                    <strong>{linked?.name || "Unnamed entry"}</strong>
+                                    {linked?.type ? ` · ${linked.type}` : ""}
+                                </p>
+                            )}
+                            {item.libraryItemId && (
+                                <p className="item-detail-modal__library-id text-small text-muted">
+                                    ID: {item.libraryItemId}
+                                </p>
+                            )}
+                            {hasLibraryDescription && (
+                                <p className="item-detail-modal__library-desc text-small">{linked.desc}</p>
+                            )}
+                            {showLibraryTags && (
+                                <div className="item-detail-modal__tags">
+                                    <span className="item-detail-modal__section-title text-small">Library tags</span>
+                                    <div className="item-detail-modal__tag-list">
+                                        {libraryTags.map((tag) => (
+                                            <span key={`library-tag-${tag}`} className="item-tag">
+                                                #{tag}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {showLibraryEffects && (
+                                <div className="item-detail-modal__effects">
+                                    <span className="item-detail-modal__section-title text-small">Library trigger effects</span>
+                                    <ul>
+                                        {libraryEffectDetails.map((effect) => (
+                                            <li key={`library-${effect.key}`}>{effect.label}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            </div>
         </div>
     );
 }
