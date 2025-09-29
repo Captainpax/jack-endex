@@ -185,6 +185,7 @@ function normalizeItemRecord(source, { category, subcategory, order }) {
     const normalizedCategory = cleanLabel(category || source.category || '');
     const normalizedSubcategory = cleanLabel(subcategory || source.subcategory || '');
     const slug = buildItemSlug(normalizedCategory || type || 'item', normalizedSubcategory, name);
+    const image = typeof source.image === 'string' ? source.image.trim() : '';
     const healing = parseHealingEffect(desc || source.effect || '');
     return {
         slug,
@@ -196,6 +197,7 @@ function normalizeItemRecord(source, { category, subcategory, order }) {
         slot,
         tags,
         order,
+        image,
         ...(healing ? { healing } : {}),
     };
 }
@@ -305,6 +307,15 @@ export function updateItemEntry(entry, updates = {}) {
         next.effects = normalizeEffectsInput(next.effects);
     }
 
+    if (Object.prototype.hasOwnProperty.call(updates, 'image')) {
+        const value = updates.image;
+        next.image = typeof value === 'string' ? value.trim() : '';
+    } else if (typeof next.image === 'string') {
+        next.image = next.image.trim();
+    } else {
+        next.image = '';
+    }
+
     const categoryLabel = cleanLabel(next.category || entry.category || '');
     const subcategoryLabel = cleanLabel(next.subcategory || entry.subcategory || '');
     next.category = categoryLabel;
@@ -351,6 +362,9 @@ export async function writeItemEntries(items, { file = DEFAULT_ITEMS_PATH } = {}
             throw new Error('Invalid item entry in list');
         }
         const copy = updateItemEntry(item, {});
+        if (!copy.image) {
+            delete copy.image;
+        }
         copy.order = normalizeOrderValue(item.order, index);
         if (!copy.slug) {
             copy.slug = buildItemSlug(copy.category || copy.type || 'item', copy.subcategory, copy.name);

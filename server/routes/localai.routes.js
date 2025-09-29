@@ -1,9 +1,14 @@
 import { Router } from 'express';
-import { generateCharacterImage, enhanceBackgroundAndNotes } from '../services/localAi.js';
+import { generateCharacterImage, enhanceBackgroundAndNotes, generateConceptImage } from '../services/localAi.js';
 
 const router = Router();
 
 function normalizeCharacterPayload(value) {
+    if (!value || typeof value !== 'object') return {};
+    return value;
+}
+
+function normalizeConceptPayload(value) {
     if (!value || typeof value !== 'object') return {};
     return value;
 }
@@ -16,6 +21,19 @@ router.post('/portrait', async (req, res) => {
         res.json(result);
     } catch (err) {
         console.error('Failed to generate portrait', err);
+        const status = err?.status || 502;
+        res.status(status).json({ error: err?.message || 'Image generation failed' });
+    }
+});
+
+router.post('/concept', async (req, res) => {
+    try {
+        const concept = normalizeConceptPayload(req.body?.concept || req.body);
+        const overrides = req.body?.overrides && typeof req.body.overrides === 'object' ? req.body.overrides : {};
+        const result = await generateConceptImage(concept, overrides);
+        res.json(result);
+    } catch (err) {
+        console.error('Failed to generate concept image', err);
         const status = err?.status || 502;
         res.status(status).json({ error: err?.message || 'Image generation failed' });
     }

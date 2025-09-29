@@ -852,6 +852,13 @@ export const LocalAI = {
             timeoutMs: 120_000,
             noRetry: true,
         }),
+    generateConcept: (payload) =>
+        api('/api/ai/concept', {
+            method: 'POST',
+            body: payload,
+            timeoutMs: 120_000,
+            noRetry: true,
+        }),
     enhanceBackground: (payload) =>
         api('/api/ai/background', {
             method: 'POST',

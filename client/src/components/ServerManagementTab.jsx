@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ServerAdmin } from "../api";
+import { LocalAI, ServerAdmin } from "../api";
 import { ABILITY_DEFS } from "../constants/gameData";
 import DemonImage from "./DemonImage";
 
 const ABILITY_KEYS = ABILITY_DEFS.map((ability) => ability.key);
-const MAX_DEMON_IMAGE_BYTES = 2 * 1024 * 1024;
+const MAX_ADMIN_IMAGE_BYTES = 2 * 1024 * 1024;
 
 const SUBTABS = [
     { key: "users", label: "Users" },
@@ -42,6 +42,7 @@ function createItemDraft(item) {
             tags: "",
             desc: "",
             order: "",
+            image: "",
         };
     }
     return {
@@ -54,6 +55,7 @@ function createItemDraft(item) {
         tags: Array.isArray(item.tags) ? item.tags.join(", ") : "",
         desc: item.desc || "",
         order: item.order ?? "",
+        image: item.image || "",
     };
 }
 
@@ -477,6 +479,11 @@ function ItemsAdminPanel() {
     const [saving, setSaving] = useState(false);
     const [saveNotice, setSaveNotice] = useState("");
     const [syncState, setSyncState] = useState({ status: "idle", message: "" });
+    const imageInputRef = useRef(null);
+    const [imageError, setImageError] = useState("");
+    const [generatedImages, setGeneratedImages] = useState([]);
+    const [generatedPrompt, setGeneratedPrompt] = useState("");
+    const [generating, setGenerating] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -509,6 +516,12 @@ function ItemsAdminPanel() {
         const selected = items.find((item) => item.slug === selectedSlug) || null;
         setDraft(createItemDraft(selected));
         setSaveNotice("");
+        setImageError("");
+        setGeneratedImages([]);
+        setGeneratedPrompt("");
+        if (imageInputRef.current) {
+            imageInputRef.current.value = "";
+        }
     }, [items, selectedSlug]);
 
     const filteredItems = useMemo(() => {
@@ -540,6 +553,7 @@ function ItemsAdminPanel() {
         if (!compare(draft.subcategory, selectedItem.subcategory)) return true;
         if (!compare(draft.slot, selectedItem.slot)) return true;
         if (!compare(draft.desc, selectedItem.desc)) return true;
+        if (!compare(draft.image, selectedItem.image)) return true;
         if (formatTagsForCompare(draft.tags) !== formatTagsForCompare(selectedItem.tags)) return true;
         if (parseOrderValue(draft.order) !== parseOrderValue(selectedItem.order)) return true;
         return false;
@@ -550,6 +564,104 @@ function ItemsAdminPanel() {
             ...prev,
             [field]: value,
         }));
+    };
+
+    const handleImageUploadClick = () => {
+        imageInputRef.current?.click();
+    };
+
+    const handleImageUpload = (event) => {
+        const input = event.target;
+        const file = input?.files?.[0];
+
+        const reset = () => {
+            if (input) input.value = "";
+        };
+
+        if (!file) {
+            reset();
+            return;
+        }
+
+        if (typeof file.type === "string" && file.type && !file.type.startsWith("image/")) {
+            setImageError("Please choose an image file.");
+            reset();
+            return;
+        }
+
+        if (file.size > MAX_ADMIN_IMAGE_BYTES) {
+            setImageError("Images must be 2 MB or smaller.");
+            reset();
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = () => {
+            const result = typeof reader.result === "string" ? reader.result : "";
+            handleDraftChange("image", result);
+            setImageError("");
+            reset();
+        };
+        reader.onerror = () => {
+            setImageError("Failed to load image. Try a different file.");
+            reset();
+        };
+        reader.readAsDataURL(file);
+    };
+
+    const handleImageRemove = () => {
+        handleDraftChange("image", "");
+        setImageError("");
+        if (imageInputRef.current) {
+            imageInputRef.current.value = "";
+        }
+    };
+
+    const handleSelectGeneratedImage = (image) => {
+        if (!image) return;
+        handleDraftChange("image", image);
+        setImageError("");
+    };
+
+    const handleGenerateImage = async () => {
+        if (!draft.name || !draft.name.trim()) {
+            setImageError("Enter a name before generating an image.");
+            return;
+        }
+
+        setGenerating(true);
+        setImageError("");
+        setGeneratedImages([]);
+        setGeneratedPrompt("");
+
+        try {
+            const result = await LocalAI.generateConcept({
+                concept: {
+                    kind: "item",
+                    name: draft.name,
+                    type: draft.type,
+                    category: draft.category,
+                    subcategory: draft.subcategory,
+                    slot: draft.slot,
+                    tags: parseTagsInput(draft.tags || ""),
+                    description: draft.desc,
+                },
+                overrides: { count: 4 },
+            });
+
+            const options = Array.isArray(result?.images)
+                ? result.images.filter((img) => typeof img === "string" && img)
+                : [];
+            setGeneratedImages(options);
+            setGeneratedPrompt(result?.prompt || "");
+            if (options.length === 0) {
+                setImageError("Image generation did not return any images.");
+            }
+        } catch (err) {
+            setImageError(formatError(err));
+        } finally {
+            setGenerating(false);
+        }
     };
 
     const handleSave = async () => {
@@ -565,6 +677,7 @@ function ItemsAdminPanel() {
                 slot: (draft.slot || "").trim(),
                 desc: draft.desc || "",
                 tags: parseTagsInput(draft.tags || ""),
+                image: typeof draft.image === "string" ? draft.image.trim() : "",
             };
             const orderValue = parseOrderValue(draft.order);
             if (orderValue !== null) {
@@ -587,6 +700,12 @@ function ItemsAdminPanel() {
     const handleReset = () => {
         setDraft(createItemDraft(selectedItem));
         setSaveNotice("");
+        setImageError("");
+        setGeneratedImages([]);
+        setGeneratedPrompt("");
+        if (imageInputRef.current) {
+            imageInputRef.current.value = "";
+        }
     };
 
     const syncPending = syncState.status === "pending";
@@ -719,6 +838,120 @@ function ItemsAdminPanel() {
                                     />
                                 </label>
                             </div>
+                            <div
+                                className="row"
+                                style={{ gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}
+                            >
+                                <div
+                                    style={{
+                                        width: 180,
+                                        height: 180,
+                                        borderRadius: 12,
+                                        background: "#111",
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        overflow: "hidden",
+                                        flex: "0 0 auto",
+                                    }}
+                                >
+                                    {draft.image ? (
+                                        <img
+                                            src={draft.image}
+                                            alt={`${draft.name || "Item"} artwork`}
+                                            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                                        />
+                                    ) : (
+                                        <span className="text-muted text-small">No image</span>
+                                    )}
+                                </div>
+                                <div className="col" style={{ gap: 8, flex: "1 1 240px" }}>
+                                    <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                                        <button
+                                            type="button"
+                                            className="btn ghost btn-small"
+                                            onClick={handleImageUploadClick}
+                                        >
+                                            Upload image
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="btn ghost btn-small"
+                                            onClick={handleGenerateImage}
+                                            disabled={generating}
+                                        >
+                                            {generating ? "Generating…" : "Generate with Local AI"}
+                                        </button>
+                                        {draft.image && (
+                                            <button
+                                                type="button"
+                                                className="btn ghost btn-small"
+                                                onClick={handleImageRemove}
+                                            >
+                                                Remove
+                                            </button>
+                                        )}
+                                    </div>
+                                    <input
+                                        type="text"
+                                        placeholder="Paste image URL…"
+                                        value={draft.image || ""}
+                                        onChange={(e) => {
+                                            handleDraftChange("image", e.target.value);
+                                            setImageError("");
+                                        }}
+                                    />
+                                    {generatedPrompt && (
+                                        <div className="text-muted text-small">Prompt: {generatedPrompt}</div>
+                                    )}
+                                    {imageError && <div className="text-error text-small">{imageError}</div>}
+                                </div>
+                                <input
+                                    ref={imageInputRef}
+                                    type="file"
+                                    accept="image/*"
+                                    style={{ display: "none" }}
+                                    onChange={handleImageUpload}
+                                />
+                            </div>
+                            {generatedImages.length > 0 && (
+                                <div className="col" style={{ gap: 8 }}>
+                                    <span className="text-muted text-small">Generated options</span>
+                                    <div
+                                        className="row"
+                                        style={{
+                                            gap: 12,
+                                            flexWrap: "wrap",
+                                        }}
+                                    >
+                                        {generatedImages.map((image, index) => {
+                                            const src = typeof image === "string" ? image : "";
+                                            if (!src) return null;
+                                            const isActive = draft.image && draft.image === src;
+                                            return (
+                                                <button
+                                                    key={`option-${index}`}
+                                                    type="button"
+                                                    className={`btn ghost btn-small${isActive ? " is-active" : ""}`}
+                                                    style={{ padding: 0, borderRadius: 8, overflow: "hidden" }}
+                                                    onClick={() => handleSelectGeneratedImage(src)}
+                                                >
+                                                    <img
+                                                        src={src}
+                                                        alt={`Generated option ${index + 1}`}
+                                                        style={{
+                                                            width: 120,
+                                                            height: 120,
+                                                            objectFit: "cover",
+                                                            display: "block",
+                                                        }}
+                                                    />
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
                             <label className="col">
                                 <span className="text-muted text-small">Description</span>
                                 <textarea
@@ -764,6 +997,9 @@ function DemonsAdminPanel() {
     const [csvReport, setCsvReport] = useState(null);
     const imageInputRef = useRef(null);
     const [imageError, setImageError] = useState("");
+    const [generating, setGenerating] = useState(false);
+    const [generatedImages, setGeneratedImages] = useState([]);
+    const [generatedPrompt, setGeneratedPrompt] = useState("");
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -786,6 +1022,9 @@ function DemonsAdminPanel() {
         const demon = demons.find((entry) => Number(entry?.id) === Number(selectedId));
         setDraft(createDemonDraft(demon));
         setImageError("");
+        setGeneratedImages([]);
+        setGeneratedPrompt("");
+        setGenerating(false);
         if (imageInputRef.current) {
             imageInputRef.current.value = "";
         }
@@ -869,7 +1108,7 @@ function DemonsAdminPanel() {
             return;
         }
 
-        if (file.size > MAX_DEMON_IMAGE_BYTES) {
+        if (file.size > MAX_ADMIN_IMAGE_BYTES) {
             setImageError("Images must be 2 MB or smaller.");
             reset();
             return;
@@ -894,6 +1133,51 @@ function DemonsAdminPanel() {
         setImageError("");
         if (imageInputRef.current) {
             imageInputRef.current.value = "";
+        }
+    };
+
+    const handleSelectGeneratedImage = (image) => {
+        if (!image) return;
+        handleDraftChange({ image });
+        setImageError("");
+    };
+
+    const handleGenerateImage = async () => {
+        if (!selectedDemon) return;
+
+        setGenerating(true);
+        setImageError("");
+        setGeneratedImages([]);
+        setGeneratedPrompt("");
+
+        try {
+            const result = await LocalAI.generateConcept({
+                concept: {
+                    kind: "demon",
+                    name: selectedDemon.name,
+                    arcana: draft?.arcana || selectedDemon.arcana,
+                    alignment: draft?.alignment || selectedDemon.alignment,
+                    personality: draft?.personality || selectedDemon.personality,
+                    description: draft?.description || selectedDemon.description,
+                    resistances: draft?.resistances,
+                    stats: draft?.stats,
+                    skills: draft?.skillsText || (Array.isArray(selectedDemon.skills) ? selectedDemon.skills.join(", ") : ""),
+                },
+                overrides: { count: 4 },
+            });
+
+            const options = Array.isArray(result?.images)
+                ? result.images.filter((img) => typeof img === "string" && img)
+                : [];
+            setGeneratedImages(options);
+            setGeneratedPrompt(result?.prompt || "");
+            if (options.length === 0) {
+                setImageError("Image generation did not return any images.");
+            }
+        } catch (err) {
+            setImageError(formatError(err));
+        } finally {
+            setGenerating(false);
         }
     };
 
@@ -1142,6 +1426,14 @@ function DemonsAdminPanel() {
                                         <button type="button" className="btn ghost btn-small" onClick={handleImageUploadClick}>
                                             Upload image
                                         </button>
+                                        <button
+                                            type="button"
+                                            className="btn ghost btn-small"
+                                            onClick={handleGenerateImage}
+                                            disabled={generating}
+                                        >
+                                            {generating ? "Generating…" : "Generate with Local AI"}
+                                        </button>
                                         {draft?.image && (
                                             <button type="button" className="btn ghost btn-small" onClick={handleImageRemove}>
                                                 Remove
@@ -1157,9 +1449,39 @@ function DemonsAdminPanel() {
                                             setImageError("");
                                         }}
                                     />
+                                    {generatedPrompt && (
+                                        <div className="text-muted text-small">Prompt: {generatedPrompt}</div>
+                                    )}
                                     {imageError && <div className="text-error text-small">{imageError}</div>}
                                 </div>
                             </div>
+                            {generatedImages.length > 0 && (
+                                <div className="col" style={{ gap: 8 }}>
+                                    <span className="text-muted text-small">Generated options</span>
+                                    <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
+                                        {generatedImages.map((image, index) => {
+                                            const src = typeof image === "string" ? image : "";
+                                            if (!src) return null;
+                                            const isActive = draft?.image && draft.image === src;
+                                            return (
+                                                <button
+                                                    key={`demon-option-${index}`}
+                                                    type="button"
+                                                    className={`btn ghost btn-small${isActive ? " is-active" : ""}`}
+                                                    style={{ padding: 0, borderRadius: 8, overflow: "hidden" }}
+                                                    onClick={() => handleSelectGeneratedImage(src)}
+                                                >
+                                                    <img
+                                                        src={src}
+                                                        alt={`Generated demon option ${index + 1}`}
+                                                        style={{ width: 120, height: 120, objectFit: "cover", display: "block" }}
+                                                    />
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
                             <input
                                 ref={imageInputRef}
                                 type="file"
