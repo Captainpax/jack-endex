@@ -106,6 +106,7 @@ const DEFAULT_STROKE_COLOR = '#f97316';
 const DEFAULT_PLAYER_TOKEN_COLOR = '#38bdf8';
 const DEFAULT_DEMON_TOKEN_COLOR = '#f97316';
 const DEFAULT_CUSTOM_TOKEN_COLOR = '#a855f7';
+const DEFAULT_NPC_TOKEN_COLOR = '#10b981';
 const DEFAULT_ENEMY_TOKEN_COLOR = '#ef4444';
 const DEFAULT_SHAPE_FILL = '#1e293b';
 const DEFAULT_SHAPE_STROKE = '#f8fafc';
@@ -1095,7 +1096,7 @@ function buildDemonTooltip(demon) {
 function normalizeMapToken(entry, game) {
     if (!entry || typeof entry !== 'object') return null;
     const kindRaw = typeof entry.kind === 'string' ? entry.kind.trim().toLowerCase() : 'custom';
-    const allowedKinds = new Set(['player', 'demon', 'enemy', 'custom']);
+    const allowedKinds = new Set(['player', 'demon', 'enemy', 'npc', 'custom']);
     const kind = allowedKinds.has(kindRaw) ? kindRaw : 'custom';
     let refId = typeof entry.refId === 'string' ? entry.refId : null;
     const id = typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : uuid();
@@ -1128,6 +1129,10 @@ function normalizeMapToken(entry, game) {
         if (!label) label = 'Enemy';
         if (entry.showTooltip === undefined) showTooltip = !!tooltip;
         color = sanitizeColor(entry.color, DEFAULT_ENEMY_TOKEN_COLOR);
+    } else if (kind === 'npc') {
+        if (!label) label = 'NPC';
+        if (entry.showTooltip === undefined) showTooltip = !!tooltip;
+        color = sanitizeColor(entry.color, DEFAULT_NPC_TOKEN_COLOR);
     } else {
         if (!label) label = 'Marker';
         if (entry.showTooltip === undefined) showTooltip = !!tooltip;
@@ -1168,7 +1173,9 @@ function presentMapToken(token) {
                 ? DEFAULT_DEMON_TOKEN_COLOR
                 : token.kind === 'enemy'
                     ? DEFAULT_ENEMY_TOKEN_COLOR
-                    : DEFAULT_CUSTOM_TOKEN_COLOR;
+                    : token.kind === 'npc'
+                        ? DEFAULT_NPC_TOKEN_COLOR
+                        : DEFAULT_CUSTOM_TOKEN_COLOR;
     return {
         id: token.id,
         kind: token.kind,
