@@ -474,8 +474,12 @@ function WorldSkillsTab({ game, me, onUpdate }) {
             .filter(Boolean);
     }, [displaySkills, skillRowById]);
 
-    const customSkillRows = useMemo(() => {
-        return customSkills.map((skill) => {
+    const {
+        customSkillRows,
+        spentSP,
+        rankIssues,
+    } = useMemo(() => {
+        const rows = customSkills.map((skill) => {
             const ranks = clampNonNegative(skill.ranks);
             const miscRaw = Number(skill.misc);
             const misc = Number.isFinite(miscRaw) ? miscRaw : 0;
@@ -483,23 +487,20 @@ function WorldSkillsTab({ game, me, onUpdate }) {
             const total = abilityMod + ranks + misc;
             return { ...skill, ranks, misc, abilityMod, total };
         });
-    }, [abilityMods, customSkills]);
+        const baseSpent = allSkillRows.reduce((sum, row) => sum + row.ranks, 0);
+        const extraSpent = rows.reduce((sum, row) => sum + row.ranks, 0);
+        const allIssues = allSkillRows
+            .filter((row) => row.ranks > maxSkillRank)
+            .map((row) => row.label)
+            .concat(rows.filter((row) => row.ranks > maxSkillRank).map((row) => row.label));
+        return {
+            customSkillRows: rows,
+            spentSP: baseSpent + extraSpent,
+            rankIssues: allIssues,
+        };
+    }, [abilityMods, allSkillRows, customSkills, maxSkillRank]);
 
-    const spentSP = useMemo(() => {
-        const base = allSkillRows.reduce((sum, row) => sum + row.ranks, 0);
-        const extras = customSkillRows.reduce((sum, row) => sum + row.ranks, 0);
-        return base + extras;
-    }, [allSkillRows, customSkillRows]);
     const overSpent = spentSP > availableSP;
-    const rankIssues = useMemo(() => {
-        const standard = allSkillRows
-            .filter((row) => row.ranks > maxSkillRank)
-            .map((row) => row.label);
-        const extras = customSkillRows
-            .filter((row) => row.ranks > maxSkillRank)
-            .map((row) => row.label);
-        return [...standard, ...extras];
-    }, [allSkillRows, customSkillRows, maxSkillRank]);
 
     const addCustomSkill = useCallback(() => {
         const label = customDraft.label.trim();
