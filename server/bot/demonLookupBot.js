@@ -1,6 +1,14 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
-import WebSocket from 'ws';
+import {
+    ActivityType,
+    Client,
+    Events,
+    GatewayIntentBits,
+    REST,
+    Routes,
+    SlashCommandBuilder,
+} from 'discord.js';
 import { loadEnv, envString, envNumber } from '../config/env.js';
 import mongoose from '../lib/mongoose.js';
 import User from '../models/User.js';
@@ -12,8 +20,6 @@ import {
     buildDemonDetailString,
 } from '../services/demons.js';
 
-const API_BASE = 'https://discord.com/api/v10';
-const GATEWAY_URL = 'wss://gateway.discord.gg/?v=10&encoding=json';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 await loadEnv({ root: path.resolve(__dirname, '..', '..') });
@@ -46,6 +52,8 @@ if (!uri) {
     process.exit(1);
 }
 
+const rest = new REST({ version: '10' }).setToken(token);
+
 async function delay(ms) {
     await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -77,17 +85,37 @@ async function connectToDatabaseWithRetry(
     throw lastError ?? new Error('Bot failed to connect to MongoDB.');
 }
 
-try {
-    await connectToDatabaseWithRetry(uri, { dbName: dbName || undefined });
-    await registerSlashCommandsWithRetry().catch((err) => {
-        console.error('[bot] Slash command registration failed:', err);
-        throw err;
-    });
-    console.log('[bot] Connected to MongoDB. Starting gateway connection…');
-} catch (err) {
-    console.error('[bot] Failed to prepare bot. Exiting.', err);
-    process.exit(1);
-}
+const slashCommandBuilders = [
+    new SlashCommandBuilder()
+        .setName('codex')
+        .setDescription('Look up codex information for a demon.')
+        .addStringOption((option) => option
+            .setName('name')
+            .setDescription('Name of the demon to search for.')
+            .setRequired(true)),
+    new SlashCommandBuilder()
+        .setName('demonlookup')
+        .setDescription('Legacy alias for /codex.')
+        .addStringOption((option) => option
+            .setName('name')
+            .setDescription('Name of the demon to search for.')
+            .setRequired(true)),
+    new SlashCommandBuilder()
+        .setName('link')
+        .setDescription('Link your Discord account to your Jack Endex profile.')
+        .addStringOption((option) => option
+            .setName('username')
+            .setDescription('Your Jack Endex username.')
+            .setRequired(true)),
+    new SlashCommandBuilder()
+        .setName('unlink')
+        .setDescription('Unlink your Discord account from Jack Endex.'),
+    new SlashCommandBuilder()
+        .setName('whoami')
+        .setDescription('Show which Jack Endex account is linked to this Discord user.'),
+];
+
+const COMMAND_DEFINITIONS = slashCommandBuilders.map((builder) => builder.toJSON());
 
 const ABILITY_KEYS = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'];
 const RESIST_KEYS = [
@@ -105,35 +133,6 @@ const RESISTANCE_ALIAS_MAP = {
     drain: ['drain', 'drains', 'absorb', 'absorbs'],
     reflect: ['reflect', 'reflects'],
 };
-
-const COMMAND_DEFINITIONS = [
-    {
-        name: 'demonLookup',
-        description: 'Look up codex information for a demon.',
-        type: 1,
-        options: [
-            {
-                name: 'name',
-                description: 'Name of the demon to search for.',
-                type: 3,
-                required: true,
-            },
-        ],
-    },
-    {
-        name: 'link',
-        description: 'Link your Discord account to your Jack Endex profile.',
-        type: 1,
-        options: [
-            {
-                name: 'username',
-                description: 'Your Jack Endex username.',
-                type: 3,
-                required: true,
-            },
-        ],
-    },
-];
 
 function getResistanceValues(demon, key) {
     if (!demon) return [];
@@ -169,86 +168,6 @@ function truncate(text, max = 1024) {
 
 function escapeRegex(value) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function getOptionValue(interaction, optionName) {
-    const options = interaction?.data?.options;
-    if (!Array.isArray(options)) return null;
-    const option = options.find((opt) => opt?.name === optionName);
-    return option?.value ?? null;
-}
-
-function getDiscordUserId(interaction) {
-    return interaction?.member?.user?.id
-        || interaction?.user?.id
-        || null;
-}
-
-async function discordFetch(endpoint, { headers = {}, ...options } = {}) {
-    const url = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint}`;
-    const response = await fetch(url, {
-        ...options,
-        headers: {
-            Authorization: `Bot ${token}`,
-            ...headers,
-        },
-    });
-    if (!response.ok) {
-        const text = await response.text().catch(() => '');
-        const error = new Error(
-            `Discord API request failed with ${response.status} ${response.statusText}: ${text}`,
-        );
-        error.status = response.status;
-        error.statusText = response.statusText;
-        error.body = text;
-        throw error;
-    }
-    return response;
-}
-
-async function registerSlashCommands() {
-    if (!applicationId) {
-        console.warn('[bot] Missing DISCORD_APPLICATION_ID; skipping command registration.');
-        return;
-    }
-    const scopeDescription = commandGuildId ? `guild ${commandGuildId}` : 'global';
-    const route = commandGuildId
-        ? `/applications/${applicationId}/guilds/${commandGuildId}/commands`
-        : `/applications/${applicationId}/commands`;
-    const response = await discordFetch(route, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(COMMAND_DEFINITIONS),
-    });
-    let payload;
-    try {
-        payload = await response.json();
-    } catch {
-        payload = null;
-    }
-    const count = Array.isArray(payload) ? payload.length : COMMAND_DEFINITIONS.length;
-    console.log(`[bot] Registered ${count} slash command(s) for ${scopeDescription}.`);
-}
-
-async function registerSlashCommandsWithRetry({
-    attempts = COMMAND_REGISTER_MAX_ATTEMPTS,
-    delayMs = COMMAND_REGISTER_RETRY_DELAY_MS,
-} = {}) {
-    for (let attempt = 1; attempt <= attempts; attempt += 1) {
-        try {
-            await registerSlashCommands();
-            return;
-        } catch (err) {
-            if (attempt >= attempts) {
-                throw err;
-            }
-            const waitMs = Math.min(delayMs * 2 ** (attempt - 1), 30_000);
-            console.warn(
-                `[bot] Failed to register slash commands (attempt ${attempt}/${attempts}). Retrying in ${waitMs}ms…`,
-            );
-            await delay(waitMs);
-        }
-    }
 }
 
 function formatDemonResponse(demon) {
@@ -298,22 +217,62 @@ async function resolveDemon(term) {
     return demon ? summarizeDemon(demon) : null;
 }
 
+async function registerSlashCommands() {
+    if (!applicationId) {
+        console.warn('[bot] Missing DISCORD_APPLICATION_ID; skipping command registration.');
+        return;
+    }
+    const scopeDescription = commandGuildId ? `guild ${commandGuildId}` : 'global';
+    const route = commandGuildId
+        ? Routes.applicationGuildCommands(applicationId, commandGuildId)
+        : Routes.applicationCommands(applicationId);
+    await rest.put(route, { body: COMMAND_DEFINITIONS });
+    console.log(`[bot] Registered ${COMMAND_DEFINITIONS.length} slash command(s) for ${scopeDescription}.`);
+}
+
+async function registerSlashCommandsWithRetry({
+    attempts = COMMAND_REGISTER_MAX_ATTEMPTS,
+    delayMs = COMMAND_REGISTER_RETRY_DELAY_MS,
+} = {}) {
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        try {
+            await registerSlashCommands();
+            return;
+        } catch (err) {
+            if (attempt >= attempts) {
+                throw err;
+            }
+            const waitMs = Math.min(delayMs * 2 ** (attempt - 1), 30_000);
+            console.warn(
+                `[bot] Failed to register slash commands (attempt ${attempt}/${attempts}). Retrying in ${waitMs}ms…`,
+            );
+            await delay(waitMs);
+        }
+    }
+}
+
 async function respond(interaction, payload) {
-    const url = `${API_BASE}/interactions/${interaction.id}/${interaction.token}/callback`;
-    await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 4, data: { ...payload, flags: 64 } }),
-    });
+    if (interaction.deferred || interaction.replied) {
+        await interaction.editReply(payload);
+    } else {
+        await interaction.reply({ ...payload, ephemeral: true });
+    }
+}
+
+async function ensureDeferred(interaction) {
+    if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferReply({ ephemeral: true });
+    }
 }
 
 async function handleDemonLookupCommand(interaction) {
-    const term = getOptionValue(interaction, 'name');
+    const term = interaction.options.getString('name');
     if (!term || !String(term).trim()) {
-        await respond(interaction, { content: 'Provide a demon name to look up.' });
+        await interaction.reply({ content: 'Provide a demon name to look up.', ephemeral: true });
         return;
     }
     const query = String(term).trim();
+    await ensureDeferred(interaction);
     try {
         const demon = await resolveDemon(query);
         if (demon) {
@@ -324,7 +283,7 @@ async function handleDemonLookupCommand(interaction) {
         const suggestion = await findClosestDemon(query);
         if (suggestion) {
             await respond(interaction, {
-                content: `No exact match. Did you mean **${suggestion.name}**? Try \`/demonLookup ${suggestion.name}\`.`,
+                content: `No exact match. Did you mean **${suggestion.name}**? Try \`/codex ${suggestion.name}\`.`,
             });
         } else {
             await respond(interaction, { content: `No demon found matching **${query}**.` });
@@ -336,17 +295,18 @@ async function handleDemonLookupCommand(interaction) {
 }
 
 async function handleLinkCommand(interaction) {
-    const discordUserId = getDiscordUserId(interaction);
+    const discordUserId = interaction.user?.id || interaction.member?.user?.id;
     if (!discordUserId) {
-        await respond(interaction, { content: 'Unable to determine your Discord user ID.' });
+        await interaction.reply({ content: 'Unable to determine your Discord user ID.', ephemeral: true });
         return;
     }
-    const usernameInput = getOptionValue(interaction, 'username');
+    const usernameInput = interaction.options.getString('username');
     const normalized = typeof usernameInput === 'string' ? usernameInput.trim() : '';
     if (!normalized) {
-        await respond(interaction, { content: 'Provide the Jack Endex username you want to link.' });
+        await interaction.reply({ content: 'Provide the Jack Endex username you want to link.', ephemeral: true });
         return;
     }
+    await ensureDeferred(interaction);
     try {
         const user = await User.findOne({
             username: { $regex: `^${escapeRegex(normalized)}$`, $options: 'i' },
@@ -392,244 +352,141 @@ async function handleLinkCommand(interaction) {
     }
 }
 
-async function handleInteraction(interaction) {
-    if (interaction.type !== 2) return; // application command
-    const commandName = interaction.data?.name;
-    if (!commandName) return;
-    if (commandName === 'demonLookup') {
-        await handleDemonLookupCommand(interaction);
+async function handleUnlinkCommand(interaction) {
+    const discordUserId = interaction.user?.id || interaction.member?.user?.id;
+    if (!discordUserId) {
+        await interaction.reply({ content: 'Unable to determine your Discord user ID.', ephemeral: true });
         return;
     }
-    if (commandName === 'link') {
-        await handleLinkCommand(interaction);
-        return;
-    }
-}
-
-let shuttingDown = false;
-let sessionId = null;
-let lastSequence = null;
-let resumeGatewayUrl = null;
-
-function startGateway() {
-    let ws;
-    let heartbeatInterval = null;
-    let heartbeatTimeout = null;
-    let heartbeatIntervalMs = 0;
-    let awaitingHeartbeatAck = false;
-    let reconnectTimer = null;
-    let reconnectAttempts = 0;
-
-    function clearHeartbeat() {
-        if (heartbeatInterval) {
-            clearInterval(heartbeatInterval);
-            heartbeatInterval = null;
-        }
-        if (heartbeatTimeout) {
-            clearTimeout(heartbeatTimeout);
-            heartbeatTimeout = null;
-        }
-        awaitingHeartbeatAck = false;
-        heartbeatIntervalMs = 0;
-    }
-
-    function cleanup() {
-        clearHeartbeat();
-        if (reconnectTimer) {
-            clearTimeout(reconnectTimer);
-            reconnectTimer = null;
-        }
-    }
-
-    function scheduleReconnect(baseDelayMs = 1_000) {
-        if (shuttingDown) return;
-        if (reconnectTimer) {
-            clearTimeout(reconnectTimer);
-        }
-        const delay = Math.min(baseDelayMs * 2 ** reconnectAttempts, 30_000);
-        console.warn(`[bot] Reconnecting in ${delay}ms…`);
-        reconnectTimer = setTimeout(() => {
-            reconnectAttempts += 1;
-            connect();
-        }, delay);
-    }
-
-    function sendHeartbeat() {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        if (awaitingHeartbeatAck) {
-            console.warn('[bot] Missed heartbeat acknowledgement. Terminating connection…');
-            ws.terminate();
+    await ensureDeferred(interaction);
+    try {
+        const user = await User.findOne({ discordId: discordUserId }).exec();
+        if (!user) {
+            await respond(interaction, { content: 'Your Discord account is not linked to any Jack Endex profile.' });
             return;
         }
-        ws.send(JSON.stringify({ op: 1, d: lastSequence }));
-        awaitingHeartbeatAck = true;
-        if (heartbeatTimeout) clearTimeout(heartbeatTimeout);
-        heartbeatTimeout = setTimeout(() => {
-            if (awaitingHeartbeatAck && ws?.readyState === WebSocket.OPEN) {
-                console.warn('[bot] Heartbeat acknowledgement timeout. Terminating connection…');
-                ws.terminate();
-            }
-        }, Math.max(1_000, Math.floor(heartbeatIntervalMs * 0.5) || 5_000));
-    }
-
-    function connect() {
-        if (reconnectTimer) {
-            clearTimeout(reconnectTimer);
-            reconnectTimer = null;
-        }
-        const gatewayUrl = resumeGatewayUrl || GATEWAY_URL;
-        ws = new WebSocket(gatewayUrl);
-
-        ws.on('open', () => {
-            reconnectAttempts = 0;
+        user.discordId = undefined;
+        await user.save();
+        await respond(interaction, {
+            content: `Your Discord account is no longer linked to **${user.username}**.`,
         });
-
-        ws.on('message', async (data) => {
-            let payload;
-            try {
-                payload = JSON.parse(data.toString());
-            } catch (err) {
-                console.error('[bot] Failed to parse gateway payload:', err);
-                return;
-            }
-            const { op, t, d, s } = payload;
-            if (s !== null && s !== undefined) {
-                lastSequence = s;
-            }
-            switch (op) {
-                case 0: {
-                    if (t === 'READY') {
-                        sessionId = d.session_id;
-                        resumeGatewayUrl = d.resume_gateway_url || GATEWAY_URL;
-                        console.log(`[bot] Logged in as ${d.user?.username ?? 'bot'} (${sessionId}).`);
-                    } else if (t === 'RESUMED') {
-                        console.log('[bot] Successfully resumed previous gateway session.');
-                    } else if (t === 'INTERACTION_CREATE') {
-                        try {
-                            await handleInteraction(d);
-                        } catch (err) {
-                            console.error('[bot] Unexpected error handling interaction:', err);
-                        }
-                    }
-                    break;
-                }
-                case 1: { // Heartbeat request
-                    sendHeartbeat();
-                    break;
-                }
-                case 7: { // Reconnect
-                    console.log('[bot] Gateway requested reconnect.');
-                    clearHeartbeat();
-                    ws.close(4000, 'Reconnect requested');
-                    break;
-                }
-                case 9: { // Invalid session
-                    const resumable = Boolean(d);
-                    if (!resumable) {
-                        sessionId = null;
-                        resumeGatewayUrl = null;
-                        lastSequence = null;
-                    }
-                    console.warn(`[bot] Invalid session received (resumable=${resumable}).`);
-                    clearHeartbeat();
-                    setTimeout(() => {
-                        if (ws.readyState === WebSocket.OPEN) {
-                            ws.close(4001, 'Invalid session');
-                        }
-                    }, Math.floor(Math.random() * 4_000) + 1_000);
-                    break;
-                }
-                case 10: { // Hello
-                    clearHeartbeat();
-                    heartbeatIntervalMs = Math.max(1_000, Math.floor(d.heartbeat_interval));
-                    heartbeatInterval = setInterval(() => {
-                        sendHeartbeat();
-                    }, heartbeatIntervalMs);
-                    sendHeartbeat();
-                    if (sessionId && lastSequence !== null) {
-                        ws.send(JSON.stringify({
-                            op: 6,
-                            d: {
-                                token,
-                                session_id: sessionId,
-                                seq: lastSequence,
-                            },
-                        }));
-                    } else {
-                        ws.send(JSON.stringify({
-                            op: 2,
-                            d: {
-                                token,
-                                intents: 0,
-                                properties: {
-                                    os: process.platform,
-                                    browser: 'jack-endex',
-                                    device: 'jack-endex',
-                                },
-                            },
-                        }));
-                    }
-                    break;
-                }
-                case 11: { // Heartbeat ACK
-                    awaitingHeartbeatAck = false;
-                    if (heartbeatTimeout) {
-                        clearTimeout(heartbeatTimeout);
-                        heartbeatTimeout = null;
-                    }
-                    break;
-                }
-                default:
-                    break;
-            }
-        });
-
-        ws.on('close', (code) => {
-            cleanup();
-            if (shuttingDown) return;
-            console.warn(`[bot] Gateway closed (${code}).`);
-            scheduleReconnect(1_000);
-        });
-
-        ws.on('error', (err) => {
-            console.error('[bot] Gateway error:', err);
-            if (ws.readyState === WebSocket.OPEN) {
-                ws.close(1011, 'Gateway error');
-            }
+    } catch (err) {
+        console.error('[bot] Failed to unlink Discord account:', err);
+        await respond(interaction, {
+            content: 'Something went wrong while unlinking your account. Please try again later.',
         });
     }
-
-    connect();
-
-    return () => {
-        shuttingDown = true;
-        if (reconnectTimer) {
-            clearTimeout(reconnectTimer);
-            reconnectTimer = null;
-        }
-        cleanup();
-        if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-            try {
-                ws.close(1001, 'Bot shutting down');
-            } catch (err) {
-                console.error('[bot] Error closing gateway during shutdown:', err);
-            }
-        }
-        ws = null;
-    };
 }
 
-const stopGateway = startGateway();
+async function handleWhoAmICommand(interaction) {
+    const discordUserId = interaction.user?.id || interaction.member?.user?.id;
+    if (!discordUserId) {
+        await interaction.reply({ content: 'Unable to determine your Discord user ID.', ephemeral: true });
+        return;
+    }
+    await ensureDeferred(interaction);
+    try {
+        const user = await User.findOne({ discordId: discordUserId }).exec();
+        if (!user) {
+            await respond(interaction, {
+                content: 'Your Discord account is not linked to any Jack Endex profile yet. Try `/link <username>`.',
+            });
+            return;
+        }
+        await respond(interaction, {
+            content: `Your Discord account is linked to **${user.username}**.`,
+        });
+    } catch (err) {
+        console.error('[bot] Failed to read link status:', err);
+        await respond(interaction, {
+            content: 'Something went wrong while checking your link status. Please try again later.',
+        });
+    }
+}
+
+const COMMAND_HANDLERS = new Map([
+    ['codex', handleDemonLookupCommand],
+    ['demonlookup', handleDemonLookupCommand],
+    ['link', handleLinkCommand],
+    ['unlink', handleUnlinkCommand],
+    ['whoami', handleWhoAmICommand],
+]);
+
+let client = null;
+let shuttingDown = false;
+
+function startClient() {
+    client = new Client({
+        intents: [GatewayIntentBits.Guilds],
+    });
+
+    client.once(Events.ClientReady, (readyClient) => {
+        const tag = readyClient.user?.tag || readyClient.user?.username || 'bot';
+        console.log(`[bot] Ready as ${tag}.`);
+        if (readyClient.user) {
+            readyClient.user.setPresence({
+                activities: [{ name: '/codex <demon>', type: ActivityType.Listening }],
+                status: 'online',
+            }).catch((err) => {
+                console.warn('[bot] Failed to set presence:', err);
+            });
+        }
+    });
+
+    client.on(Events.InteractionCreate, async (interaction) => {
+        if (!interaction.isChatInputCommand()) return;
+        const handler = COMMAND_HANDLERS.get(interaction.commandName);
+        if (!handler) {
+            await interaction.reply({
+                content: 'That command is not supported yet.',
+                ephemeral: true,
+            }).catch((err) => {
+                console.error('[bot] Failed to respond to unknown command:', err);
+            });
+            return;
+        }
+        try {
+            await handler(interaction);
+        } catch (err) {
+            console.error('[bot] Unexpected error handling interaction:', err);
+            try {
+                await respond(interaction, {
+                    content: 'Something went wrong while handling that command.',
+                });
+            } catch (respondErr) {
+                console.error('[bot] Failed to send error response:', respondErr);
+            }
+        }
+    });
+
+    client.on('error', (err) => {
+        console.error('[bot] Client error:', err);
+    });
+
+    client.on('shardError', (err, shardId) => {
+        console.error(`[bot] Shard ${shardId} error:`, err);
+    });
+
+    client.on('warn', (message) => {
+        console.warn('[bot] Warning:', message);
+    });
+
+    return client.login(token).catch((err) => {
+        console.error('[bot] Failed to log in:', err);
+        throw err;
+    });
+}
 
 async function gracefulShutdown(signal) {
-    console.log(`\n[bot] Received ${signal}. Shutting down…`);
+    if (shuttingDown) return;
     shuttingDown = true;
-    if (typeof stopGateway === 'function') {
-        try {
-            await stopGateway();
-        } catch (err) {
-            console.error('[bot] Error stopping gateway:', err);
+    console.log(`\n[bot] Received ${signal}. Shutting down…`);
+    try {
+        if (client) {
+            await client.destroy();
         }
+    } catch (err) {
+        console.error('[bot] Error destroying Discord client:', err);
     }
     try {
         await mongoose.disconnect();
@@ -649,3 +506,17 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
     console.error('[bot] Unhandled rejection:', reason);
 });
+
+async function main() {
+    try {
+        await connectToDatabaseWithRetry(uri, { dbName: dbName || undefined });
+        await registerSlashCommandsWithRetry();
+        console.log('[bot] Connected to MongoDB. Starting Discord client…');
+        await startClient();
+    } catch (err) {
+        console.error('[bot] Failed to start bot. Exiting.', err);
+        process.exit(1);
+    }
+}
+
+await main();
