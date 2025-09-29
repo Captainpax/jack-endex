@@ -1874,17 +1874,6 @@ function MapTab({ game, me }) {
     }, [playerChoice, playerMap]);
 
     useEffect(() => {
-        if (!demonChoice) return;
-        const demon = findDemon(demonChoice);
-        if (!demon) return;
-        const defaultLabel = demon.name || 'Demon';
-        setDemonTokenConfig((prev) => {
-            if (prev.label) return prev;
-            return { ...prev, label: defaultLabel };
-        });
-    }, [demonChoice, findDemon]);
-
-    useEffect(() => {
         if (typeof window === 'undefined') return;
         try {
             const normalized = normalizeBrushPalette(brushPalette);
@@ -2129,6 +2118,17 @@ function MapTab({ game, me }) {
         },
         [demonMap, game.demons],
     );
+
+    useEffect(() => {
+        if (!demonChoice) return;
+        const demon = findDemon(demonChoice);
+        if (!demon) return;
+        const defaultLabel = demon.name || 'Demon';
+        setDemonTokenConfig((prev) => {
+            if (prev.label) return prev;
+            return { ...prev, label: defaultLabel };
+        });
+    }, [demonChoice, findDemon]);
 
     const playerTokens = useMemo(
         () => mapState.tokens.filter((token) => token.kind === 'player'),
