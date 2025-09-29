@@ -3684,6 +3684,16 @@ function MapTab({ game, me }) {
     const [enemyQuery, setEnemyQuery] = useState('');
     const [npcForm, setNpcForm] = useState(() => createNpcTokenState());
     const [activeNpcOverlayId, setActiveNpcOverlayId] = useState(null);
+    const playerMap = useMemo(() => {
+        const map = new Map();
+        if (Array.isArray(game.players)) {
+            for (const player of game.players) {
+                if (!player || !player.userId) continue;
+                map.set(player.userId, player);
+            }
+        }
+        return map;
+    }, [game.players]);
     const [sidebarTab, setSidebarTab] = useState('tokens');
     const [overlayForm, setOverlayForm] = useState({
         url: '',
@@ -3904,17 +3914,6 @@ function MapTab({ game, me }) {
         () => ({ '--map-board-color': mapState.background?.color || MAP_DEFAULT_BACKGROUND.color }),
         [mapState.background?.color]
     );
-
-    const playerMap = useMemo(() => {
-        const map = new Map();
-        if (Array.isArray(game.players)) {
-            for (const player of game.players) {
-                if (!player || !player.userId) continue;
-                map.set(player.userId, player);
-            }
-        }
-        return map;
-    }, [game.players]);
 
     const drawerOptions = useMemo(() => {
         const options = [];
