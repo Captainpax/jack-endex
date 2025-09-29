@@ -19,6 +19,7 @@ const LEGACY_IMAGE_WIDTH = 512;
 const LEGACY_IMAGE_HEIGHT = 521;
 const LEGACY_GUIDANCE_SCALE = 7.5;
 const LEGACY_STEPS = 28;
+const MAX_IMAGE_COUNT = 4;
 
 const portraitTemplate = PromptTemplate.fromTemplate(
     [
@@ -745,35 +746,46 @@ const imageChain = RunnableSequence.from([
     new RunnableLambda({
         func: async ({ character, overrides }) => ({
             variables: buildPortraitVariables(character, overrides),
+            overrides,
         }),
     }),
     new RunnableLambda({
-        func: async ({ variables }) => ({
+        func: async ({ variables, overrides }) => ({
             variables,
+            overrides,
             basePrompt: await portraitTemplate.format(variables),
         }),
     }),
     new RunnableLambda({
-        func: async ({ basePrompt, variables }) => ({
+        func: async ({ basePrompt, variables, overrides }) => ({
             variables,
+            overrides,
             basePrompt,
             prompt: await enhanceStableDiffusionPrompt(basePrompt, variables),
         }),
     }),
     new RunnableLambda({
-        func: async ({ prompt, variables }) => ({
-            prompt,
-            variables,
-            image: await callImageEndpoint(prompt, variables?.style),
-        }),
+        func: async ({ prompt, variables, overrides }) => {
+            const count = clampImageCount(overrides?.count);
+            const referenceImages = normalizeReferenceImages(
+                overrides?.referenceImages ?? overrides?.referenceImage ?? overrides?.reference,
+            );
+            const images = await callImageEndpoint(prompt, variables?.style, { count, referenceImages });
+            return {
+                prompt: safeString(prompt),
+                images,
+            };
+        },
     }),
 ]);
 
-async function callImageEndpoint(prompt, style) {
+async function callImageEndpoint(prompt, style, options = {}) {
     const finalPrompt = style ? `${prompt} Art style: ${style}.`.trim() : prompt;
     const negativePrompt = getNegativePrompt();
     const backend = getImageBackend();
     const configs = getImageEndpointConfigs();
+    const imageCount = clampImageCount(options?.count);
+    const referenceImages = normalizeReferenceImages(options?.referenceImages || options?.referenceImage);
 
     if (configs.length === 0) {
         throw new Error("No image endpoint is configured for LocalAI.");
@@ -786,6 +798,8 @@ async function callImageEndpoint(prompt, style) {
             prompt: finalPrompt,
             negativePrompt,
             backend,
+            count: imageCount,
+            referenceImages,
         });
 
         try {
@@ -806,11 +820,11 @@ async function callImageEndpoint(prompt, style) {
                 );
             }
 
-            const image = await extractImageFromResponse(response);
-            if (!image) {
+            const images = await extractImagesFromResponse(response);
+            if (!Array.isArray(images) || images.length === 0) {
                 throw new Error("Image response did not include image data.");
             }
-            return image;
+            return images;
         } catch (error) {
             errors.push({ url: config.url, error });
         }
@@ -864,7 +878,41 @@ function cleanEnhancedPrompt(response, fallback) {
     return normalized.trim() || fallback;
 }
 
-function buildImagePayload({ apiStyle, prompt, negativePrompt, backend }) {
+function clampImageCount(value, defaultValue = 1) {
+    const raw = Number(value);
+    if (!Number.isFinite(raw)) return defaultValue;
+    return Math.min(MAX_IMAGE_COUNT, Math.max(1, Math.floor(raw)));
+}
+
+function normalizeReferenceImages(value) {
+    if (!value) return [];
+    const entries = Array.isArray(value) ? value : [value];
+    const normalized = [];
+    const seen = new Set();
+    for (const entry of entries) {
+        let source = "";
+        if (typeof entry === "string") {
+            source = entry.trim();
+        } else if (entry && typeof entry === "object") {
+            if (typeof entry.image === "string") {
+                source = entry.image.trim();
+            } else if (typeof entry.url === "string") {
+                source = entry.url.trim();
+            } else if (typeof entry.base64 === "string") {
+                source = entry.base64.trim();
+            }
+        }
+        if (!source || seen.has(source)) continue;
+        normalized.push(source);
+        seen.add(source);
+        if (normalized.length >= MAX_IMAGE_COUNT) break;
+    }
+    return normalized;
+}
+
+function buildImagePayload({ apiStyle, prompt, negativePrompt, backend, count = 1, referenceImages = [] }) {
+    const finalCount = clampImageCount(count);
+    const refs = normalizeReferenceImages(referenceImages);
     if (apiStyle === "openai") {
         const payload = {
             model: getImageModel(),
@@ -872,7 +920,7 @@ function buildImagePayload({ apiStyle, prompt, negativePrompt, backend }) {
             negative_prompt: negativePrompt,
             size: OPENAI_IMAGE_SIZE,
             response_format: "b64_json",
-            n: 1,
+            n: finalCount,
         };
         if (backend) payload.backend = backend;
         return payload;
@@ -887,45 +935,85 @@ function buildImagePayload({ apiStyle, prompt, negativePrompt, backend }) {
         steps: LEGACY_STEPS,
     };
     if (backend) payload.backend = backend;
+    if (finalCount > 1) {
+        payload.n = finalCount;
+        payload.num_images = finalCount;
+        payload.batch_size = Math.min(finalCount, MAX_IMAGE_COUNT);
+        payload.samples = finalCount;
+    }
+    if (refs.length > 0) {
+        payload.reference_images = refs;
+        payload.init_images = refs;
+        payload.image = refs[0];
+    }
     return payload;
 }
 
-async function extractImageFromResponse(response) {
+async function extractImagesFromResponse(response) {
     const contentType = response.headers.get("content-type") || "";
     if (contentType.includes("application/json")) {
         const data = await response.json();
-        const { raw, format } = extractImageFromJson(data);
-        if (!raw) {
-            return "";
-        }
-        return normalizeImageData(raw, format);
+        return extractImagesFromJson(data);
     }
 
     const buffer = await response.arrayBuffer();
     const mime = contentType || "image/png";
     const base64 = Buffer.from(buffer).toString("base64");
-    return `data:${mime};base64,${base64}`;
+    return [`data:${mime};base64,${base64}`];
 }
 
-function extractImageFromJson(data) {
+function extractImagesFromJson(data) {
     if (!data || typeof data !== "object") {
-        return { raw: "", format: "" };
+        return [];
     }
 
-    const entries = [];
+    const images = [];
+    const pushImage = (raw, format) => {
+        const normalized = normalizeImageData(raw, format);
+        if (normalized) {
+            images.push(normalized);
+        }
+    };
 
     if (typeof data.image === "string") {
-        entries.push({ raw: data.image, format: data.format || data.mime_type || "" });
+        pushImage(data.image, data.format || data.mime_type || "");
     }
 
     if (Array.isArray(data.images)) {
         for (const item of data.images) {
+            if (!item) continue;
             if (typeof item === "string") {
-                entries.push({ raw: item, format: data.format || data.mime_type || "" });
-            } else if (item && typeof item === "object") {
-                const raw = typeof item.image === "string" ? item.image : typeof item.base64 === "string" ? item.base64 : "";
-                if (raw) {
-                    entries.push({ raw, format: item.format || item.mime_type || data.format || data.mime_type || "" });
+                pushImage(item, data.format || data.mime_type || "");
+                continue;
+            }
+            if (typeof item !== "object") continue;
+            const raw =
+                typeof item.image === "string"
+                    ? item.image
+                    : typeof item.base64 === "string"
+                    ? item.base64
+                    : typeof item.b64_json === "string"
+                    ? item.b64_json
+                    : "";
+            const format = item.format || item.mime_type || data.format || data.mime_type || "";
+            if (raw) {
+                pushImage(raw, format);
+            }
+            if (Array.isArray(item.data)) {
+                for (const nested of item.data) {
+                    if (!nested || typeof nested !== "object") continue;
+                    const nestedRaw =
+                        typeof nested.image === "string"
+                            ? nested.image
+                            : typeof nested.base64 === "string"
+                            ? nested.base64
+                            : typeof nested.b64_json === "string"
+                            ? nested.b64_json
+                            : "";
+                    const nestedFormat = nested.mime_type || nested.format || format;
+                    if (nestedRaw) {
+                        pushImage(nestedRaw, nestedFormat);
+                    }
                 }
             }
         }
@@ -935,32 +1023,48 @@ function extractImageFromJson(data) {
         for (const item of data.data) {
             if (!item || typeof item !== "object") continue;
             if (typeof item.b64_json === "string") {
-                entries.push({ raw: item.b64_json, format: item.mime_type || item.format || data.format || "image/png" });
+                pushImage(item.b64_json, item.mime_type || item.format || data.mime_type || data.format || "image/png");
             } else if (typeof item.base64 === "string") {
-                entries.push({ raw: item.base64, format: item.mime_type || item.format || data.format || "image/png" });
+                pushImage(item.base64, item.mime_type || item.format || data.mime_type || data.format || "image/png");
             } else if (typeof item.image === "string") {
-                entries.push({ raw: item.image, format: item.mime_type || item.format || data.format || "image/png" });
+                pushImage(item.image, item.mime_type || item.format || data.mime_type || data.format || "image/png");
             } else if (typeof item.url === "string") {
-                entries.push({ raw: item.url, format: item.mime_type || item.format || data.format || "" });
+                pushImage(item.url, item.mime_type || item.format || data.mime_type || data.format || "");
+            }
+        }
+    }
+
+    if (Array.isArray(data.output)) {
+        for (const entry of data.output) {
+            if (!entry) continue;
+            if (typeof entry === "string") {
+                pushImage(entry, data.format || data.mime_type || "");
+            } else if (typeof entry === "object") {
+                const raw =
+                    typeof entry.image === "string"
+                        ? entry.image
+                        : typeof entry.base64 === "string"
+                        ? entry.base64
+                        : typeof entry.b64_json === "string"
+                        ? entry.b64_json
+                        : "";
+                const format = entry.mime_type || entry.format || data.mime_type || data.format || "";
+                if (raw) {
+                    pushImage(raw, format);
+                }
             }
         }
     }
 
     if (typeof data.b64_json === "string") {
-        entries.push({ raw: data.b64_json, format: data.mime_type || data.format || "image/png" });
+        pushImage(data.b64_json, data.mime_type || data.format || "image/png");
     }
 
     if (typeof data.url === "string") {
-        entries.push({ raw: data.url, format: data.mime_type || data.format || "" });
+        pushImage(data.url, data.mime_type || data.format || "");
     }
 
-    for (const entry of entries) {
-        if (entry.raw) {
-            return entry;
-        }
-    }
-
-    return { raw: "", format: "" };
+    return images;
 }
 
 function normalizeImageData(raw, format = "image/png") {
@@ -978,8 +1082,27 @@ function normalizeImageData(raw, format = "image/png") {
 }
 
 export async function generateCharacterImage(character, overrides = {}) {
-    const { prompt, image } = await imageChain.invoke({ character, overrides });
-    return { prompt, image };
+    const { prompt, images } = await imageChain.invoke({ character, overrides });
+    const promptText = safeString(prompt);
+    const normalizedImages = [];
+    const seen = new Set();
+    const addImage = (value) => {
+        if (!value) return;
+        const normalized = normalizeImageData(value);
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        normalizedImages.push(normalized);
+    };
+    if (Array.isArray(images)) {
+        for (const entry of images) {
+            addImage(entry);
+            if (normalizedImages.length >= MAX_IMAGE_COUNT) break;
+        }
+    } else {
+        addImage(images);
+    }
+    const primaryImage = normalizedImages[0] || "";
+    return { prompt: promptText, image: primaryImage, images: normalizedImages };
 }
 
 export async function enhanceBackgroundAndNotes(character, background = "", notes = "") {
