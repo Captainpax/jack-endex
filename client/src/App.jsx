@@ -7057,6 +7057,7 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     const [imageGenerating, setImageGenerating] = useState(false);
     const [imageError, setImageError] = useState("");
     const [imagePromptPreview, setImagePromptPreview] = useState("");
+    const [imageOptions, setImageOptions] = useState(EMPTY_ARRAY);
     const [backgroundUpdating, setBackgroundUpdating] = useState(false);
     const [backgroundError, setBackgroundError] = useState("");
     const [backgroundSuggestion, setBackgroundSuggestion] = useState(null);
@@ -7086,6 +7087,7 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
     useEffect(() => {
         setImageError("");
         setImagePromptPreview("");
+        setImageOptions(EMPTY_ARRAY);
         setBackgroundError("");
         setBackgroundSuggestion(null);
     }, [slotCharacter]);
@@ -7380,15 +7382,63 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
         if (disableInputs) return;
         setImageError("");
         setImageGenerating(true);
+        setImageOptions(EMPTY_ARRAY);
         try {
-            const result = await LocalAI.generatePortrait({ character: aiCharacterPayload });
-            if (result?.image) {
-                set("profile.portrait", result.image);
-                setPortraitError("");
+            const normalizedPortrait = typeof portraitSrc === "string" ? portraitSrc.trim() : "";
+            const overrides = {};
+            if (normalizedPortrait) {
+                overrides.referenceImage = normalizedPortrait;
+            } else {
+                overrides.count = 4;
             }
-            if (typeof result?.prompt === "string") {
-                const promptText = result.prompt.trim();
-                setImagePromptPreview(promptText);
+            const result = await LocalAI.generatePortrait({ character: aiCharacterPayload, overrides });
+
+            const promptText = typeof result?.prompt === "string" ? result.prompt.trim() : "";
+            setImagePromptPreview(promptText);
+
+            const extractImage = (entry) => {
+                if (!entry) return "";
+                if (typeof entry === "string") {
+                    return entry.trim();
+                }
+                if (typeof entry === "object") {
+                    if (typeof entry.image === "string") return entry.image.trim();
+                    if (typeof entry.url === "string") return entry.url.trim();
+                    if (typeof entry.base64 === "string") return entry.base64.trim();
+                }
+                return "";
+            };
+
+            const rawImages = [];
+            if (Array.isArray(result?.images)) {
+                rawImages.push(...result.images);
+            }
+            if (result?.image) {
+                rawImages.unshift(result.image);
+            }
+
+            const seenImages = new Set();
+            const options = [];
+            for (const entry of rawImages) {
+                const value = extractImage(entry);
+                if (!value || seenImages.has(value)) continue;
+                options.push(value);
+                seenImages.add(value);
+                if (options.length >= 4) break;
+            }
+
+            if (!normalizedPortrait && options.length > 1) {
+                setImageOptions(options);
+                setPortraitError("");
+            } else {
+                const nextImage = options[0];
+                if (nextImage) {
+                    set("profile.portrait", nextImage);
+                    setPortraitError("");
+                    setImageOptions(EMPTY_ARRAY);
+                } else {
+                    throw new Error("Image generation did not return any portraits.");
+                }
             }
         } catch (err) {
             console.error("Failed to generate portrait", err);
@@ -7397,7 +7447,7 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
         } finally {
             setImageGenerating(false);
         }
-    }, [aiCharacterPayload, disableInputs, set, setPortraitError]);
+    }, [aiCharacterPayload, disableInputs, portraitSrc, set, setPortraitError]);
 
     const handlePortraitUploadClick = useCallback(() => {
         if (disableInputs) return;
@@ -7408,10 +7458,28 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
         if (disableInputs) return;
         set("profile.portrait", "");
         setPortraitError("");
+        setImageOptions(EMPTY_ARRAY);
         if (portraitInputRef.current) {
             portraitInputRef.current.value = "";
         }
     }, [disableInputs, set, setPortraitError]);
+
+    const handleApplyGeneratedPortrait = useCallback(
+        (image) => {
+            if (disableInputs) return;
+            const value = typeof image === "string" ? image.trim() : "";
+            if (!value) return;
+            set("profile.portrait", value);
+            setPortraitError("");
+            setImageError("");
+            setImageOptions(EMPTY_ARRAY);
+        },
+        [disableInputs, set, setPortraitError],
+    );
+
+    const handleDismissGeneratedOptions = useCallback(() => {
+        setImageOptions(EMPTY_ARRAY);
+    }, []);
 
     const handlePortraitUpload = useCallback(
         (event) => {
@@ -7699,6 +7767,42 @@ function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
                                                 {imageError && (
                                                     <p className="text-error sheet-portrait__error">{imageError}</p>
                                                 )}
+                                            </div>
+                                        )}
+                                        {imageOptions.length > 0 && (
+                                            <div className="sheet-portrait__options">
+                                                <p className="sheet-portrait__options-text">
+                                                    Choose a portrait to apply to this character.
+                                                </p>
+                                                <div className="sheet-portrait__options-grid">
+                                                    {imageOptions.map((option, index) => (
+                                                        <button
+                                                            key={`${index}-${option.slice(0, 32)}`}
+                                                            type="button"
+                                                            className="sheet-portrait__option"
+                                                            onClick={() => handleApplyGeneratedPortrait(option)}
+                                                            disabled={disableInputs || imageGenerating}
+                                                        >
+                                                            <img
+                                                                src={option}
+                                                                alt={`Generated portrait option ${index + 1}`}
+                                                            />
+                                                            <span className="sheet-portrait__option-label">
+                                                                Select option {index + 1}
+                                                            </span>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                                <div className="sheet-portrait__options-actions">
+                                                    <button
+                                                        type="button"
+                                                        className="btn ghost btn-small"
+                                                        onClick={handleDismissGeneratedOptions}
+                                                        disabled={disableInputs || imageGenerating}
+                                                    >
+                                                        Dismiss options
+                                                    </button>
+                                                </div>
                                             </div>
                                         )}
                                         {imagePromptPreview && (
