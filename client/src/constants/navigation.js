@@ -79,8 +79,8 @@ export const PLAYER_NAV = [
     },
     {
         key: "items",
-        label: "Shared Items",
-        description: "Treasures the party can access",
+        label: "Party Stash",
+        description: "Shared loot curated for the party",
     },
     {
         key: "gear",
