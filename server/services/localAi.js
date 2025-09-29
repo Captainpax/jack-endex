@@ -1081,6 +1081,233 @@ function normalizeImageData(raw, format = "image/png") {
     return `data:${safeFormat};base64,${raw}`;
 }
 
+function normalizeTextValue(value) {
+    if (value === null || value === undefined) return "";
+    if (typeof value === "number") {
+        return Number.isFinite(value) ? String(value) : "";
+    }
+    if (typeof value === "boolean") {
+        return value ? "true" : "false";
+    }
+    if (typeof value === "string") {
+        return value.trim();
+    }
+    return safeString(value);
+}
+
+function toList(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) {
+        return value.map((entry) => normalizeTextValue(entry)).filter(Boolean);
+    }
+    const text = normalizeTextValue(value);
+    if (!text) return [];
+    return text
+        .split(/[,/\n]+/)
+        .map((part) => part.trim())
+        .filter(Boolean);
+}
+
+function normalizeConceptInput(concept) {
+    if (!concept || typeof concept !== "object") return {};
+    const normalized = {
+        kind: normalizeTextValue(concept.kind) || "",
+        name: normalizeTextValue(concept.name) || "",
+        type: normalizeTextValue(concept.type) || "",
+        category: normalizeTextValue(concept.category) || "",
+        subcategory: normalizeTextValue(concept.subcategory) || "",
+        slot: normalizeTextValue(concept.slot) || "",
+        tags: toList(concept.tags),
+        description: normalizeTextValue(concept.description) || "",
+        personality: normalizeTextValue(concept.personality) || "",
+        arcana: normalizeTextValue(concept.arcana) || "",
+        alignment: normalizeTextValue(concept.alignment) || "",
+        summary: normalizeTextValue(concept.summary) || "",
+        role: normalizeTextValue(concept.role) || "",
+        extra: normalizeTextValue(concept.extra) || "",
+    };
+
+    const resistances = {};
+    if (concept.resistances && typeof concept.resistances === "object") {
+        for (const [key, value] of Object.entries(concept.resistances)) {
+            const list = toList(value);
+            if (list.length > 0) {
+                resistances[key] = list;
+            }
+        }
+    }
+    normalized.resistances = resistances;
+
+    const stats = {};
+    if (concept.stats && typeof concept.stats === "object") {
+        for (const [key, value] of Object.entries(concept.stats)) {
+            const label = normalizeTextValue(key);
+            const text = normalizeTextValue(value);
+            if (label && text) {
+                stats[label] = text;
+            }
+        }
+    }
+    normalized.stats = stats;
+
+    normalized.skills = toList(concept.skills || concept.abilities);
+    normalized.effects = toList(concept.effects);
+
+    return normalized;
+}
+
+function formatResistanceSummary(resistances) {
+    if (!resistances || typeof resistances !== "object") return "";
+    const parts = [];
+    for (const [rawKey, value] of Object.entries(resistances)) {
+        const list = Array.isArray(value) ? value.filter(Boolean) : [];
+        if (list.length === 0) continue;
+        const key = rawKey.toLowerCase();
+        let label;
+        switch (key) {
+            case "weak":
+                label = "Weak to";
+                break;
+            case "resist":
+                label = "Resists";
+                break;
+            case "block":
+                label = "Blocks";
+                break;
+            case "drain":
+                label = "Drains";
+                break;
+            case "reflect":
+                label = "Reflects";
+                break;
+            case "null":
+            case "nullify":
+                label = "Nullifies";
+                break;
+            case "absorb":
+                label = "Absorbs";
+                break;
+            default:
+                label = rawKey.replace(/[_-]+/g, " ");
+                label = label.charAt(0).toUpperCase() + label.slice(1);
+        }
+        parts.push(`${label} ${list.join(", ")}`);
+    }
+    return parts.join("; ");
+}
+
+function formatStatsSummary(stats) {
+    if (!stats || typeof stats !== "object") return "";
+    const entries = [];
+    for (const [key, value] of Object.entries(stats)) {
+        const label = normalizeTextValue(key).toUpperCase();
+        const text = normalizeTextValue(value);
+        if (!label || !text) continue;
+        entries.push(`${label} ${text}`);
+    }
+    return entries.join(", ");
+}
+
+function buildConceptPrompt(concept) {
+    const normalized = normalizeConceptInput(concept);
+    const kind = normalized.kind || "";
+    const name = normalized.name || "mysterious subject";
+
+    const tagList = normalized.tags || [];
+    const traitParts = [];
+    if (normalized.type) {
+        traitParts.push(normalized.type);
+    }
+    if (normalized.category && normalized.subcategory) {
+        traitParts.push(`${normalized.category} - ${normalized.subcategory}`);
+    } else if (normalized.category) {
+        traitParts.push(normalized.category);
+    }
+    if (normalized.slot) {
+        traitParts.push(`${normalized.slot} slot`);
+    }
+    if (normalized.arcana) {
+        traitParts.push(`${normalized.arcana} arcana`);
+    }
+    if (normalized.alignment) {
+        traitParts.push(`${normalized.alignment} alignment`);
+    }
+    if (normalized.role) {
+        traitParts.push(normalized.role);
+    }
+
+    const descriptors = Array.from(new Set([...traitParts, ...tagList])).filter(Boolean);
+
+    const resistSummary = formatResistanceSummary(normalized.resistances);
+    const statsSummary = formatStatsSummary(normalized.stats);
+
+    const summaryParts = [
+        normalized.description,
+        normalized.personality ? `Personality: ${normalized.personality}` : "",
+        resistSummary ? `Resistances: ${resistSummary}` : "",
+        statsSummary ? `Stats: ${statsSummary}` : "",
+        normalized.skills.length > 0 ? `Abilities: ${normalized.skills.join(", ")}` : "",
+        normalized.effects.length > 0 ? `Effects: ${normalized.effects.join(", ")}` : "",
+        normalized.summary,
+        normalized.extra,
+    ].filter(Boolean);
+
+    const subject = kind ? `${kind} named ${name}` : name;
+    const intro = `Highly detailed ${kind || "fantasy"} illustration of ${subject}`;
+    const traitsLine = descriptors.length > 0 ? `Design cues: ${descriptors.join(", ")}` : "";
+    const narrative = summaryParts.join(" ");
+
+    const basePromptParts = [intro];
+    if (traitsLine) basePromptParts.push(traitsLine);
+    if (narrative) basePromptParts.push(narrative);
+    basePromptParts.push("Digital painting, dramatic lighting, rich colors, artstation, 4k");
+    const basePrompt = basePromptParts.filter(Boolean).join(". ");
+
+    const variables = {
+        Name: name,
+        Kind: kind,
+        Type: normalized.type,
+        Category: normalized.category,
+        Subcategory: normalized.subcategory,
+        Slot: normalized.slot,
+        Traits: traitParts.join(", "),
+        Tags: tagList.join(", "),
+        Description: normalized.description,
+        Personality: normalized.personality,
+        Arcana: normalized.arcana,
+        Alignment: normalized.alignment,
+        Resistances: resistSummary,
+        Stats: statsSummary,
+        Skills: normalized.skills.join(", "),
+        Effects: normalized.effects.join(", "),
+        Summary: narrative,
+    };
+
+    return { basePrompt, variables };
+}
+
+export async function generateConceptImage(concept, overrides = {}) {
+    const { basePrompt, variables } = buildConceptPrompt(concept);
+    const prompt = await enhanceStableDiffusionPrompt(basePrompt, variables);
+    const count = clampImageCount(overrides?.count);
+    const referenceImages =
+        overrides?.referenceImages ?? overrides?.referenceImage ?? overrides?.reference ?? undefined;
+    const images = await callImageEndpoint(prompt, overrides?.style, { count, referenceImages });
+    const normalizedImages = [];
+    const seen = new Set();
+    if (Array.isArray(images)) {
+        for (const entry of images) {
+            const normalized = normalizeImageData(entry);
+            if (!normalized || seen.has(normalized)) continue;
+            seen.add(normalized);
+            normalizedImages.push(normalized);
+            if (normalizedImages.length >= MAX_IMAGE_COUNT) break;
+        }
+    }
+    const primaryImage = normalizedImages[0] || "";
+    return { prompt: safeString(prompt), image: primaryImage, images: normalizedImages };
+}
+
 export async function generateCharacterImage(character, overrides = {}) {
     const { prompt, images } = await imageChain.invoke({ character, overrides });
     const promptText = safeString(prompt);
