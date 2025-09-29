@@ -439,50 +439,51 @@ function extractGearName(item) {
 
 function summarizeEquipment(gear) {
     if (!gear || typeof gear !== "object") return "";
-    const equipped = [];
-    const bagArray = Array.isArray(gear.bag) ? gear.bag : [];
-    const bagMap = new Map();
-    for (const entry of bagArray) {
-        if (!entry || typeof entry !== "object") continue;
-        const id = typeof entry.id === "string" ? entry.id : null;
-        if (id && !bagMap.has(id)) {
-            bagMap.set(id, entry);
+
+    const entries = collectEquippedGearEntries(gear);
+    const summaryParts = [];
+    const usedEntries = new Set();
+    const usedNames = new Set();
+
+    const noteEntry = (label, entry) => {
+        if (!entry || usedEntries.has(entry)) return;
+        const displayLabel = label || entry.label || "Gear";
+        summaryParts.push(`${displayLabel}: ${entry.name}`);
+        usedEntries.add(entry);
+        usedNames.add(entry.name.toLowerCase());
+    };
+
+    const weaponEntry = findEntryBySlot(entries, ["weapon", "mainhand", "offhand"]);
+    const accessoryEntry = findEntryBySlot(entries, ["accessory", "trinket", "neck"]);
+    const armorEntry = findEntryBySlot(entries, ["armor", "body", "torso", "outfit", "clothing"]);
+
+    noteEntry("Weapon", weaponEntry);
+    noteEntry("Armor", armorEntry);
+    noteEntry("Accessory", accessoryEntry);
+
+    for (const entry of entries) {
+        noteEntry(null, entry);
+        if (summaryParts.length >= 6) break;
+    }
+
+    if (summaryParts.length < 6) {
+        const bagArray = Array.isArray(gear.bag) ? gear.bag : [];
+        const extras = [];
+        for (const item of bagArray) {
+            const name = extractGearName(item);
+            if (!name) continue;
+            const normalized = name.toLowerCase();
+            if (usedNames.has(normalized)) continue;
+            extras.push(name);
+            usedNames.add(normalized);
+            if (extras.length >= 3) break;
+        }
+        if (extras.length > 0) {
+            summaryParts.push(`Pack items: ${extras.join(", ")}`);
         }
     }
 
-    if (gear.equipped && typeof gear.equipped === "object") {
-        for (const value of Object.values(gear.equipped)) {
-            const name = extractGearName(value);
-            if (name) equipped.push(name);
-        }
-    }
-
-    const slotEntries = gear.slots && typeof gear.slots === "object" ? gear.slots : null;
-    if (slotEntries) {
-        for (const value of Object.values(slotEntries)) {
-            if (!value || typeof value !== "object") continue;
-            let item = null;
-            if (value.item && typeof value.item === "object") {
-                item = value.item;
-            } else if (value.itemId && bagMap.has(value.itemId)) {
-                item = bagMap.get(value.itemId);
-            }
-            const name = extractGearName(item || value);
-            if (name) equipped.push(name);
-        }
-    } else if (!gear.equipped || typeof gear.equipped !== "object") {
-        for (const value of Object.values(gear)) {
-            const name = extractGearName(value);
-            if (name) equipped.push(name);
-        }
-    }
-
-    const extras = bagArray
-        .map((entry) => extractGearName(entry))
-        .filter(Boolean)
-        .slice(0, 4);
-    const unique = Array.from(new Set([...equipped, ...extras]));
-    return unique.slice(0, 6).join(", ");
+    return summaryParts.slice(0, 6).join("; ");
 }
 
 function buildPortraitVariables(character, overrides = {}) {
@@ -609,15 +610,31 @@ function summarizeHistoryForPrompt(value) {
     return sentence;
 }
 
-function inferArmor(gear) {
-    if (!gear || typeof gear !== "object") return "";
-    const preferred = ["armor", "body", "torso", "outfit", "clothing"];
-    const legacySlots = gear.equipped && typeof gear.equipped === "object" ? gear.equipped : {};
-    for (const key of preferred) {
-        const item = legacySlots[key];
-        const name = safeString(item?.name || item?.label);
-        if (name) return name;
-    }
+const GEAR_SLOT_LABEL_OVERRIDES = { weapon: "Weapon", armor: "Armor", accessory: "Accessory" };
+
+function formatGearSlotLabel(key) {
+    if (!key) return "Gear";
+    const normalizedKey = String(key).trim();
+    const lower = normalizedKey.toLowerCase();
+    if (GEAR_SLOT_LABEL_OVERRIDES[lower]) return GEAR_SLOT_LABEL_OVERRIDES[lower];
+    const cleaned = normalizedKey.replace(/[-_]+/g, " ").trim();
+    if (!cleaned) return "Gear";
+    return cleaned
+        .split(/\s+/)
+        .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : ""))
+        .join(" ");
+}
+
+function normalizeSlotKey(key) {
+    if (!key) return "";
+    return String(key)
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "");
+}
+
+function collectEquippedGearEntries(gear) {
+    if (!gear || typeof gear !== "object") return [];
 
     const bagArray = Array.isArray(gear.bag) ? gear.bag : [];
     const bagMap = new Map();
@@ -629,24 +646,83 @@ function inferArmor(gear) {
         }
     }
 
-    const slotEntries = gear.slots && typeof gear.slots === "object" ? gear.slots : {};
-    for (const key of preferred) {
-        const value = slotEntries[key];
-        if (!value || typeof value !== "object") continue;
-        let item = null;
-        if (value.item && typeof value.item === "object") {
-            item = value.item;
-        } else if (value.itemId && bagMap.has(value.itemId)) {
-            item = bagMap.get(value.itemId);
+    const entries = [];
+    const seen = new Set();
+
+    const pushEntry = (slotKey, source) => {
+        const name = extractGearName(source);
+        if (!name) return;
+        const slot = normalizeSlotKey(slotKey);
+        const label = slotKey ? formatGearSlotLabel(slotKey) : "Gear";
+        const dedupeKey = `${slot}:${name.toLowerCase()}`;
+        if (seen.has(dedupeKey)) return;
+        seen.add(dedupeKey);
+        entries.push({ slot, label, name });
+    };
+
+    const slotEntries = gear.slots && typeof gear.slots === "object" ? gear.slots : null;
+    if (slotEntries) {
+        for (const [slotKey, value] of Object.entries(slotEntries)) {
+            if (!value || typeof value !== "object") continue;
+            let item = value;
+            if (value.item && typeof value.item === "object") {
+                item = value.item;
+            } else if (value.itemId && bagMap.has(value.itemId)) {
+                item = bagMap.get(value.itemId);
+            }
+            pushEntry(slotKey, item);
         }
-        const name = safeString(item?.name || item?.label);
+    }
+
+    const legacyEquipped = gear.equipped && typeof gear.equipped === "object" ? gear.equipped : null;
+    if (legacyEquipped) {
+        for (const [slotKey, value] of Object.entries(legacyEquipped)) {
+            pushEntry(slotKey, value);
+        }
+    }
+
+    if (!slotEntries && (!legacyEquipped || typeof legacyEquipped !== "object")) {
+        for (const [slotKey, value] of Object.entries(gear)) {
+            if (slotKey === "bag") continue;
+            pushEntry(slotKey, value);
+        }
+    }
+
+    return entries;
+}
+
+function findEntryBySlot(entries, slotKeys) {
+    const targets = slotKeys.map((key) => normalizeSlotKey(key)).filter(Boolean);
+    if (targets.length === 0) return null;
+    for (const entry of entries) {
+        if (!entry || !entry.slot) continue;
+        if (targets.includes(entry.slot)) {
+            return entry;
+        }
+    }
+    return null;
+}
+
+function inferArmor(gear) {
+    if (!gear || typeof gear !== "object") return "";
+    const entries = collectEquippedGearEntries(gear);
+    const armorEntry = findEntryBySlot(entries, ["armor", "body", "torso", "outfit", "clothing"]);
+    if (armorEntry) {
+        return armorEntry.name;
+    }
+
+    for (const entry of entries) {
+        if (entry.label.toLowerCase().includes("armor")) {
+            return entry.name;
+        }
+    }
+
+    const bagArray = Array.isArray(gear.bag) ? gear.bag : [];
+    for (const item of bagArray) {
+        const name = extractGearName(item);
         if (name) return name;
     }
 
-    for (const entry of bagArray) {
-        const name = safeString(entry?.name || entry?.label);
-        if (name) return name;
-    }
     return "";
 }
 
