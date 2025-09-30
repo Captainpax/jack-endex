@@ -20,12 +20,13 @@ import {
 import { WORLD_SKILL_REFERENCE } from "../constants/referenceContent";
 import { get } from "../utils/object";
 import { deepClone, normalizeCharacter, normalizeSkills } from "../utils/character";
+import { idsMatch } from "../utils/ids";
 
 import MathField from "./MathField";
 import { createEmptySkillViewPrefs, sanitizeSkillViewPrefs } from "../utils/skillViewPrefs";
 
 function WorldSkillsTab({ game, me, onUpdate }) {
-    const isDM = game.dmId === me.id;
+    const isDM = idsMatch(game.dmId, me.id);
     const abilityDefault = ABILITY_DEFS[0]?.key || "INT";
     const worldSkills = useMemo(() => normalizeWorldSkillDefs(game.worldSkills), [game.worldSkills]);
     const [skillQuery, setSkillQuery] = useState("");

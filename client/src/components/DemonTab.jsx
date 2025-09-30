@@ -21,6 +21,7 @@ import {
     resolveAbilityState,
 } from "../constants/gameData";
 import { EMPTY_ARRAY, EMPTY_OBJECT } from "../utils/constants";
+import { idsMatch } from "../utils/ids";
 import {
     FUSION_OVERRIDE_RANDOM,
     MOON_PHASE_OPTIONS,
@@ -1056,7 +1057,7 @@ function DemonTab({ game, me, onUpdate }) {
     );
     const combatSkills = useMemo(() => normalizeCombatSkillDefs(game.combatSkills), [game.combatSkills]);
 
-    const isDM = game.dmId === me.id;
+    const isDM = idsMatch(game.dmId, me.id);
     const canEdit = isDM || game.permissions?.canEditDemons;
     const [activeSubTab, setActiveSubTab] = useState("shared");
 
