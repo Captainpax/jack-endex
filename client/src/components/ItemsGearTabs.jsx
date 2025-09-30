@@ -8,6 +8,7 @@ import {
     isConsumableType,
     isGearCategory,
 } from "../utils/items";
+import { idsMatch } from "../utils/ids";
 
 const INVENTORY_SORT_OPTIONS = [
     { value: "name", label: "Name" },
@@ -355,7 +356,7 @@ function ItemsTab({ game, me, onUpdate, realtime }) {
     const [sortMode, setSortMode] = useState(INVENTORY_SORT_OPTIONS[0]?.value || "name");
     const [favoritesOnly, setFavoritesOnly] = useState(false);
 
-    const isDM = game.dmId === me.id;
+    const isDM = idsMatch(game.dmId, me.id);
     const canEdit = isDM || game.permissions?.canEditItems;
 
     const { favorites, toggleFavorite, isFavorite, clearMissing } = useItemFavorites(game.id, me.id);
@@ -2803,7 +2804,7 @@ function GearTab({ game, me, onUpdate }) {
     const [selectedPlayerId, setSelectedPlayerId] = useState("");
     const [giveBusyId, setGiveBusyId] = useState(null);
 
-    const isDM = game.dmId === me.id;
+    const isDM = idsMatch(game.dmId, me.id);
     const canEdit = isDM || game.permissions?.canEditGear;
 
     const resetForm = useCallback(() => {

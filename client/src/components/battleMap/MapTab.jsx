@@ -4,6 +4,7 @@ import useBattleLogger from "../../hooks/useBattleLogger";
 import RealtimeContext from "../../contexts/RealtimeContext";
 import DemonImage from "../DemonImage";
 import { MAP_DEFAULT_SETTINGS, mapReadBoolean, describePlayerName } from "./mapShared";
+import { idsMatch } from "../../utils/ids";
 
 const MAP_BRUSH_COLORS = ['#f97316', '#38bdf8', '#a855f7', '#22c55e', '#f472b6'];
 const MAP_BRUSH_STORAGE_KEY = 'battlemap.brushPalette';
@@ -1666,7 +1667,7 @@ function describeDemonTooltip(demon) {
 }
 
 function MapTab({ game, me }) {
-    const isDM = game.dmId === me.id;
+    const isDM = idsMatch(game.dmId, me.id);
     const realtime = useContext(RealtimeContext);
     const logBattle = useBattleLogger(game.id);
     const sidebarTabs = useMemo(
@@ -2076,7 +2077,7 @@ function MapTab({ game, me }) {
         if (game.dmId) {
             options.push({
                 id: game.dmId,
-                label: `Dungeon Master${game.dmId === me.id ? ' (you)' : ''}`,
+                label: `Dungeon Master${idsMatch(game.dmId, me.id) ? ' (you)' : ''}`,
             });
         }
         if (Array.isArray(game.players)) {
