@@ -60,6 +60,7 @@ import { createEmptySkillViewPrefs, sanitizeSkillViewPrefs } from "./utils/skill
 import { deepClone, normalizeCharacter, normalizeSkills } from "./utils/character";
 import { get } from "./utils/object";
 import { getMainMenuTrack } from "./utils/music";
+import { idsMatch, normalizeId } from "./utils/ids";
 import { COMBAT_SKILL_LIBRARY, findCombatSkillById, findCombatSkillByName } from "@shared/combatSkills.js";
 import RealtimeContext from "./contexts/RealtimeContext";
 
@@ -91,6 +92,67 @@ function normalizePrimaryBot(primaryBot) {
 }
 
 
+
+function normalizePlayerRecord(player) {
+    if (!player || typeof player !== "object") return player;
+    const normalizedId = normalizeId(player.userId);
+    if (normalizedId === null || normalizedId === undefined) {
+        if (player.userId === null || player.userId === undefined || player.userId === "") {
+            return { ...player, userId: null };
+        }
+        return { ...player, userId: String(player.userId) };
+    }
+    if (normalizedId !== player.userId) {
+        return { ...player, userId: normalizedId };
+    }
+    return player;
+}
+
+function normalizeGameRecord(game) {
+    if (!game || typeof game !== "object") return game;
+    const dmCandidate = normalizeId(game.dmId);
+    const normalizedDmId =
+        dmCandidate === null || dmCandidate === undefined
+            ? game.dmId === null || game.dmId === undefined || game.dmId === ""
+                ? null
+                : String(game.dmId)
+            : dmCandidate;
+
+    let playersChanged = false;
+    let normalizedPlayers = game.players;
+    if (Array.isArray(game.players)) {
+        const mapped = game.players.map((player) => {
+            const normalized = normalizePlayerRecord(player);
+            if (normalized !== player) {
+                playersChanged = true;
+            }
+            return normalized;
+        });
+        if (playersChanged) {
+            normalizedPlayers = mapped;
+        }
+    }
+
+    const dmUnchanged = normalizedDmId === game.dmId;
+    const playersUnchanged = normalizedPlayers === game.players;
+    if (dmUnchanged && playersUnchanged) {
+        return game;
+    }
+
+    const next = {
+        ...game,
+        dmId: normalizedDmId,
+    };
+    if (Array.isArray(normalizedPlayers)) {
+        next.players = normalizedPlayers;
+    }
+    return next;
+}
+
+function normalizeGameList(list) {
+    if (!Array.isArray(list)) return [];
+    return list.map((game) => normalizeGameRecord(game));
+}
 
 function safeAiString(value) {
     if (typeof value === "string") return value.trim();
@@ -703,7 +765,7 @@ export default function App() {
     const meId = me?.id;
 
     useEffect(() => {
-        if (!active || active.dmId !== meId) {
+        if (!active || !idsMatch(active.dmId, meId)) {
             if (dmSheetPlayerId !== null) setDmSheetPlayerId(null);
             return;
         }
@@ -716,11 +778,12 @@ export default function App() {
             return;
         }
 
-        if (dmSheetPlayerId && players.some((p) => p.userId === dmSheetPlayerId)) {
+        if (dmSheetPlayerId && players.some((p) => idsMatch(p.userId, dmSheetPlayerId))) {
             return;
         }
 
-        setDmSheetPlayerId(players[0].userId);
+        const firstPlayerId = normalizeId(players[0]?.userId) ?? players[0]?.userId ?? null;
+        setDmSheetPlayerId(firstPlayerId);
     }, [active, dmSheetPlayerId, meId]);
 
     useEffect(() => {
@@ -744,9 +807,15 @@ export default function App() {
             try {
                 const m = await Auth.me();
                 if (!mounted) return;
-                setMe(m);
+                const normalizedMe = m
+                    ? {
+                          ...m,
+                          id: normalizeId(m.id) ?? (m.id ?? null),
+                      }
+                    : null;
+                setMe(normalizedMe);
                 setLoading(false);
-                if (m) setGames(await Games.list());
+                if (m) setGames(normalizeGameList(await Games.list()));
             } catch (e) {
                 console.error(e);
                 if (mounted) setLoading(false);
@@ -767,7 +836,7 @@ export default function App() {
 
         const applyStateForGame = (gameData) => {
             if (!gameData) return;
-            const isDM = gameData.dmId === me.id;
+            const isDM = idsMatch(gameData.dmId, me.id);
             const nav = buildNavigation({
                 role: isDM ? "dm" : "player",
                 isServerAdmin: isServerAdminClient(me),
@@ -780,17 +849,22 @@ export default function App() {
 
             if (isDM) {
                 let targetPlayerId = null;
-                if (link.player && Array.isArray(gameData.players)) {
-                    const match = gameData.players.find((p) => p && p.userId === link.player);
-                    if (match && match.userId) targetPlayerId = match.userId;
+                const linkPlayerId = normalizeId(link.player) ?? link.player ?? null;
+                if (linkPlayerId && Array.isArray(gameData.players)) {
+                    const match = gameData.players.find((p) => p && idsMatch(p.userId, linkPlayerId));
+                    if (match && match.userId) {
+                        targetPlayerId = normalizeId(match.userId) ?? match.userId;
+                    }
                 }
                 if (!targetPlayerId && Array.isArray(gameData.players)) {
                     const first = gameData.players.find(
                         (p) => p && (p.role || "").toLowerCase() !== "dm" && p.userId
                     );
-                    targetPlayerId = first?.userId || null;
+                    targetPlayerId = normalizeId(first?.userId) ?? first?.userId ?? null;
                 }
-                setDmSheetPlayerId((prev) => (prev === targetPlayerId ? prev : targetPlayerId || null));
+                setDmSheetPlayerId((prev) =>
+                    idsMatch(prev, targetPlayerId) ? prev : targetPlayerId ?? null
+                );
             } else {
                 setDmSheetPlayerId((prev) => (prev === null ? prev : null));
             }
@@ -807,8 +881,9 @@ export default function App() {
             try {
                 const full = await Games.get(link.id);
                 if (cancelled) return;
-                setActive(full);
-                applyStateForGame(full);
+                const normalizedFull = normalizeGameRecord(full);
+                setActive(normalizedFull);
+                applyStateForGame(normalizedFull);
             } catch (err) {
                 console.error(err);
                 if (!cancelled) {
@@ -838,15 +913,17 @@ export default function App() {
         (async () => {
             try {
                 const result = await Games.joinByCode(pendingJoinCode);
-                setGames(await Games.list());
+                setGames(normalizeGameList(await Games.list()));
                 if (result?.gameId) {
                     const full = await Games.get(result.gameId);
-                    setActive(full);
-                    if (full.dmId === me.id) {
+                    const normalizedFull = normalizeGameRecord(full);
+                    setActive(normalizedFull);
+                    if (idsMatch(normalizedFull.dmId, me.id)) {
                         const firstPlayer = (full.players || []).find(
                             (p) => (p?.role || "").toLowerCase() !== "dm"
                         );
-                        setDmSheetPlayerId(firstPlayer ? firstPlayer.userId : null);
+                        const normalizedFirstId = normalizeId(firstPlayer?.userId);
+                        setDmSheetPlayerId(normalizedFirstId ?? firstPlayer?.userId ?? null);
                         setTab("overview");
                     } else {
                         setDmSheetPlayerId(null);
@@ -885,8 +962,14 @@ export default function App() {
             onAuthed={async () => {
                 try {
                     const m = await Auth.me();
-                    setMe(m);
-                    setGames(await Games.list());
+                    const normalizedMe = m
+                        ? {
+                              ...m,
+                              id: normalizeId(m.id) ?? (m.id ?? null),
+                          }
+                        : null;
+                    setMe(normalizedMe);
+                    setGames(normalizeGameList(await Games.list()));
                 } catch (e) {
                     alert(e.message);
                 }
@@ -1204,7 +1287,7 @@ function Home({ me, games, onOpen, onCreate, onDelete }) {
                 <div className="list">
                     {gameList.length === 0 && <div>No games yet.</div>}
                     {gameList.map((g) => {
-                        const isOwner = g.dmId === me.id;
+                        const isOwner = idsMatch(g.dmId, me.id);
                         return (
                             <div
                                 key={g.id}
@@ -1286,26 +1369,28 @@ function AuthenticatedApp({
                 games={games}
                 onOpen={async (g) => {
                     const full = await Games.get(g.id);
-                    setActive(full);
-                    if (full.dmId === me.id) {
-                        const firstPlayer = (full.players || []).find(
+                    const normalizedFull = normalizeGameRecord(full);
+                    setActive(normalizedFull);
+                    if (idsMatch(normalizedFull.dmId, me.id)) {
+                        const firstPlayer = (normalizedFull.players || []).find(
                             (p) => (p?.role || "").toLowerCase() !== "dm"
                         );
-                        setDmSheetPlayerId(firstPlayer ? firstPlayer.userId : null);
+                        const normalizedFirstId = normalizeId(firstPlayer?.userId);
+                        setDmSheetPlayerId(normalizedFirstId ?? firstPlayer?.userId ?? null);
                     } else {
                         setDmSheetPlayerId(null);
                     }
-                    setTab(full.dmId === me.id ? "overview" : "sheet");
+                    setTab(idsMatch(normalizedFull.dmId, me.id) ? "overview" : "sheet");
                 }}
                 onCreate={async (name) => {
                     await Games.create(name);
-                    setGames(await Games.list());
+                    setGames(normalizeGameList(await Games.list()));
                 }}
                 onDelete={async (game) => {
                     if (!confirm(`Delete the game "${game.name}"? This cannot be undone.`)) return;
                     try {
                         await Games.delete(game.id);
-                        setGames(await Games.list());
+                        setGames(normalizeGameList(await Games.list()));
                         alert("Game deleted");
                     } catch (e) {
                         alert(e.message);
@@ -1339,7 +1424,7 @@ function GameView({
     dmSheetPlayerId,
     setDmSheetPlayerId,
 }) {
-    const isDM = game.dmId === me.id;
+    const isDM = idsMatch(game.dmId, me.id);
     const [apiBusy, setApiBusy] = useState(false);
     const [refreshBusy, setRefreshBusy] = useState(false);
     const [isDesktop, setIsDesktop] = useState(() =>
@@ -1392,7 +1477,7 @@ function GameView({
 
     const refreshCampaignList = useCallback(async () => {
         try {
-            setGames(await Games.list());
+            setGames(normalizeGameList(await Games.list()));
         } catch (err) {
             console.warn("Failed to refresh games", err);
         }
@@ -1453,7 +1538,7 @@ function GameView({
     useEffect(() => {
         if (!sheetPrefKey || !isDM || loadedSheetRef.current) return;
         const stored = typeof window !== "undefined" ? localStorage.getItem(sheetPrefKey) : null;
-        if (stored && campaignPlayers.some((p) => p.userId === stored)) {
+        if (stored && campaignPlayers.some((p) => idsMatch(p.userId, stored))) {
             setDmSheetPlayerId(stored);
         }
         loadedSheetRef.current = true;
@@ -1467,7 +1552,7 @@ function GameView({
     }, [dmSheetPlayerId, isDM, sheetPrefKey]);
 
     const myEntry = useMemo(
-        () => campaignPlayers.find((p) => p.userId === me.id) || null,
+        () => campaignPlayers.find((p) => idsMatch(p.userId, me.id)) || null,
         [campaignPlayers, me.id]
     );
 
@@ -1536,8 +1621,9 @@ function GameView({
     const refreshGameData = useCallback(async () => {
         if (!game?.id) return null;
         const full = await Games.get(game.id);
-        setActive(full);
-        return full;
+        const normalizedFull = normalizeGameRecord(full);
+        setActive(normalizedFull);
+        return normalizedFull;
     }, [game?.id, setActive]);
 
     const handleRefresh = useCallback(async () => {
@@ -1862,7 +1948,8 @@ function GameView({
                             game={game}
                             onInspectPlayer={(player) => {
                                 if (!player?.userId) return;
-                                setDmSheetPlayerId(player.userId);
+                                const nextId = normalizeId(player.userId) ?? player.userId;
+                                setDmSheetPlayerId(nextId ?? null);
                                 setTab("sheet");
                             }}
                         />
@@ -1873,11 +1960,18 @@ function GameView({
                             me={me}
                             game={game}
                             targetUserId={isDM ? dmSheetPlayerId : undefined}
-                            onChangePlayer={isDM ? setDmSheetPlayerId : undefined}
+                            onChangePlayer={
+                                isDM
+                                    ? (nextId) =>
+                                          setDmSheetPlayerId(
+                                              normalizeId(nextId) ?? nextId ?? null,
+                                          )
+                                    : undefined
+                            }
                             onSave={async (ch) => {
                                 await Games.saveCharacter(game.id, ch);
                                 const full = await Games.get(game.id);
-                                setActive(full);
+                                setActive(normalizeGameRecord(full));
                             }}
                         />
                     )}
@@ -1892,7 +1986,8 @@ function GameView({
                                 isDM
                                     ? (player) => {
                                           if (!player?.userId) return;
-                                          setDmSheetPlayerId(player.userId);
+                                          const nextId = normalizeId(player.userId) ?? player.userId;
+                                          setDmSheetPlayerId(nextId ?? null);
                                           setTab("sheet");
                                       }
                                     : undefined
@@ -1908,7 +2003,7 @@ function GameView({
                             me={me}
                             onUpdate={async () => {
                                 const full = await Games.get(game.id);
-                                setActive(full);
+                                setActive(normalizeGameRecord(full));
                             }}
                             realtime={realtime}
                         />
@@ -1920,7 +2015,7 @@ function GameView({
                             me={me}
                             onUpdate={async () => {
                                 const full = await Games.get(game.id);
-                                setActive(full);
+                                setActive(normalizeGameRecord(full));
                             }}
                         />
                     )}
@@ -1931,7 +2026,7 @@ function GameView({
                             me={me}
                             onUpdate={async () => {
                                 const full = await Games.get(game.id);
-                                setActive(full);
+                                setActive(normalizeGameRecord(full));
                             }}
                         />
                     )}
@@ -1942,7 +2037,7 @@ function GameView({
                             me={me}
                             onUpdate={async () => {
                                 const full = await Games.get(game.id);
-                                setActive(full);
+                                setActive(normalizeGameRecord(full));
                             }}
                         />
                     )}
@@ -1953,7 +2048,7 @@ function GameView({
                             me={me}
                             onUpdate={async () => {
                                 const full = await Games.get(game.id);
-                                setActive(full);
+                                setActive(normalizeGameRecord(full));
                             }}
                         />
                     )}
@@ -1978,7 +2073,7 @@ function GameView({
                             onUpdate={async (per) => {
                                 await Games.setPerms(game.id, per);
                                 const full = await Games.get(game.id);
-                                setActive(full);
+                                setActive(normalizeGameRecord(full));
                             }}
                             onGameRefresh={handleRefresh}
                             onKickPlayer={
@@ -1986,13 +2081,13 @@ function GameView({
                                     ? async (playerId) => {
                                           if (!playerId) return;
                                           try {
-                                              if (dmSheetPlayerId === playerId) {
+                                              if (idsMatch(dmSheetPlayerId, playerId)) {
                                                   setDmSheetPlayerId(null);
                                               }
                                               await Games.removePlayer(game.id, playerId);
                                               const full = await Games.get(game.id);
-                                              setActive(full);
-                                              setGames(await Games.list());
+                                              setActive(normalizeGameRecord(full));
+                                              setGames(normalizeGameList(await Games.list()));
                                           } catch (e) {
                                               alert(e.message);
                                           }
@@ -2013,7 +2108,7 @@ function GameView({
                                               await Games.delete(game.id);
                                               setActive(null);
                                               setDmSheetPlayerId(null);
-                                              setGames(await Games.list());
+                                              setGames(normalizeGameList(await Games.list()));
                                               alert("Game deleted");
                                           } catch (e) {
                                               alert(e.message);
@@ -2882,18 +2977,20 @@ const MAX_PORTRAIT_BYTES = 2 * 1024 * 1024;
 
 // ---------- Sheet ----------
 function Sheet({ me, game, onSave, targetUserId, onChangePlayer }) {
-    const isDM = game.dmId === me.id;
+    const isDM = idsMatch(game.dmId, me.id);
     const worldSkills = useMemo(() => normalizeWorldSkillDefs(game.worldSkills), [game.worldSkills]);
     const selectablePlayers = useMemo(
         () => (game.players || []).filter((p) => (p?.role || "").toLowerCase() !== "dm"),
         [game.players]
     );
-    const selectedPlayerId = isDM ? targetUserId : me.id;
+    const selectedPlayerId = isDM
+        ? normalizeId(targetUserId) ?? targetUserId ?? null
+        : normalizeId(me.id) ?? me.id ?? null;
     const slot = useMemo(
         () =>
             (
                 selectedPlayerId
-                    ? (game.players || []).find((p) => p.userId === selectedPlayerId)
+                    ? (game.players || []).find((p) => idsMatch(p.userId, selectedPlayerId))
                     : null
             ) || {},
         [game.players, selectedPlayerId]
@@ -5697,7 +5794,7 @@ function normalizeStorySettings(story) {
 // ---------- Story Logs ----------
 function StoryLogsTab({ game, me }) {
     const gameId = game?.id || null;
-    const isDM = game.dmId === me.id;
+    const isDM = idsMatch(game.dmId, me.id);
     const realtime = useContext(RealtimeContext);
     const storyConfigFromGame = useMemo(
         () => normalizeStoryLogConfig(game?.story),
@@ -7200,7 +7297,7 @@ function readCombatSkillBucket(collection, ownerId, dmId) {
 // ---------- Items ----------
 
 function CombatSkillsTab({ game, me, onUpdate }) {
-    const isDM = game.dmId === me.id;
+    const isDM = idsMatch(game.dmId, me.id);
     const abilityDefault = ABILITY_DEFS[0]?.key || "INT";
     const ownerOptions = useMemo(() => {
         const options = [];
@@ -7212,7 +7309,7 @@ function CombatSkillsTab({ game, me, onUpdate }) {
         };
         const players = Array.isArray(game.players) ? game.players.filter(Boolean) : [];
         if (isDM && typeof game.dmId === "string" && game.dmId) {
-            const dmLabel = game.dmId === me.id
+            const dmLabel = idsMatch(game.dmId, me.id)
                 ? `You (${me.username || "Dungeon Master"})`
                 : "Dungeon Master";
             addOption(game.dmId, dmLabel);
@@ -8922,7 +9019,7 @@ function SettingsTab({ game, onUpdate, me, onDelete, onKickPlayer, onGameRefresh
         [game.players]
     );
 
-    const isDM = game.dmId === me?.id;
+    const isDM = idsMatch(game.dmId, me?.id);
     const canKick = isDM && typeof onKickPlayer === "function";
     const canDelete = isDM && typeof onDelete === "function";
 
