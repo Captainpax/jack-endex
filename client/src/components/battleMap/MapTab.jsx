@@ -586,6 +586,7 @@ function createNpcTokenState(overrides = {}) {
     const allowedTypes = new Set(['shop', 'loot', 'misc']);
     const type = typeof overrides.type === 'string' && allowedTypes.has(overrides.type) ? overrides.type : 'shop';
     return {
+        id: typeof overrides.id === 'string' ? overrides.id : null,
         label: typeof overrides.label === 'string' ? overrides.label : '',
         type,
         color: overrides.color || '#10b981',
@@ -1816,6 +1817,8 @@ function MapTab({ game, me }) {
         return map;
     }, [game.players]);
     const [sidebarTab, setSidebarTab] = useState('tokens');
+    const [dmTokenTab, setDmTokenTab] = useState('all');
+    const [selectedDmTokenId, setSelectedDmTokenId] = useState(null);
     const [overlayForm, setOverlayForm] = useState({
         url: '',
         width: 0.4,
@@ -1841,12 +1844,33 @@ function MapTab({ game, me }) {
         setEnemyForm(createEnemyFormState());
         setEnemyDemonChoice('');
     }, []);
+    const resetNpcForm = useCallback(() => {
+        setNpcForm((prev) => createNpcTokenState({ type: prev.type }));
+    }, []);
 
     useEffect(() => {
         if (!sidebarTabs.some((tab) => tab.key === sidebarTab)) {
             setSidebarTab(sidebarTabs[0]?.key || 'tokens');
         }
     }, [sidebarTab, sidebarTabs]);
+
+    useEffect(() => {
+        if (!dmTokenTabs.some((tab) => tab.key === dmTokenTab)) {
+            setDmTokenTab(dmTokenTabs[0]?.key || 'all');
+        }
+    }, [dmTokenTab, dmTokenTabs]);
+
+    useEffect(() => {
+        if (activeDmTokens.length === 0) {
+            if (selectedDmTokenId !== null) {
+                setSelectedDmTokenId(null);
+            }
+            return;
+        }
+        if (!activeDmTokens.some((token) => token.id === selectedDmTokenId)) {
+            setSelectedDmTokenId(activeDmTokens[0].id);
+        }
+    }, [activeDmTokens, selectedDmTokenId]);
 
     useEffect(() => {
         if (!isDM || tool !== 'shape') {
@@ -2142,6 +2166,17 @@ function MapTab({ game, me }) {
         () => mapState.tokens.filter((token) => token.kind === 'enemy'),
         [mapState.tokens]
     );
+    const npcTokens = useMemo(
+        () => mapState.tokens.filter((token) => token.kind === 'npc'),
+        [mapState.tokens]
+    );
+    const otherTokens = useMemo(
+        () =>
+            mapState.tokens.filter(
+                (token) => !['player', 'demon', 'enemy', 'npc'].includes(token.kind),
+            ),
+        [mapState.tokens]
+    );
     const imageShapes = useMemo(
         () => mapState.shapes.filter((shape) => shape.type === 'image'),
         [mapState.shapes]
@@ -2156,6 +2191,72 @@ function MapTab({ game, me }) {
     );
     const enemyFormValid = enemyForm.label.trim().length > 0;
     const enemyFormHasVisibleTooltip = enemyHasVisibleContent(enemyDetailsInfo);
+    const dmTokenTabs = useMemo(() => {
+        const tabs = [
+            { key: 'all', label: 'All tokens', tokens: mapState.tokens },
+            { key: 'players', label: 'Players', tokens: playerTokens },
+            { key: 'companions', label: 'Companions', tokens: demonTokens },
+            { key: 'enemies', label: 'Enemies', tokens: enemyTokens },
+        ];
+        if (npcTokens.length > 0) {
+            tabs.push({ key: 'npcs', label: 'NPCs', tokens: npcTokens });
+        }
+        if (otherTokens.length > 0) {
+            tabs.push({ key: 'other', label: 'Other', tokens: otherTokens });
+        }
+        return tabs;
+    }, [demonTokens, enemyTokens, mapState.tokens, npcTokens, otherTokens, playerTokens]);
+    const activeDmTokenTab = useMemo(
+        () => dmTokenTabs.find((tab) => tab.key === dmTokenTab) || dmTokenTabs[0] || { key: 'all', tokens: [] },
+        [dmTokenTab, dmTokenTabs],
+    );
+    const activeDmTokens = activeDmTokenTab.tokens || [];
+    const selectedDmToken = useMemo(
+        () => mapState.tokens.find((token) => token.id === selectedDmTokenId) || null,
+        [mapState.tokens, selectedDmTokenId],
+    );
+    const describeDmToken = useCallback(
+        (token) => {
+            if (!token) {
+                return { label: 'Token', subtitle: '', kindLabel: 'Token' };
+            }
+            let label = token.label || 'Token';
+            let subtitle = '';
+            let kindLabel = 'Token';
+            if (token.kind === 'player') {
+                const player = token.refId ? playerMap.get(token.refId) : null;
+                label = token.label || describePlayerName(player);
+                subtitle = describePlayerTooltip(player);
+                kindLabel = 'Player';
+            } else if (token.kind === 'demon') {
+                const demon = token.refId ? findDemon(token.refId) : null;
+                label = token.label || demon?.name || 'Companion';
+                subtitle = describeDemonTooltip(demon);
+                kindLabel = 'Companion';
+            } else if (token.kind === 'enemy') {
+                label = token.label || 'Enemy';
+                subtitle = token.rawTooltip || '';
+                kindLabel = 'Enemy';
+            } else if (token.kind === 'npc') {
+                const meta = token.meta || {};
+                label = token.label || meta.label || 'NPC';
+                const summary = meta.text && meta.text !== meta.notes ? meta.text : '';
+                const notes = meta.notes || '';
+                subtitle = summary || notes;
+                kindLabel = 'NPC';
+            } else {
+                label = token.label || 'Token';
+                subtitle = token.rawTooltip || '';
+            }
+            return {
+                label: label || 'Token',
+                subtitle: subtitle || '',
+                kindLabel,
+            };
+        },
+        [findDemon, playerMap],
+    );
+    const selectedDmSummary = selectedDmToken ? describeDmToken(selectedDmToken) : null;
 
     const availablePlayers = useMemo(() => {
         if (!isDM) return [];
@@ -2840,25 +2941,42 @@ function MapTab({ game, me }) {
                 tooltip: encodeTokenTooltip(metaPayload),
                 showTooltip: metaPayload.showTooltip,
             };
-            const response = await Games.addMapToken(game.id, payload);
-            const normalized = normalizeClientMapToken(response);
-            if (normalized) {
-                setMapState((prev) => ({
-                    ...prev,
-                    tokens: prev.tokens.concat(normalized),
-                    updatedAt: response?.updatedAt || prev.updatedAt,
-                }));
-                const label = normalized.label || metaPayload.label || 'NPC';
-                logBattle('map:token:add', `Placed NPC token ${label}`, {
-                    tokenId: normalized.id,
-                    kind: normalized.kind,
-                });
+            if (npcForm.id) {
+                const response = await Games.updateMapToken(game.id, npcForm.id, payload);
+                const normalized = normalizeClientMapToken(response);
+                if (normalized) {
+                    setMapState((prev) => ({
+                        ...prev,
+                        tokens: prev.tokens.map((entry) => (entry.id === normalized.id ? normalized : entry)),
+                        updatedAt: response?.updatedAt || prev.updatedAt,
+                    }));
+                    const label = normalized.label || metaPayload.label || 'NPC';
+                    logBattle('map:token:update', `Updated NPC token ${label}`, {
+                        tokenId: normalized.id,
+                        kind: normalized.kind,
+                    });
+                }
+            } else {
+                const response = await Games.addMapToken(game.id, payload);
+                const normalized = normalizeClientMapToken(response);
+                if (normalized) {
+                    setMapState((prev) => ({
+                        ...prev,
+                        tokens: prev.tokens.concat(normalized),
+                        updatedAt: response?.updatedAt || prev.updatedAt,
+                    }));
+                    const label = normalized.label || metaPayload.label || 'NPC';
+                    logBattle('map:token:add', `Placed NPC token ${label}`, {
+                        tokenId: normalized.id,
+                        kind: normalized.kind,
+                    });
+                }
             }
-            setNpcForm((prev) => createNpcTokenState({ type: prev.type }));
+            resetNpcForm();
         } catch (err) {
             alert(err.message);
         }
-    }, [game.id, logBattle, npcForm]);
+    }, [game.id, logBattle, npcForm, resetNpcForm]);
 
     const handleAddShape = useCallback(
         async (type, extras = {}) => {
@@ -3156,6 +3274,42 @@ function MapTab({ game, me }) {
             setSidebarTab('tokens');
             setTokenCreationTab('demon');
             setDemonCreationMode('enemy');
+        },
+        [isDM]
+    );
+
+    const handleEditNpcToken = useCallback(
+        (token) => {
+            if (!isDM || !token || token.kind !== 'npc') return;
+            const meta = token.meta || {};
+            const type =
+                meta.npcType ||
+                (meta.kind === 'npc-shop'
+                    ? 'shop'
+                    : meta.kind === 'npc-loot'
+                        ? 'loot'
+                        : meta.kind === 'npc-misc'
+                            ? 'misc'
+                            : 'misc');
+            const items = Array.isArray(meta.items) ? meta.items.map((item) => ({ ...item })) : [];
+            setNpcForm(
+                createNpcTokenState({
+                    id: token.id,
+                    label: meta.label || token.label || '',
+                    type,
+                    color: token.color || '#10b981',
+                    showTooltip: token.showTooltip,
+                    image: meta.image || '',
+                    notes: meta.notes || '',
+                    items,
+                    requireApproval: meta.requireApproval,
+                    allowAutoClaim: meta.autoClaim,
+                    openButton: meta.openButton,
+                    shopId: meta.shopId,
+                }),
+            );
+            setSidebarTab('tokens');
+            setTokenCreationTab('npc');
         },
         [isDM]
     );
@@ -3849,12 +4003,13 @@ function MapTab({ game, me }) {
                 )}
             </div>
             <div className="map-layout">
-                <div className="map-board card" ref={boardRef} style={boardStyle}>
-                    <div
-                        className="map-board__background"
-                        style={{ pointerEvents: isDM && isBackgroundTool ? 'auto' : 'none' }}
-                    >
-                        {backgroundDisplay.url && (
+                <div className="map-board-wrapper">
+                    <div className="map-board card" ref={boardRef} style={boardStyle}>
+                        <div
+                            className="map-board__background"
+                            style={{ pointerEvents: isDM && isBackgroundTool ? 'auto' : 'none' }}
+                        >
+                            {backgroundDisplay.url && (
                             <img
                                 src={backgroundDisplay.url}
                                 alt=""
@@ -4081,6 +4236,176 @@ function MapTab({ game, me }) {
                             isDM={isDM}
                             onClose={() => setActiveNpcOverlayId(null)}
                         />
+                    )}
+                    </div>
+                    {isDM && (
+                        <section className="map-dm-tokens card" aria-label="Loaded battle map tokens">
+                            <div className="map-dm-tokens__header">
+                                <h3>Loaded tokens</h3>
+                                <span className="text-small text-muted">
+                                    {mapState.tokens.length} total
+                                </span>
+                            </div>
+                            <div
+                                className="map-dm-tokens__tabs"
+                                role="tablist"
+                                aria-label="Token categories"
+                            >
+                                {dmTokenTabs.map((tab) => {
+                                    const tabId = `map-dm-token-tab-${tab.key}`;
+                                    const panelId = `map-dm-token-panel-${tab.key}`;
+                                    const isActive = activeDmTokenTab.key === tab.key;
+                                    return (
+                                        <button
+                                            key={tab.key}
+                                            type="button"
+                                            id={tabId}
+                                            role="tab"
+                                            aria-selected={isActive}
+                                            aria-controls={panelId}
+                                            className={`map-dm-tokens__tab${isActive ? ' is-active' : ''}`}
+                                            onClick={() => setDmTokenTab(tab.key)}
+                                        >
+                                            <span>{tab.label}</span>
+                                            <span className="map-dm-tokens__count">{tab.tokens.length}</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <div
+                                className="map-dm-tokens__panel"
+                                role="tabpanel"
+                                id={`map-dm-token-panel-${activeDmTokenTab.key}`}
+                                aria-labelledby={`map-dm-token-tab-${activeDmTokenTab.key}`}
+                            >
+                                {activeDmTokens.length === 0 ? (
+                                    <p className="map-empty text-muted">No tokens in this category.</p>
+                                ) : (
+                                    <ul className="map-dm-tokens__list">
+                                        {activeDmTokens.map((token) => {
+                                            const summary = describeDmToken(token);
+                                            const isSelected = selectedDmTokenId === token.id;
+                                            return (
+                                                <li
+                                                    key={token.id}
+                                                    className={`map-dm-tokens__item${
+                                                        isSelected ? ' is-selected' : ''
+                                                    }`}
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        className="map-dm-tokens__button"
+                                                        onClick={() => setSelectedDmTokenId(token.id)}
+                                                    >
+                                                        <span
+                                                            className="map-dm-tokens__swatch"
+                                                            style={{ backgroundColor: token.color || '#94a3b8' }}
+                                                            aria-hidden="true"
+                                                        />
+                                                        <span className="map-dm-tokens__summary">
+                                                            <strong>{summary.label}</strong>
+                                                            {summary.subtitle && (
+                                                                <span className="text-small text-muted">
+                                                                    {summary.subtitle}
+                                                                </span>
+                                                            )}
+                                                        </span>
+                                                        <span className="map-dm-tokens__badge">
+                                                            {summary.kindLabel}
+                                                        </span>
+                                                    </button>
+                                                </li>
+                                            );
+                                        })}
+                                    </ul>
+                                )}
+                            </div>
+                            {selectedDmToken && selectedDmSummary && (
+                                <div className="map-dm-tokens__details">
+                                    <div className="map-dm-tokens__details-header">
+                                        <div>
+                                            <h4>{selectedDmSummary.label}</h4>
+                                            {selectedDmSummary.subtitle && (
+                                                <p className="text-small text-muted">{selectedDmSummary.subtitle}</p>
+                                            )}
+                                        </div>
+                                        <span className="map-dm-tokens__badge">{selectedDmSummary.kindLabel}</span>
+                                    </div>
+                                    {selectedDmToken.kind === 'player' && selectedDmToken.meta && (
+                                        <PlayerTooltipCard
+                                            meta={selectedDmToken.meta}
+                                            label={selectedDmToken.label}
+                                        />
+                                    )}
+                                    {selectedDmToken.kind === 'demon' && selectedDmToken.meta && (
+                                        <DemonTooltipCard
+                                            meta={selectedDmToken.meta}
+                                            label={selectedDmToken.label}
+                                        />
+                                    )}
+                                    {selectedDmToken.kind === 'enemy' && selectedDmToken.enemyInfo && (
+                                        <EnemyTooltipCard
+                                            info={selectedDmToken.enemyInfo}
+                                            label={selectedDmToken.label}
+                                        />
+                                    )}
+                                    {selectedDmToken.kind === 'npc' && selectedDmToken.meta && (
+                                        <NpcTooltipCard
+                                            meta={selectedDmToken.meta}
+                                            label={selectedDmToken.label}
+                                            onOpen={() => setActiveNpcOverlayId(selectedDmToken.id)}
+                                            isDM={isDM}
+                                        />
+                                    )}
+                                    <div className="map-dm-tokens__actions">
+                                        <label className="perm-toggle">
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedDmToken.showTooltip}
+                                                onChange={(event) =>
+                                                    handleToggleTooltip(selectedDmToken, event.target.checked)
+                                                }
+                                            />
+                                            <span className="perm-toggle__text">Tooltip on hover</span>
+                                        </label>
+                                        {selectedDmToken.kind === 'enemy' && (
+                                            <button
+                                                type="button"
+                                                className="btn btn-small"
+                                                onClick={() => handleEditEnemyToken(selectedDmToken)}
+                                            >
+                                                Edit enemy token
+                                            </button>
+                                        )}
+                                        {selectedDmToken.kind === 'npc' && (
+                                            <button
+                                                type="button"
+                                                className="btn btn-small"
+                                                onClick={() => handleEditNpcToken(selectedDmToken)}
+                                            >
+                                                Edit NPC token
+                                            </button>
+                                        )}
+                                        {selectedDmToken.kind === 'npc' && selectedDmToken.meta && (
+                                            <button
+                                                type="button"
+                                                className="btn ghost btn-small"
+                                                onClick={() => setActiveNpcOverlayId(selectedDmToken.id)}
+                                            >
+                                                View overlay
+                                            </button>
+                                        )}
+                                        <button
+                                            type="button"
+                                            className="btn ghost btn-small"
+                                            onClick={() => handleRemoveToken(selectedDmToken)}
+                                        >
+                                            Remove token
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </section>
                     )}
                 </div>
                 <aside className="map-sidebar">
@@ -4754,9 +5079,20 @@ function MapTab({ game, me }) {
                                                             <span className="perm-toggle__text">Tooltip on hover</span>
                                                         </label>
                                                     </div>
-                                                    <button type="submit" className="btn btn-small">
-                                                        Place NPC token
-                                                    </button>
+                                                    <div className="map-token-workshop__actions">
+                                                        {npcForm.id && (
+                                                            <button
+                                                                type="button"
+                                                                className="btn ghost btn-small"
+                                                                onClick={resetNpcForm}
+                                                            >
+                                                                Cancel edit
+                                                            </button>
+                                                        )}
+                                                        <button type="submit" className="btn btn-small">
+                                                            {npcForm.id ? 'Save NPC token' : 'Place NPC token'}
+                                                        </button>
+                                                    </div>
                                                 </form>
                                             )}
                                         </div>
