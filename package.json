@@ -7,6 +7,7 @@
     "dev": "concurrently -k -n API,VITE \"node server/dev.js\" \"vite --host --port 5173\"",
     "build": "vite build",
     "lint": "eslint .",
+    "test": "vitest",
     "preview": "vite preview --host --port 5173",
     "start": "node server/server.js",
     "bot:demon": "node server/bot/demonLookupBot.js",
@@ -37,6 +38,9 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.33.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.2.0",
+    "@testing-library/user-event": "^14.6.1",
     "@vitejs/plugin-react": "^5.0.0",
     "concurrently": "^9.2.1",
     "eslint": "^9.33.0",
@@ -44,6 +48,7 @@
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^16.3.0",
     "playwright": "^1.55.0",
-    "vite": "^7.1.2"
+    "vite": "^7.1.2",
+    "vitest": "^2.1.8"
   }
 }
