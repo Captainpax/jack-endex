@@ -2,10 +2,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { EMPTY_ARRAY } from "../utils/constants";
 import { resolveRealtimeUrl } from "../api";
-import { getTrackById } from "../utils/music";
 
 /**
- * @typedef {{ trackId: string, updatedAt: string }} MusicSnapshot
+ * @typedef {{
+ *   trackId: string,
+ *   title: string,
+ *   info: string,
+ *   src: string,
+ *   loop: boolean,
+ *   playing: boolean,
+ *   position: number,
+ *   updatedAt: string,
+ *   duration: number | null,
+ *   source?: string
+ * }} MusicSnapshot
  * @typedef {{ id: string, message: string, senderName: string, issuedAt: string, senderId: string | null }} AlertEntry
  * @typedef {{
  *   start(partnerId: string, note?: string): void,
@@ -30,7 +40,9 @@ import { getTrackById } from "../utils/music";
  *   musicState: MusicSnapshot | null,
  *   musicError: string | null,
  *   syncMusic: (snapshot: any) => void,
- *   playMusic: (trackId: string) => void,
+ *   playMusic: (trackId: string, options?: { position?: number }) => void,
+ *   pauseMusic: (position?: number) => void,
+ *   seekMusic: (position: number, options?: { playing?: boolean }) => void,
  *   stopMusic: () => void,
  *   alerts: AlertEntry[],
  *   alertError: string | null,
@@ -48,9 +60,19 @@ import { getTrackById } from "../utils/music";
 function normalizeMusicSnapshot(snapshot) {
     if (!snapshot || typeof snapshot !== "object") return null;
     const trackId = typeof snapshot.trackId === "string" ? snapshot.trackId.trim() : "";
-    if (!trackId || !getTrackById(trackId)) return null;
+    const src = typeof snapshot.src === "string" ? snapshot.src.trim() : "";
+    if (!trackId || !src) return null;
+    const title = typeof snapshot.title === "string" && snapshot.title.trim() ? snapshot.title.trim() : "Unknown track";
+    const info = typeof snapshot.info === "string" ? snapshot.info.trim() : "";
     const updatedAt = typeof snapshot.updatedAt === "string" ? snapshot.updatedAt : new Date().toISOString();
-    return { trackId, updatedAt };
+    const loop = snapshot.loop !== false;
+    const playing = !!snapshot.playing;
+    const positionRaw = Number(snapshot.position);
+    const position = Number.isFinite(positionRaw) && positionRaw >= 0 ? positionRaw : 0;
+    const durationRaw = Number(snapshot.duration);
+    const duration = Number.isFinite(durationRaw) && durationRaw >= 0 ? durationRaw : null;
+    const source = typeof snapshot.source === "string" ? snapshot.source : "";
+    return { trackId, title, info, src, loop, playing, position, updatedAt, duration, source };
 }
 
 /**
@@ -611,12 +633,48 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
      * @param {string} trackId
      */
     const playMusic = useCallback(
-        (trackId) => {
+        (trackId, options = {}) => {
             if (!gameId) throw new Error("missing_game");
             const trimmed = typeof trackId === "string" ? trackId.trim() : "";
             if (!trimmed) throw new Error("missing_track");
             setMusicError(null);
-            sendMessage({ type: "music.play", gameId, trackId: trimmed });
+            const payload = { type: "music.play", gameId, trackId: trimmed };
+            const rawPosition = options && typeof options.position === "number" ? options.position : null;
+            if (Number.isFinite(rawPosition) && rawPosition >= 0) {
+                payload.position = rawPosition;
+            }
+            sendMessage(payload);
+        },
+        [gameId, sendMessage]
+    );
+
+    const pauseMusic = useCallback(
+        (position) => {
+            if (!gameId) return;
+            setMusicError(null);
+            const payload = { type: "music.pause", gameId };
+            const raw = Number(position);
+            if (Number.isFinite(raw) && raw >= 0) {
+                payload.position = raw;
+            }
+            sendMessage(payload);
+        },
+        [gameId, sendMessage]
+    );
+
+    const seekMusic = useCallback(
+        (position, options = {}) => {
+            if (!gameId) return;
+            setMusicError(null);
+            const payload = { type: "music.seek", gameId };
+            const raw = Number(position);
+            if (Number.isFinite(raw) && raw >= 0) {
+                payload.position = raw;
+            }
+            if (options && typeof options.playing === "boolean") {
+                payload.playing = !!options.playing;
+            }
+            sendMessage(payload);
         },
         [gameId, sendMessage]
     );
@@ -677,6 +735,8 @@ export default function useRealtimeConnection({ gameId, refreshGame, onGameDelet
         musicError,
         syncMusic,
         playMusic,
+        pauseMusic,
+        seekMusic,
         stopMusic,
         alerts,
         alertError,
