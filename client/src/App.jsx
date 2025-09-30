@@ -1428,13 +1428,13 @@ function GameView({
     const isDM = idsMatch(game.dmId, me.id);
     const [apiBusy, setApiBusy] = useState(false);
     const [refreshBusy, setRefreshBusy] = useState(false);
-    const [isDesktop, setIsDesktop] = useState(() =>
-        typeof window === "undefined" ? true : window.innerWidth >= 960
-    );
-    const [sidebarOpen, setSidebarOpen] = useState(false);
+    const initialDesktop = typeof window === "undefined" ? true : window.innerWidth >= 960;
+    const [isDesktop, setIsDesktop] = useState(initialDesktop);
+    const [sidebarOpen, setSidebarOpen] = useState(initialDesktop);
     const [logoutBusy, setLogoutBusy] = useState(false);
     const loadedTabRef = useRef(false);
     const loadedSheetRef = useRef(false);
+    const previousIsDesktopRef = useRef(initialDesktop);
     const showServerManagement = isServerAdminClient(me);
 
     useEffect(() => {
@@ -1517,6 +1517,16 @@ function GameView({
     const closeSidebar = useCallback(() => {
         hideSidebar("close-button");
     }, [hideSidebar]);
+
+    useEffect(() => {
+        const previous = previousIsDesktopRef.current;
+        if (isDesktop && !previous) {
+            updateSidebarOpen(true, "layout-breakpoint");
+        } else if (!isDesktop && previous) {
+            updateSidebarOpen(false, "layout-breakpoint");
+        }
+        previousIsDesktopRef.current = isDesktop;
+    }, [isDesktop, updateSidebarOpen]);
 
     useEffect(() => {
         if (navItems.length === 0) return;
