@@ -10,6 +10,7 @@ import multer from 'multer';
 import crypto from 'crypto';
 import mongoose from './lib/mongoose.js';
 import MongoSessionStore from './lib/mongoSessionStore.js';
+import Logger from './lib/logger.js';
 import { fileURLToPath } from 'url';
 import cors from 'cors';
 
@@ -88,6 +89,11 @@ const readiness = {
     ready: false,
 };
 
+const startupLogger = Logger.child('startup');
+const dbLogger = Logger.child('db');
+const discordLogger = Logger.child('discord');
+const shutdownLogger = Logger.child('shutdown');
+
 function updateReadiness() {
     readiness.ready = readiness.db && readiness.discord && readiness.server;
 }
@@ -151,7 +157,7 @@ mongoose.set('strictQuery', false);
 const MONGODB_URI = envString('MONGODB_URI');
 const MONGODB_DB_NAME = envString('MONGODB_DB_NAME');
 if (!MONGODB_URI) {
-    console.error('Missing MONGODB_URI environment variable. Set it in .env to connect to MongoDB.');
+    dbLogger.error('Missing MONGODB_URI environment variable. Set it in .env to connect to MongoDB.');
     process.exit(1);
 }
 
@@ -227,17 +233,17 @@ mongoose.connection.on('connected', () => {
 mongoose.connection.on('disconnected', () => {
     readiness.db = false;
     updateReadiness();
-    console.warn('[db] Lost connection to MongoDB.');
+    dbLogger.warn('Lost connection to MongoDB.');
 });
 
 mongoose.connection.on('reconnected', () => {
     readiness.db = true;
     updateReadiness();
-    console.log('[db] Reconnected to MongoDB.');
+    dbLogger.info('Reconnected to MongoDB.');
 });
 
 mongoose.connection.on('error', (err) => {
-    console.error('[db] MongoDB connection error:', err);
+    dbLogger.error('MongoDB connection error', err);
 });
 
 async function connectToDatabaseWithRetry(
@@ -252,7 +258,7 @@ async function connectToDatabaseWithRetry(
     for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
         try {
             await mongoose.connect(uri, options);
-            console.log(`[db] Connected to MongoDB (attempt ${attempt}/${totalAttempts}).`);
+            dbLogger.info(`Connected to MongoDB (attempt ${attempt}/${totalAttempts}).`);
             readiness.db = true;
             updateReadiness();
             return;
@@ -260,10 +266,10 @@ async function connectToDatabaseWithRetry(
             lastError = err;
             readiness.db = false;
             updateReadiness();
-            console.error(`[db] MongoDB connection attempt ${attempt} failed:`, err);
+            dbLogger.error(`MongoDB connection attempt ${attempt} failed`, err);
             if (attempt >= totalAttempts) break;
             const waitMs = Math.min(baseDelay * 2 ** (attempt - 1), 30_000);
-            console.log(`[db] Retrying MongoDB connection in ${waitMs}ms…`);
+            dbLogger.info(`Retrying MongoDB connection in ${waitMs}ms…`);
             await delay(waitMs);
         }
     }
@@ -277,14 +283,14 @@ async function ensureDiscordBotOnline({
 } = {}) {
     const token = getDiscordBotToken();
     if (!token) {
-        console.log('[discord] No Discord bot token configured; skipping availability check.');
+        discordLogger.info('No Discord bot token configured; skipping availability check.');
         readiness.discord = true;
         updateReadiness();
         return;
     }
 
     if (typeof globalThis.fetch !== 'function') {
-        console.warn('[discord] fetch API not available in this runtime; skipping availability check.');
+        discordLogger.warn('fetch API not available in this runtime; skipping availability check.');
         readiness.discord = true;
         updateReadiness();
         return;
@@ -331,7 +337,7 @@ async function ensureDiscordBotOnline({
                 identity?.discriminator && identity.discriminator !== '0'
                     ? `#${identity.discriminator}`
                     : '';
-            console.log(`[discord] Bot ready as ${username}${discriminator}.`);
+            discordLogger.info(`Bot ready as ${username}${discriminator}.`);
             readiness.discord = true;
             updateReadiness();
             return;
@@ -339,10 +345,10 @@ async function ensureDiscordBotOnline({
             lastError = err;
             readiness.discord = false;
             updateReadiness();
-            console.error(`[discord] Availability check attempt ${attempt}/${totalAttempts} failed:`, err);
+            discordLogger.error(`Availability check attempt ${attempt}/${totalAttempts} failed`, err);
             if (attempt >= totalAttempts) break;
             const waitMs = Math.min(baseDelay * 2 ** (attempt - 1), 30_000);
-            console.log(`[discord] Retrying bot availability check in ${waitMs}ms…`);
+            discordLogger.info(`Retrying bot availability check in ${waitMs}ms…`);
             await delay(waitMs);
         }
     }
@@ -7824,7 +7830,7 @@ async function closeWebSocketServer({ timeoutMs = 2000 } = {}) {
         try {
             wss.close(() => finish());
         } catch (err) {
-            console.warn('[shutdown] Failed to close WebSocket server cleanly:', err);
+            shutdownLogger.warn('Failed to close WebSocket server cleanly', err);
             finish();
             return;
         }
@@ -7852,7 +7858,7 @@ async function shutdownServer({ signal = null, exitCode = 0 } = {}) {
     if (shutdownPromise) return shutdownPromise;
 
     const label = signal ? `signal ${signal}` : 'request';
-    console.log(`[shutdown] Initiating graceful shutdown (${label}).`);
+    shutdownLogger.info(`Initiating graceful shutdown (${label}).`);
 
     shutdownPromise = (async () => {
         readiness.server = false;
@@ -7868,14 +7874,14 @@ async function shutdownServer({ signal = null, exitCode = 0 } = {}) {
         try {
             await closeWebSocketServer();
         } catch (err) {
-            console.warn('[shutdown] WebSocket shutdown encountered an error:', err);
+            shutdownLogger.warn('WebSocket shutdown encountered an error', err);
         }
 
         if (server.listening) {
             await new Promise((resolve) => {
                 server.close((err) => {
                     if (err && err.code !== 'ERR_SERVER_NOT_RUNNING') {
-                        console.warn('[shutdown] HTTP server close error:', err);
+                        shutdownLogger.warn('HTTP server close error', err);
                     }
                     resolve();
                 });
@@ -7890,7 +7896,7 @@ async function shutdownServer({ signal = null, exitCode = 0 } = {}) {
                 console.log('[db] MongoDB connection closed.');
             }
         } catch (err) {
-            console.warn('[shutdown] Failed to disconnect MongoDB cleanly:', err);
+            shutdownLogger.warn('Failed to disconnect MongoDB cleanly', err);
         }
 
         storySubscribers.clear();
@@ -7898,7 +7904,7 @@ async function shutdownServer({ signal = null, exitCode = 0 } = {}) {
         userSockets.clear();
         gamePresence.clear();
 
-        console.log('[shutdown] Graceful shutdown complete.');
+        shutdownLogger.info('Graceful shutdown complete.');
         return exitCode;
     })();
 
@@ -7914,18 +7920,18 @@ function setupGracefulShutdown() {
 
     const handleSignal = (signal) => {
         if (shutdownInitiated) {
-            console.warn(`[shutdown] Received ${signal} during shutdown; forcing exit.`);
+            shutdownLogger.warn(`Received ${signal} during shutdown; forcing exit.`);
             process.exit(1);
             return;
         }
         shutdownInitiated = true;
-        console.log(`[shutdown] Received ${signal}; starting graceful shutdown.`);
+        shutdownLogger.info(`Received ${signal}; starting graceful shutdown.`);
         shutdownServer({ signal, exitCode: 0 })
             .then((code) => {
                 process.exit(code);
             })
             .catch((err) => {
-                console.error('[shutdown] Error during graceful shutdown:', err);
+                shutdownLogger.error('Error during graceful shutdown', err);
                 process.exit(1);
             });
     };
@@ -7935,7 +7941,7 @@ function setupGracefulShutdown() {
     }
 
     process.on('uncaughtException', (err) => {
-        console.error('[shutdown] Uncaught exception:', err);
+        shutdownLogger.error('Uncaught exception', err);
         if (shutdownInitiated) {
             process.exit(1);
             return;
@@ -7947,26 +7953,26 @@ function setupGracefulShutdown() {
     });
 
     process.on('unhandledRejection', (reason) => {
-        console.error('[shutdown] Unhandled rejection:', reason);
+        shutdownLogger.error('Unhandled rejection', reason);
     });
 }
 
 async function startServer() {
-    console.log('[startup] Starting server bootstrap…');
-    console.log('[startup] Connecting to MongoDB…');
+    startupLogger.info('Starting server bootstrap…');
+    startupLogger.info('Connecting to MongoDB…');
     await connectToDatabaseWithRetry(MONGODB_URI, { dbName: MONGODB_DB_NAME || undefined });
-    console.log('[startup] MongoDB connection established.');
+    startupLogger.info('MongoDB connection established.');
 
-    console.log('[startup] Loading initial data…');
+    startupLogger.info('Loading initial data…');
     await ensureInitialItemDocs();
     await ensureInitialDemonDocs();
-    console.log('[startup] Initial data ready.');
+    startupLogger.info('Initial data ready.');
 
-    console.log('[startup] Checking Discord bot availability…');
+    startupLogger.info('Checking Discord bot availability…');
     await ensureDiscordBotOnline();
 
     const port = process.env.PORT || 3000;
-    console.log('[startup] Starting HTTP server…');
+    startupLogger.info('Starting HTTP server…');
     await new Promise((resolve, reject) => {
         const onError = (err) => {
             server.off('error', onError);
@@ -7977,7 +7983,7 @@ async function startServer() {
             server.off('error', onError);
             readiness.server = true;
             updateReadiness();
-            console.log(`[startup] HTTP server listening on ${port}.`);
+            startupLogger.info(`HTTP server listening on ${port}.`);
             resolve();
         });
     });
@@ -7991,9 +7997,9 @@ setupGracefulShutdown();
 
 try {
     const port = await startServer();
-    console.log(`[startup] Boot sequence finished on port ${port}.`);
+    startupLogger.info(`Boot sequence finished on port ${port}.`);
 } catch (err) {
-    console.error('[startup] Failed to initialize server:', err);
+    startupLogger.error('Failed to initialize server', err);
     await shutdownServer({ exitCode: 1 }).catch(() => {});
     process.exit(1);
 }
