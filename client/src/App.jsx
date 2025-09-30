@@ -19,8 +19,9 @@ import { GearTab, ItemsTab } from "./components/ItemsGearTabs";
 import DemonTab from "./components/DemonTab";
 import DemonImage from "./components/DemonImage";
 import MapTab from "./components/battleMap/MapTab";
+import NavigationSidebar from "./components/NavigationSidebar";
 import { MAP_DEFAULT_SETTINGS, mapReadBoolean, describePlayerName } from "./components/battleMap/mapShared";
-import { DM_NAV, PLAYER_NAV } from "./constants/navigation";
+import { buildNavigation } from "./constants/navigation";
 import { BATTLE_MATH_REFERENCE } from "./constants/referenceContent";
 import ServerManagementTab from "./components/ServerManagementTab";
 import {
@@ -312,11 +313,22 @@ const ALIGNMENT_OPTIONS = [
 ];
 
 const SERVER_ADMIN_USERNAMES = new Set(["captainpax", "amzyoshio"]);
-const SERVER_MANAGEMENT_NAV_ITEM = Object.freeze({
-    key: "serverManagement",
-    label: "Server Management",
-    description: "Administer users, games, demons, and bots",
-});
+
+const AVAILABLE_TAB_KEYS = new Set([
+    "overview",
+    "sheet",
+    "party",
+    "map",
+    "items",
+    "gear",
+    "combatSkills",
+    "worldSkills",
+    "demons",
+    "storyLogs",
+    "help",
+    "settings",
+    "serverManagement",
+]);
 
 function isServerAdminClient(user) {
     if (!user) return false;
@@ -324,15 +336,6 @@ function isServerAdminClient(user) {
     const username = typeof user.username === "string" ? user.username.trim().toLowerCase() : "";
     if (!username) return false;
     return SERVER_ADMIN_USERNAMES.has(username);
-}
-
-function getNavItemsForUser({ isDM, me }) {
-    const base = isDM ? DM_NAV : PLAYER_NAV;
-    if (!isServerAdminClient(me)) return base;
-    if (base.some((item) => item.key === SERVER_MANAGEMENT_NAV_ITEM.key)) {
-        return base;
-    }
-    return [...base, SERVER_MANAGEMENT_NAV_ITEM];
 }
 
 function clampVolume(value, fallback = 0.2) {
@@ -637,7 +640,11 @@ export default function App() {
         const applyStateForGame = (gameData) => {
             if (!gameData) return;
             const isDM = gameData.dmId === me.id;
-            const nav = getNavItemsForUser({ isDM, me });
+            const nav = buildNavigation({
+                role: isDM ? "dm" : "player",
+                isServerAdmin: isServerAdminClient(me),
+                availableKeys: AVAILABLE_TAB_KEYS,
+            });
             const allowedTabs = new Set(nav.map((item) => item.key));
             const fallbackTab = isDM ? "overview" : "sheet";
             const desiredTab = link.tab && allowedTabs.has(link.tab) ? link.tab : fallbackTab;
@@ -1205,7 +1212,15 @@ function GameView({
         loadedSheetRef.current = false;
     }, [sheetPrefKey]);
 
-    const navItems = useMemo(() => getNavItemsForUser({ isDM, me }), [isDM, me]);
+    const navItems = useMemo(
+        () =>
+            buildNavigation({
+                role: isDM ? "dm" : "player",
+                isServerAdmin: showServerManagement,
+                availableKeys: AVAILABLE_TAB_KEYS,
+            }),
+        [isDM, showServerManagement]
+    );
 
     const refreshCampaignList = useCallback(async () => {
         try {
@@ -1503,23 +1518,11 @@ function GameView({
                                 <span aria-hidden>×</span>
                             </button>
                         </div>
-                        <nav className="sidebar__nav">
-                            {navItems.map((item) => (
-                                <button
-                                    key={item.key}
-                                    type="button"
-                                    className={`sidebar__nav-button${
-                                        tab === item.key ? " is-active" : ""
-                                    }`}
-                                    onClick={() => handleSelectNav(item.key)}
-                                >
-                                    <span className="sidebar__nav-label">{item.label}</span>
-                                    {item.description && (
-                                        <span className="sidebar__nav-desc">{item.description}</span>
-                                    )}
-                                </button>
-                            ))}
-                        </nav>
+                        <NavigationSidebar
+                            items={navItems}
+                            activeKey={tab}
+                            onSelect={handleSelectNav}
+                        />
                         <div className="sidebar__audio-panel">
                             <div className="sidebar__audio-header">
                                 <span className="sidebar__audio-title">Session music</span>
