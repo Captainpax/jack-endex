@@ -258,9 +258,11 @@ function normalizeTokenMeta(meta, { fallbackKind = '', fallbackLabel = '' } = {}
         showTooltip,
     };
     if (kind === 'player') {
+        const includePortrait = meta.includePortrait !== false;
         base.playerId = clampText(meta.playerId, 160);
         base.label = clampText(meta.label || fallbackLabel, 80);
-        base.includePortrait = meta.includePortrait !== false && !!image;
+        base.includePortrait = includePortrait;
+        base.image = includePortrait ? image : '';
         base.fields = {
             class: meta.fields ? !!meta.fields.class : true,
             level: meta.fields ? !!meta.fields.level : true,
@@ -536,6 +538,24 @@ function buildPlayerTokenMeta(player, config = {}) {
     };
 }
 
+function getPlayerPortraitUrl(player) {
+    if (!player || typeof player !== 'object') return '';
+    const portrait = player?.character?.profile?.portrait;
+    if (typeof portrait !== 'string') return '';
+    return clampText(portrait.trim(), 280);
+}
+
+function resolvePlayerTokenMeta(meta, player) {
+    if (!meta || meta.kind !== 'player') return meta;
+    const includePortrait = meta.includePortrait !== false;
+    const fallbackPortrait = includePortrait ? getPlayerPortraitUrl(player) : '';
+    const image = includePortrait ? meta.image || fallbackPortrait : '';
+    if (image === meta.image && includePortrait === meta.includePortrait) {
+        return meta;
+    }
+    return { ...meta, image, includePortrait };
+}
+
 function createDemonTokenConfig(overrides = {}) {
     return {
         showArcana: overrides.showArcana !== undefined ? !!overrides.showArcana : true,
@@ -718,7 +738,9 @@ function PlayerTooltipCard({ meta, label }) {
     const displayLabel = meta.label || label;
     const lines = Array.isArray(meta.lines) ? meta.lines.filter(Boolean) : [];
     const notes = meta.notes || '';
-    const hasImage = !!(meta.includePortrait && meta.image);
+    const includePortrait = meta.includePortrait !== false;
+    const image = includePortrait ? meta.image : '';
+    const hasImage = !!image;
     if (!displayLabel && lines.length === 0 && !notes && !hasImage) {
         return null;
     }
@@ -726,7 +748,7 @@ function PlayerTooltipCard({ meta, label }) {
         <div className="map-token__tooltip-card map-token__tooltip-card--player">
             {hasImage && (
                 <div className="map-token__tooltip-image">
-                    <img src={meta.image} alt={displayLabel || 'Player portrait'} />
+                    <img src={image} alt={displayLabel || 'Player portrait'} />
                 </div>
             )}
             <div className="map-token__tooltip-body">
@@ -4004,7 +4026,8 @@ function MapTab({ game, me }) {
                                     : token;
                             const canDrag = canMoveToken(token);
                             const label = token.label || (player ? describePlayerName(player) : demon ? demon.name : 'Marker');
-                            const meta = token.meta || null;
+                            const rawMeta = token.meta || null;
+                            const meta = resolvePlayerTokenMeta(rawMeta, player);
                             const tokenImage = meta?.image || token.image || '';
                             const hasPortrait = !!tokenImage;
                             let tooltipContent = null;
