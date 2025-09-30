@@ -63,6 +63,7 @@ import { getMainMenuTrack } from "./utils/music";
 import { idsMatch, normalizeId } from "./utils/ids";
 import { COMBAT_SKILL_LIBRARY, findCombatSkillById, findCombatSkillByName } from "@shared/combatSkills.js";
 import RealtimeContext from "./contexts/RealtimeContext";
+import clientLogger from "./utils/clientLogger";
 
 function normalizePrimaryBot(primaryBot) {
     if (!primaryBot || typeof primaryBot !== "object") {
@@ -1430,9 +1431,7 @@ function GameView({
     const [isDesktop, setIsDesktop] = useState(() =>
         typeof window === "undefined" ? true : window.innerWidth >= 960
     );
-    const [sidebarOpen, setSidebarOpen] = useState(() =>
-        typeof window === "undefined" ? true : window.innerWidth > 960
-    );
+    const [sidebarOpen, setSidebarOpen] = useState(false);
     const [logoutBusy, setLogoutBusy] = useState(false);
     const loadedTabRef = useRef(false);
     const loadedSheetRef = useRef(false);
@@ -1447,10 +1446,6 @@ function GameView({
         window.addEventListener("resize", handleResize);
         return () => window.removeEventListener("resize", handleResize);
     }, []);
-
-    useEffect(() => {
-        setSidebarOpen(isDesktop);
-    }, [isDesktop]);
 
     useEffect(() => onApiActivity(setApiBusy), []);
 
@@ -1483,24 +1478,45 @@ function GameView({
         }
     }, [setGames]);
 
+    const updateSidebarOpen = useCallback((nextValue, reason) => {
+        setSidebarOpen((prev) => {
+            const resolved =
+                typeof nextValue === "function" ? nextValue(prev) : Boolean(nextValue);
+            if (resolved !== prev) {
+                clientLogger.info(
+                    resolved ? "Navigation drawer opened" : "Navigation drawer closed",
+                    reason ? { reason } : undefined,
+                );
+            }
+            return resolved;
+        });
+    }, []);
+
+    const hideSidebar = useCallback(
+        (reason) => {
+            updateSidebarOpen(false, reason);
+        },
+        [updateSidebarOpen]
+    );
+
     const handleSelectNav = useCallback(
         (key) => {
             setTab(key);
+            clientLogger.debug("Navigated to tab", { tab: key });
             if (!isDesktop) {
-                setSidebarOpen(false);
+                hideSidebar("tab-select");
             }
         },
-        [isDesktop, setTab]
+        [hideSidebar, isDesktop, setTab]
     );
 
     const toggleSidebar = useCallback(() => {
-        setSidebarOpen((prev) => !prev);
-    }, []);
+        updateSidebarOpen((prev) => !prev, "toggle-button");
+    }, [updateSidebarOpen]);
 
     const closeSidebar = useCallback(() => {
-        if (isDesktop) return;
-        setSidebarOpen(false);
-    }, [isDesktop]);
+        hideSidebar("close-button");
+    }, [hideSidebar]);
 
     useEffect(() => {
         if (navItems.length === 0) return;
@@ -1732,6 +1748,19 @@ function GameView({
 
     const sidebarVisible = sidebarOpen;
     const shellClassName = `app-shell ${sidebarVisible ? "is-sidebar-open" : "is-sidebar-collapsed"}`;
+    const showSidebarScrim = sidebarVisible && !isDesktop;
+
+    useEffect(() => {
+        if (navItems.length === 0) return;
+        clientLogger.info("Navigation tabs ready", {
+            tabs: navItems.map((item) => ({ key: item.key, label: item.label })),
+        });
+    }, [navItems]);
+
+    useEffect(() => {
+        if (!tab) return;
+        clientLogger.debug("Active tab changed", { tab });
+    }, [tab]);
 
     return (
         <RealtimeContext.Provider value={realtime}>
@@ -1742,9 +1771,20 @@ function GameView({
                 <SharedMediaDisplay isDM={isDM} />
                 <AlertOverlay />
                 <div className={shellClassName}>
+                    <button
+                        type="button"
+                        className={`app-sidebar__scrim${showSidebarScrim ? " is-visible" : ""}`}
+                        onClick={() => hideSidebar("scrim")}
+                        aria-hidden={!showSidebarScrim}
+                        aria-label="Close navigation"
+                        hidden={!showSidebarScrim}
+                        tabIndex={showSidebarScrim ? 0 : -1}
+                    >
+                        <span className="sr-only">Close navigation</span>
+                    </button>
                     <aside
                         id="game-sidebar"
-                        className="app-sidebar"
+                        className={`app-sidebar${sidebarVisible ? " is-open" : ""}`}
                         aria-hidden={!sidebarVisible}
                     >
                         <div className="sidebar__header">
@@ -1765,7 +1805,6 @@ function GameView({
                                 onClick={closeSidebar}
                                 aria-label="Close menu"
                                 title="Close menu"
-                                hidden={isDesktop || !sidebarOpen}
                             >
                                 <span aria-hidden>×</span>
                             </button>
@@ -1862,19 +1901,19 @@ function GameView({
                             <div className="header-leading">
                                 <button
                                     type="button"
-                                    className={`sidebar-toggle${sidebarVisible ? "" : " is-closed"}`}
+                                    className={`nav-trigger${sidebarVisible ? " is-active" : ""}`}
                                     onClick={toggleSidebar}
                                     aria-expanded={sidebarVisible}
                                     aria-controls="game-sidebar"
-                                    title={sidebarOpen ? "Hide navigation" : "Show navigation"}
-                                    hidden={isDesktop}
-                                    aria-hidden={isDesktop}
+                                    title={sidebarVisible ? "Hide navigation" : "Show navigation"}
                                 >
-                                    <span className="sidebar-toggle__icon" aria-hidden>
-                                        ☰
+                                    <span className="nav-trigger__icon" aria-hidden>
+                                        <span />
+                                        <span />
+                                        <span />
                                     </span>
-                                    <span className="sidebar-toggle__label">
-                                        {sidebarOpen ? "Hide menu" : "Show menu"}
+                                    <span className="nav-trigger__label">
+                                        {sidebarVisible ? "Hide menu" : "Show menu"}
                                     </span>
                                 </button>
                                 <div className="header-leading__body">
