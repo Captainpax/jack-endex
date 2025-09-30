@@ -6,6 +6,7 @@ import { WebSocketServer } from 'ws';
 import { v4 as uuid } from 'uuid';
 import path from 'path';
 import fs from 'fs/promises';
+import multer from 'multer';
 import crypto from 'crypto';
 import mongoose from './lib/mongoose.js';
 import MongoSessionStore from './lib/mongoSessionStore.js';
@@ -47,6 +48,8 @@ const PROJECT_ROOT = path.resolve(__dirname, '..');
 const PUBLIC_PATH = path.join(PROJECT_ROOT, 'public');
 const DIST_PATH = path.join(PROJECT_ROOT, 'dist');
 const SHARED_PATH = path.join(PROJECT_ROOT, 'shared');
+const UPLOADS_ROOT = path.join(__dirname, 'uploads');
+const MUSIC_UPLOADS_ROOT = path.join(UPLOADS_ROOT, 'music');
 const storyWatchers = new Map();
 const storyWatcherSkipReasons = new Map();
 const storySubscribers = new Map();
@@ -130,6 +133,16 @@ const MAX_BATTLE_LOG_ACTION_LENGTH = 120;
 const MAX_BATTLE_LOG_MESSAGE_LENGTH = 400;
 const DEFAULT_DB_PATH = path.join(__dirname, 'data', 'db.json');
 let legacySeedPromise = null;
+
+const MUSIC_UPLOAD_PREFIX = 'upload-';
+const MAX_MUSIC_UPLOADS = 40;
+const MAX_MUSIC_UPLOAD_SIZE = 30 * 1024 * 1024;
+const MAX_MUSIC_POSITION_SECONDS = 6 * 60 * 60;
+const AUDIO_MIME_REGEX = /^audio\//i;
+const musicUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: MAX_MUSIC_UPLOAD_SIZE },
+});
 
 await loadEnv({ root: PROJECT_ROOT });
 
@@ -447,29 +460,197 @@ function presentMediaState(media) {
     return { playing, videoId, url, startSeconds, updatedAt };
 }
 
+function clampMusicPosition(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num) || num <= 0) return 0;
+    if (num >= MAX_MUSIC_POSITION_SECONDS) return MAX_MUSIC_POSITION_SECONDS;
+    return Math.round(num * 100) / 100;
+}
+
+function clampMusicDuration(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num) || num <= 0) return null;
+    if (num >= MAX_MUSIC_POSITION_SECONDS) return MAX_MUSIC_POSITION_SECONDS;
+    return Math.round(num * 100) / 100;
+}
+
+function sanitizeMusicTitle(value) {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    if (!trimmed) return '';
+    const withoutExt = trimmed.replace(/\.[A-Za-z0-9]+$/, '');
+    return sanitizeText(withoutExt).trim();
+}
+
+function buildMusicStreamUrl(gameId, trackId) {
+    return `/api/games/${encodeURIComponent(gameId)}/music/track/${encodeURIComponent(trackId)}`;
+}
+
 function ensureMusicState(game) {
     const raw = game && typeof game.music === 'object' ? game.music : {};
+    const rawUploads = Array.isArray(raw.uploads) ? raw.uploads : [];
+    const uploads = [];
+    const seen = new Set();
+    for (const entry of rawUploads) {
+        if (!entry || typeof entry !== 'object') continue;
+        const id = typeof entry.id === 'string' ? entry.id.trim() : '';
+        if (!id || seen.has(id) || !id.startsWith(MUSIC_UPLOAD_PREFIX)) continue;
+        const filename = typeof entry.filename === 'string' ? entry.filename.trim() : '';
+        if (!filename) continue;
+        const createdAt = typeof entry.createdAt === 'string' ? entry.createdAt : new Date().toISOString();
+        const normalized = {
+            id,
+            filename,
+            originalName: typeof entry.originalName === 'string' ? entry.originalName.trim().slice(0, 160) : '',
+            title: typeof entry.title === 'string' ? entry.title.trim().slice(0, 160) : '',
+            info: typeof entry.info === 'string' ? entry.info.trim().slice(0, 160) : '',
+            loop: !!entry.loop,
+            createdAt,
+        };
+        const sizeNum = Number(entry.size);
+        if (Number.isFinite(sizeNum) && sizeNum >= 0) normalized.size = sizeNum;
+        const durationNum = clampMusicDuration(entry.duration);
+        if (durationNum) normalized.duration = durationNum;
+        uploads.push(normalized);
+        seen.add(id);
+        if (uploads.length >= MAX_MUSIC_UPLOADS) break;
+    }
+    const uploadIds = new Set(uploads.map((entry) => entry.id));
     const trackId = typeof raw.trackId === 'string' ? raw.trackId.trim() : '';
     const updatedAt = typeof raw.updatedAt === 'string' ? raw.updatedAt : new Date().toISOString();
-    const valid = trackId && MUSIC_TRACK_IDS.has(trackId);
+    let source = '';
+    if (trackId) {
+        if (MUSIC_TRACK_IDS.has(trackId)) {
+            source = 'builtin';
+        } else if (uploadIds.has(trackId)) {
+            source = 'upload';
+        }
+    }
+    const playing = !!raw.playing && !!source;
+    const position = source ? clampMusicPosition(raw.position) : 0;
     const normalized = {
-        trackId: valid ? trackId : '',
+        trackId: source ? trackId : '',
+        source,
+        playing,
+        position,
         updatedAt,
+        uploads,
     };
     game.music = normalized;
     return normalized;
 }
 
-function presentMusicState(music) {
-    if (!music || typeof music !== 'object') {
-        return { trackId: '', updatedAt: null };
+function findGameMusicEntry(game, trackId) {
+    if (!game || !trackId) return null;
+    if (MUSIC_TRACK_IDS.has(trackId)) {
+        const track = getMusicTrack(trackId);
+        if (!track) return null;
+        return {
+            id: track.id,
+            type: 'builtin',
+            title: track.title,
+            info: track.info || '',
+            loop: track.loop !== false,
+            filename: track.filename,
+            duration: clampMusicDuration(track.duration),
+            filePath: path.join(SHARED_PATH, 'music', track.filename),
+        };
     }
-    const trackId = typeof music.trackId === 'string' ? music.trackId : '';
-    const updatedAt = typeof music.updatedAt === 'string' ? music.updatedAt : new Date().toISOString();
-    if (!trackId || !MUSIC_TRACK_IDS.has(trackId)) {
-        return { trackId: '', updatedAt };
+    const music = ensureMusicState(game);
+    const entry = music.uploads.find((upload) => upload && upload.id === trackId);
+    if (!entry) return null;
+    const title = entry.title || entry.originalName || 'Uploaded track';
+    return {
+        id: entry.id,
+        type: 'upload',
+        title,
+        info: entry.info || '',
+        loop: !!entry.loop,
+        filename: entry.filename,
+        duration: entry.duration ?? null,
+        filePath: path.join(MUSIC_UPLOADS_ROOT, game.id, entry.filename),
+        size: entry.size ?? null,
+        createdAt: entry.createdAt,
+        originalName: entry.originalName,
+    };
+}
+
+function presentMusicState(game) {
+    if (!game || typeof game !== 'object') {
+        return { trackId: '', title: '', info: '', src: '', source: '', loop: false, playing: false, position: 0, updatedAt: null, duration: null };
     }
-    return { trackId, updatedAt };
+    const music = ensureMusicState(game);
+    const base = {
+        trackId: '',
+        title: '',
+        info: '',
+        src: '',
+        source: '',
+        loop: false,
+        playing: false,
+        position: 0,
+        updatedAt: music.updatedAt,
+        duration: null,
+    };
+    if (!music.trackId) {
+        return base;
+    }
+    const entry = findGameMusicEntry(game, music.trackId);
+    if (!entry) {
+        music.trackId = '';
+        music.source = '';
+        music.playing = false;
+        music.position = 0;
+        music.updatedAt = new Date().toISOString();
+        return { ...base, updatedAt: music.updatedAt };
+    }
+    const position = clampMusicPosition(music.position);
+    return {
+        trackId: entry.id,
+        title: entry.title,
+        info: entry.info || '',
+        src: buildMusicStreamUrl(game.id, entry.id),
+        source: entry.type,
+        loop: !!entry.loop,
+        playing: !!music.playing,
+        position,
+        updatedAt: music.updatedAt,
+        duration: entry.duration ?? null,
+    };
+}
+
+function presentMusicLibrary(game) {
+    const music = ensureMusicState(game);
+    const uploads = music.uploads.map((entry) => ({
+        id: entry.id,
+        title: entry.title || entry.originalName || 'Uploaded track',
+        info: entry.info || '',
+        source: 'upload',
+        createdAt: entry.createdAt,
+        size: entry.size ?? null,
+        duration: entry.duration ?? null,
+        originalName: entry.originalName,
+    }));
+    const builtin = MUSIC_TRACKS.map((track) => ({
+        id: track.id,
+        title: track.title,
+        info: track.info || '',
+        loop: track.loop !== false,
+        source: 'builtin',
+        duration: clampMusicDuration(track.duration),
+    }));
+    return { builtin, uploads };
+}
+
+async function ensureMusicUploadDir(gameId) {
+    const dir = path.join(MUSIC_UPLOADS_ROOT, gameId);
+    await fs.mkdir(dir, { recursive: true });
+    return dir;
+}
+
+async function deleteAllMusicUploads(gameId) {
+    const dir = path.join(MUSIC_UPLOADS_ROOT, gameId);
+    await fs.rm(dir, { recursive: true, force: true });
 }
 
 function sanitizeAlertMessage(value) {
@@ -1519,7 +1700,7 @@ function presentGame(game, { includeSecrets = false } = {}) {
         worldSkills,
         combatSkills,
         media: presentMediaState(normalized.media),
-        music: presentMusicState(normalized.music),
+        music: presentMusicState(normalized),
         map: presentMapState(normalized.map, { includeBattleLog: includeSecrets }),
         ...(includeSecrets ? { mapLibrary: presentMapLibrary(normalized.mapLibrary) } : {}),
     };
@@ -2612,7 +2793,7 @@ function broadcastMusicState(game) {
     broadcastGameMessage(game.id, {
         type: 'music:state',
         gameId: game.id,
-        music: presentMusicState(game.music),
+        music: presentMusicState(game),
     });
 }
 
@@ -3439,6 +3620,7 @@ async function handleSocketMessage(ws, data) {
             case 'music.play': {
                 const gameId = parseUUID(message.gameId);
                 const trackId = typeof message.trackId === 'string' ? message.trackId.trim() : '';
+                const position = clampMusicPosition(message.position);
                 if (!gameId || !trackId) {
                     sendJson(ws, {
                         type: 'music:error',
@@ -3447,8 +3629,39 @@ async function handleSocketMessage(ws, data) {
                     });
                     break;
                 }
-                if (!MUSIC_TRACK_IDS.has(trackId) || !getMusicTrack(trackId)) {
+                const db = await readDB();
+                const game = getGame(db, gameId);
+                if (!game || !isMember(game, ws.userId)) {
+                    sendJson(ws, { type: 'music:error', error: 'not_found', gameId });
+                    break;
+                }
+                if (!isDM(game, ws.userId)) {
+                    sendJson(ws, { type: 'music:error', error: 'forbidden', gameId });
+                    break;
+                }
+                const entry = findGameMusicEntry(game, trackId);
+                if (!entry) {
                     sendJson(ws, { type: 'music:error', error: 'invalid_track', gameId });
+                    break;
+                }
+                const music = ensureMusicState(game);
+                music.trackId = entry.id;
+                music.source = entry.type;
+                music.playing = true;
+                music.position = position;
+                music.updatedAt = new Date().toISOString();
+                await persistGame(db, game, {
+                    broadcast: false,
+                    reason: 'music:play',
+                    actorId: ws.userId,
+                });
+                broadcastMusicState(game);
+                break;
+            }
+            case 'music.pause': {
+                const gameId = parseUUID(message.gameId);
+                if (!gameId) {
+                    sendJson(ws, { type: 'music:error', error: 'invalid_request', gameId: null });
                     break;
                 }
                 const db = await readDB();
@@ -3462,9 +3675,54 @@ async function handleSocketMessage(ws, data) {
                     break;
                 }
                 const music = ensureMusicState(game);
-                music.trackId = trackId;
+                if (!music.trackId) {
+                    sendJson(ws, { type: 'music:error', error: 'invalid_track', gameId });
+                    break;
+                }
+                music.playing = false;
+                music.position = clampMusicPosition(message.position);
                 music.updatedAt = new Date().toISOString();
-                await persistGame(db, game, { broadcast: false });
+                await persistGame(db, game, {
+                    broadcast: false,
+                    reason: 'music:pause',
+                    actorId: ws.userId,
+                });
+                broadcastMusicState(game);
+                break;
+            }
+            case 'music.seek': {
+                const gameId = parseUUID(message.gameId);
+                if (!gameId) {
+                    sendJson(ws, { type: 'music:error', error: 'invalid_request', gameId: null });
+                    break;
+                }
+                const db = await readDB();
+                const game = getGame(db, gameId);
+                if (!game || !isMember(game, ws.userId)) {
+                    sendJson(ws, { type: 'music:error', error: 'not_found', gameId });
+                    break;
+                }
+                if (!isDM(game, ws.userId)) {
+                    sendJson(ws, { type: 'music:error', error: 'forbidden', gameId });
+                    break;
+                }
+                const music = ensureMusicState(game);
+                if (!music.trackId) {
+                    sendJson(ws, { type: 'music:error', error: 'invalid_track', gameId });
+                    break;
+                }
+                if (Object.prototype.hasOwnProperty.call(message, 'position')) {
+                    music.position = clampMusicPosition(message.position);
+                }
+                if (typeof message.playing === 'boolean') {
+                    music.playing = !!message.playing;
+                }
+                music.updatedAt = new Date().toISOString();
+                await persistGame(db, game, {
+                    broadcast: false,
+                    reason: 'music:seek',
+                    actorId: ws.userId,
+                });
                 broadcastMusicState(game);
                 break;
             }
@@ -3483,8 +3741,15 @@ async function handleSocketMessage(ws, data) {
                 }
                 const music = ensureMusicState(game);
                 music.trackId = '';
+                music.source = '';
+                music.playing = false;
+                music.position = 0;
                 music.updatedAt = new Date().toISOString();
-                await persistGame(db, game, { broadcast: false });
+                await persistGame(db, game, {
+                    broadcast: false,
+                    reason: 'music:stop',
+                    actorId: ws.userId,
+                });
                 broadcastMusicState(game);
                 break;
             }
@@ -4896,6 +5161,185 @@ app.get('/api/games/:id', requireAuth, async (req, res) => {
     res.json(presentGame(g, { includeSecrets }));
 });
 
+app.get('/api/games/:id/music/library', requireAuth, async (req, res) => {
+    const { id } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
+    res.json({
+        library: presentMusicLibrary(game),
+        current: presentMusicState(game),
+    });
+});
+
+app.post('/api/games/:id/music/uploads', requireAuth, (req, res, next) => {
+    musicUpload.single('file')(req, res, async (err) => {
+        if (err) {
+            if (err instanceof multer.MulterError) {
+                if (err.code === 'LIMIT_FILE_SIZE') {
+                    return res.status(413).json({ error: 'file_too_large' });
+                }
+                return res.status(400).json({ error: 'upload_failed', code: err.code });
+            }
+            return next(err);
+        }
+
+        try {
+            const { id } = req.params || {};
+            const db = await readDB();
+            const game = getGame(db, id);
+            if (!game || !isMember(game, req.session.userId)) {
+                return res.status(404).json({ error: 'not_found' });
+            }
+            if (!isDM(game, req.session.userId)) {
+                return res.status(403).json({ error: 'forbidden' });
+            }
+
+            const file = req.file;
+            if (!file || !file.buffer || !file.size) {
+                return res.status(400).json({ error: 'invalid_file' });
+            }
+            const mime = typeof file.mimetype === 'string' ? file.mimetype : '';
+            const originalName = typeof file.originalname === 'string' ? file.originalname : '';
+            const lowerName = originalName.toLowerCase();
+            if (!AUDIO_MIME_REGEX.test(mime) && !lowerName.endsWith('.mp3')) {
+                return res.status(400).json({ error: 'unsupported_type' });
+            }
+
+            const music = ensureMusicState(game);
+            if (music.uploads.length >= MAX_MUSIC_UPLOADS) {
+                return res.status(400).json({ error: 'upload_limit' });
+            }
+
+            const uploadId = `${MUSIC_UPLOAD_PREFIX}${uuid()}`;
+            const safeTitle = sanitizeMusicTitle(originalName) || 'Uploaded track';
+            const createdAt = new Date().toISOString();
+            const dir = await ensureMusicUploadDir(game.id);
+            const filename = `${uploadId}.mp3`;
+            const filePath = path.join(dir, filename);
+            await fs.writeFile(filePath, file.buffer);
+
+            music.uploads.push({
+                id: uploadId,
+                filename,
+                originalName: originalName.slice(0, 160),
+                title: safeTitle.slice(0, 160),
+                info: '',
+                loop: false,
+                createdAt,
+                size: file.size,
+            });
+            ensureMusicState(game);
+
+            await persistGame(db, game, {
+                reason: 'music:upload',
+                actorId: req.session.userId,
+                broadcast: false,
+            });
+
+            res.status(201).json({
+                track: {
+                    id: uploadId,
+                    title: safeTitle,
+                    info: '',
+                    source: 'upload',
+                    createdAt,
+                    size: file.size,
+                },
+                library: presentMusicLibrary(game),
+            });
+        } catch (error) {
+            next(error);
+        }
+    });
+});
+
+app.delete('/api/games/:id/music/uploads/:uploadId', requireAuth, async (req, res) => {
+    const { id, uploadId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    if (!isDM(game, req.session.userId)) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const music = ensureMusicState(game);
+    const idx = music.uploads.findIndex((entry) => entry && entry.id === uploadId);
+    if (idx === -1) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+    const [removed] = music.uploads.splice(idx, 1);
+    ensureMusicState(game);
+
+    if (removed?.filename) {
+        const filePath = path.join(MUSIC_UPLOADS_ROOT, game.id, removed.filename);
+        try {
+            await fs.unlink(filePath);
+        } catch (err) {
+            if (!err || err.code !== 'ENOENT') {
+                console.warn('Failed to delete music upload', filePath, err);
+            }
+        }
+    }
+
+    let broadcast = false;
+    if (music.trackId === uploadId) {
+        music.trackId = '';
+        music.source = '';
+        music.playing = false;
+        music.position = 0;
+        music.updatedAt = new Date().toISOString();
+        broadcast = true;
+    }
+
+    await persistGame(db, game, {
+        reason: 'music:delete',
+        actorId: req.session.userId,
+        broadcast,
+    });
+
+    if (broadcast) {
+        broadcastMusicState(game);
+    }
+
+    res.json({ ok: true, library: presentMusicLibrary(game) });
+});
+
+app.get('/api/games/:id/music/track/:trackId', requireAuth, async (req, res) => {
+    const { id, trackId } = req.params || {};
+    const db = await readDB();
+    const game = getGame(db, id);
+    if (!game || !isMember(game, req.session.userId)) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
+    const entry = findGameMusicEntry(game, trackId);
+    if (!entry || !entry.filePath) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
+    try {
+        await fs.access(entry.filePath);
+    } catch (err) {
+        return res.status(404).json({ error: 'not_found' });
+    }
+
+    res.set('Cache-Control', 'no-store');
+    res.type('audio/mpeg');
+    res.sendFile(entry.filePath, (err) => {
+        if (err) {
+            if (!res.headersSent) {
+                res.status(err.statusCode || 500).end();
+            }
+        }
+    });
+});
+
 app.post('/api/games/:id/invites', requireAuth, async (req, res) => {
     const { id } = req.params || {};
     const db = await readDB();
@@ -6196,6 +6640,7 @@ app.delete('/api/games/:id', requireAuth, async (req, res) => {
     removeStoryWatcher(gameId);
     db.games = (db.games || []).filter((g) => g && g.id !== gameId);
     await writeDB(db);
+    await deleteAllMusicUploads(gameId).catch(() => {});
     broadcastGameDeleted(gameId);
     res.json({ ok: true });
 });

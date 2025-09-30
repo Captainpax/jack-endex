@@ -59,7 +59,7 @@ import { EMPTY_ARRAY, EMPTY_OBJECT } from "./utils/constants";
 import { createEmptySkillViewPrefs, sanitizeSkillViewPrefs } from "./utils/skillViewPrefs";
 import { deepClone, normalizeCharacter, normalizeSkills } from "./utils/character";
 import { get } from "./utils/object";
-import { getAvailableTracks, getMainMenuTrack, getTrackById } from "./utils/music";
+import { getMainMenuTrack } from "./utils/music";
 import { COMBAT_SKILL_LIBRARY, findCombatSkillById, findCombatSkillByName } from "@shared/combatSkills.js";
 import RealtimeContext from "./contexts/RealtimeContext";
 
@@ -295,6 +295,9 @@ const MusicContext = createContext({
     toggleMute: () => {},
     playbackBlocked: false,
     resume: () => {},
+    currentTime: 0,
+    duration: 0,
+    seek: () => {},
 });
 
 const MUSIC_VOLUME_KEY = "amz:musicVolume";
@@ -359,6 +362,8 @@ function MusicProvider({ children }) {
         return window.localStorage.getItem(MUSIC_MUTED_KEY) === "1";
     });
     const [playbackBlocked, setPlaybackBlocked] = useState(false);
+    const [currentTime, setCurrentTime] = useState(0);
+    const [duration, setDuration] = useState(0);
 
     useEffect(() => {
         const audio = audioRef.current;
@@ -374,79 +379,185 @@ function MusicProvider({ children }) {
 
     useEffect(() => {
         const audio = audioRef.current;
-        if (!audio) return undefined;
-        if (currentTrack && currentTrack.src) {
-            const loop = currentTrack.loop !== false;
-            if (audio.src !== currentTrack.src) {
-                audio.src = currentTrack.src;
-                audio.load();
+        if (!audio) return;
+        const handleTimeUpdate = () => {
+            setCurrentTime(audio.currentTime || 0);
+        };
+        const handleDuration = () => {
+            const raw = Number(audio.duration);
+            if (Number.isFinite(raw) && raw >= 0) {
+                setDuration(raw);
             }
-            audio.loop = loop;
-            audio.currentTime = 0;
-            const attemptPlay = () => {
-                try {
-                    const maybePromise = audio.play();
-                    if (maybePromise && typeof maybePromise.then === "function") {
-                        maybePromise
-                            .then(() => setPlaybackBlocked(false))
-                            .catch((err) => {
-                                console.warn("Music playback blocked", err);
-                                setPlaybackBlocked(true);
-                            });
-                    } else {
-                        setPlaybackBlocked(false);
-                    }
-                } catch (err) {
-                    console.warn("Music playback failed", err);
-                    setPlaybackBlocked(true);
-                }
-            };
-            if (audio.readyState >= 2) {
-                attemptPlay();
-            } else {
-                const onCanPlay = () => {
-                    audio.removeEventListener("canplay", onCanPlay);
-                    attemptPlay();
-                };
-                audio.addEventListener("canplay", onCanPlay);
-                return () => audio.removeEventListener("canplay", onCanPlay);
-            }
-        } else {
+        };
+        const handleEnded = () => {
+            setPlaybackBlocked(false);
+        };
+        audio.addEventListener("timeupdate", handleTimeUpdate);
+        audio.addEventListener("loadedmetadata", handleDuration);
+        audio.addEventListener("durationchange", handleDuration);
+        audio.addEventListener("ended", handleEnded);
+        return () => {
+            audio.removeEventListener("timeupdate", handleTimeUpdate);
+            audio.removeEventListener("loadedmetadata", handleDuration);
+            audio.removeEventListener("durationchange", handleDuration);
+            audio.removeEventListener("ended", handleEnded);
+        };
+    }, []);
+
+    useEffect(() => {
+        const audio = audioRef.current;
+        if (!audio) return;
+
+        if (!currentTrack || !currentTrack.src) {
             audio.pause();
             audio.removeAttribute("src");
             audio.load();
             setPlaybackBlocked(false);
+            setCurrentTime(0);
+            setDuration(0);
+            return;
         }
-        return undefined;
+
+        if (audio.src !== currentTrack.src) {
+            audio.src = currentTrack.src;
+        }
+        audio.loop = currentTrack.loop !== false;
+
+        const desiredTime =
+            typeof currentTrack.position === "number" && Number.isFinite(currentTrack.position) && currentTrack.position >= 0
+                ? currentTrack.position
+                : 0;
+
+        const syncPosition = () => {
+            try {
+                if (Math.abs(audio.currentTime - desiredTime) > 0.25) {
+                    audio.currentTime = desiredTime;
+                }
+                setCurrentTime(desiredTime);
+            } catch (err) {
+                console.warn("Failed to sync audio position", err);
+            }
+        };
+
+        const updateDurationFromAudio = () => {
+            const raw = Number(audio.duration);
+            if (Number.isFinite(raw) && raw >= 0) {
+                setDuration(raw);
+            }
+        };
+
+        const attemptPlay = () => {
+            try {
+                const maybePromise = audio.play();
+                if (maybePromise && typeof maybePromise.then === "function") {
+                    maybePromise
+                        .then(() => setPlaybackBlocked(false))
+                        .catch((err) => {
+                            console.warn("Music playback failed", err);
+                            setPlaybackBlocked(true);
+                        });
+                } else {
+                    setPlaybackBlocked(false);
+                }
+            } catch (err) {
+                console.warn("Music playback failed", err);
+                setPlaybackBlocked(true);
+            }
+        };
+
+        if (currentTrack.duration != null && Number.isFinite(currentTrack.duration) && currentTrack.duration >= 0) {
+            setDuration(currentTrack.duration);
+        }
+
+        if (audio.readyState >= 1) {
+            syncPosition();
+            if (currentTrack.playing) {
+                attemptPlay();
+            } else {
+                audio.pause();
+            }
+            if (audio.readyState >= 2 && currentTrack.duration == null) {
+                updateDurationFromAudio();
+            }
+            return;
+        }
+
+        const onLoaded = () => {
+            audio.removeEventListener("loadedmetadata", onLoaded);
+            syncPosition();
+            updateDurationFromAudio();
+            if (currentTrack.playing) {
+                attemptPlay();
+            } else {
+                audio.pause();
+            }
+        };
+
+        audio.addEventListener("loadedmetadata", onLoaded);
+        return () => audio.removeEventListener("loadedmetadata", onLoaded);
     }, [currentTrack]);
 
     const playTrack = useCallback((track) => {
         if (!track || !track.src) {
             setCurrentTrack(null);
+            setCurrentTime(0);
+            setDuration(0);
             return;
+        }
+        const normalized = {
+            id: track.trackId || track.id || "",
+            title: track.title || "Unknown track",
+            info: track.info || "",
+            src: track.src,
+            loop: track.loop !== false,
+            updatedAt: typeof track.updatedAt === "string" ? track.updatedAt : new Date().toISOString(),
+            playing: track.playing !== false,
+            position:
+                typeof track.position === "number" && Number.isFinite(track.position) && track.position >= 0
+                    ? track.position
+                    : 0,
+            source: track.source || "",
+            duration:
+                typeof track.duration === "number" && Number.isFinite(track.duration) && track.duration >= 0
+                    ? track.duration
+                    : null,
+        };
+        setCurrentTime(normalized.position);
+        if (normalized.duration != null) {
+            setDuration(normalized.duration);
         }
         setCurrentTrack((prev) => {
             if (
                 prev &&
-                prev.id === track.id &&
-                prev.src === track.src &&
-                prev.updatedAt === track.updatedAt
+                prev.id === normalized.id &&
+                prev.src === normalized.src &&
+                prev.updatedAt === normalized.updatedAt &&
+                prev.playing === normalized.playing &&
+                Math.abs((prev.position || 0) - normalized.position) < 0.01
             ) {
-                return prev;
+                return { ...prev, ...normalized };
             }
-            return {
-                id: track.id,
-                title: track.title,
-                info: track.info,
-                src: track.src,
-                loop: track.loop !== false,
-                updatedAt: track.updatedAt || null,
-            };
+            return normalized;
         });
     }, []);
 
     const stopTrack = useCallback(() => {
         setCurrentTrack(null);
+        setCurrentTime(0);
+        setDuration(0);
+    }, []);
+
+    const seek = useCallback((time) => {
+        const audio = audioRef.current;
+        if (!audio) return;
+        const safe = Number(time);
+        const clamped = Number.isFinite(safe) && safe >= 0 ? safe : 0;
+        try {
+            audio.currentTime = clamped;
+            setCurrentTime(clamped);
+        } catch (err) {
+            console.warn("Music seek failed", err);
+        }
     }, []);
 
     const updateVolume = useCallback((value) => {
@@ -504,8 +615,25 @@ function MusicProvider({ children }) {
             toggleMute,
             playbackBlocked,
             resume: resumePlayback,
+            currentTime,
+            duration,
+            seek,
         }),
-        [currentTrack, playTrack, stopTrack, volume, updateVolume, muted, updateMuted, toggleMute, playbackBlocked, resumePlayback]
+        [
+            currentTrack,
+            playTrack,
+            stopTrack,
+            volume,
+            updateVolume,
+            muted,
+            updateMuted,
+            toggleMute,
+            playbackBlocked,
+            resumePlayback,
+            currentTime,
+            duration,
+            seek,
+        ],
     );
 
     return (
@@ -929,7 +1057,8 @@ function AuthView({ onAuthed }) {
 
     return (
         <Center>
-            <div className="card" style={{ minWidth: 360 }}>
+            <div className="card auth-card" style={{ minWidth: 360 }}>
+                <HatLogo size={72} className="auth-card__logo" />
                 <h2>{mode === "login" ? "Login" : "Create Account"}</h2>
                 <div className="col">
                     <input
@@ -979,6 +1108,20 @@ function AuthView({ onAuthed }) {
     );
 }
 
+function HatLogo({ size = 56, className = "" }) {
+    const classes = ["hat-logo", className].filter(Boolean).join(" ");
+    return (
+        <img
+            src="/personahaticon.gif"
+            alt="Persona tabletop logo"
+            width={size}
+            height={size}
+            className={classes}
+            draggable="false"
+        />
+    );
+}
+
 // ---------- Home ----------
 function Home({ me, games, onOpen, onCreate, onDelete }) {
     const [name, setName] = useState("My Campaign");
@@ -991,19 +1134,38 @@ function Home({ me, games, onOpen, onCreate, onDelete }) {
         }
         return [];
     }, [games]);
+    const displayName = useMemo(() => {
+        if (!me) return "Adventurer";
+        const raw = typeof me.username === "string" ? me.username.trim() : "";
+        return raw || "Adventurer";
+    }, [me]);
 
     const musicControls = useContext(MusicContext);
     const playTrack = musicControls?.playTrack;
     const stopTrack = musicControls?.stopTrack;
 
     useEffect(() => {
+        if (typeof playTrack !== "function") return undefined;
         const track = getMainMenuTrack();
-        if (typeof playTrack === "function") {
-            if (track) {
-                playTrack(track);
-            } else if (typeof stopTrack === "function") {
-                stopTrack();
-            }
+        if (track) {
+            playTrack({
+                trackId: track.id,
+                id: track.id,
+                title: track.title,
+                info: track.info || "",
+                src: track.src,
+                loop: track.loop !== false,
+                playing: true,
+                position: 0,
+                updatedAt: new Date().toISOString(),
+                source: "builtin",
+                duration:
+                    typeof track.duration === "number" && Number.isFinite(track.duration) && track.duration >= 0
+                        ? track.duration
+                        : null,
+            });
+        } else if (typeof stopTrack === "function") {
+            stopTrack();
         }
         return () => {
             if (typeof stopTrack === "function") {
@@ -1013,9 +1175,15 @@ function Home({ me, games, onOpen, onCreate, onDelete }) {
     }, [playTrack, stopTrack]);
 
     return (
-        <div style={{ padding: 20, display: "grid", gap: 16 }}>
-            <header className="row" style={{ alignItems: "center", justifyContent: "space-between" }}>
-                <h2>Welcome, {me.username}</h2>
+        <div className="home-layout">
+            <header className="home-header">
+                <div className="home-header__brand">
+                    <HatLogo size={64} />
+                    <div className="home-header__brand-text">
+                        <span className="eyebrow">Campaign hub</span>
+                        <h2>Welcome, {displayName}</h2>
+                    </div>
+                </div>
                 <button
                     className="btn"
                     onClick={async () => {
@@ -1439,8 +1607,7 @@ function GameView({
     const musicControls = useContext(MusicContext);
     const playTrack = musicControls?.playTrack;
     const stopTrack = musicControls?.stopTrack;
-    const realtimeTrackId = realtime.musicState?.trackId || null;
-    const realtimeTrackUpdatedAt = realtime.musicState?.updatedAt || null;
+    const realtimeMusicState = realtime.musicState || null;
     const volumeValue = typeof musicControls?.volume === "number" ? musicControls.volume : 0.2;
     const muted = !!musicControls?.muted;
     const setVolume = musicControls?.setVolume;
@@ -1459,15 +1626,14 @@ function GameView({
     }, [game.music, syncMusic]);
 
     useEffect(() => {
-        const track = realtimeTrackId ? getTrackById(realtimeTrackId) : null;
-        if (track) {
+        if (realtimeMusicState) {
             if (typeof playTrack === "function") {
-                playTrack({ ...track, updatedAt: realtimeTrackUpdatedAt });
+                playTrack(realtimeMusicState);
             }
         } else if (typeof stopTrack === "function") {
             stopTrack();
         }
-    }, [playTrack, stopTrack, realtimeTrackId, realtimeTrackUpdatedAt]);
+    }, [playTrack, stopTrack, realtimeMusicState]);
 
     useEffect(
         () => () => {
@@ -1625,14 +1791,19 @@ function GameView({
                                         {sidebarOpen ? "Hide menu" : "Show menu"}
                                     </span>
                                 </button>
-                                <div>
-                                    <span className="eyebrow">
-                                        {isDM ? "Dungeon Master" : "Player"} View
-                                    </span>
-                                    <h1>{activeNav?.label || ""}</h1>
-                                    {activeNav?.description && (
-                                        <p className="text-muted">{activeNav.description}</p>
-                                    )}
+                                <div className="header-leading__body">
+                                    <div className="header-leading__title-row">
+                                        <HatLogo size={56} className="header-leading__logo" />
+                                        <div className="header-leading__text">
+                                            <span className="eyebrow">
+                                                {isDM ? "Dungeon Master" : "Player"} View
+                                            </span>
+                                            <h1>{activeNav?.label || ""}</h1>
+                                            {activeNav?.description && (
+                                                <p className="text-muted">{activeNav.description}</p>
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                             <div className="app-main__header-meta">
@@ -1865,18 +2036,48 @@ function GameView({
 // ---------- DM Overview ----------
 function DMOverview({ game, onInspectPlayer }) {
     const realtime = useContext(RealtimeContext);
-    const tracks = useMemo(() => getAvailableTracks(), []);
-    const [selectedTrackId, setSelectedTrackId] = useState(() => {
-        const initial = realtime?.musicState?.trackId;
-        if (initial) return initial;
-        return tracks[0]?.id || "";
-    });
+    const musicControls = useContext(MusicContext);
+    const [library, setLibrary] = useState({ builtin: [], uploads: [] });
+    const [libraryLoading, setLibraryLoading] = useState(false);
+    const [selectedTrackId, setSelectedTrackId] = useState(() => realtime?.musicState?.trackId || "");
+    const [pendingSeek, setPendingSeek] = useState(null);
     const [alertDraft, setAlertDraft] = useState("");
     const [musicFormError, setMusicFormError] = useState(null);
     const [alertFormError, setAlertFormError] = useState(null);
     const isRealtimeConnected = !!realtime?.connected;
     const currentTrackId = realtime?.musicState?.trackId || "";
-    const currentMusic = currentTrackId ? getTrackById(currentTrackId) : null;
+    const currentMusic = realtime?.musicState || null;
+
+    const loadLibrary = useCallback(async () => {
+        setLibraryLoading(true);
+        try {
+            const response = await Games.music.library(game.id);
+            if (response?.library) {
+                setLibrary(response.library);
+            } else {
+                setLibrary({ builtin: [], uploads: [] });
+            }
+        } catch (err) {
+            setMusicFormError((prev) => prev || err.message);
+        } finally {
+            setLibraryLoading(false);
+        }
+    }, [game.id]);
+
+    useEffect(() => {
+        loadLibrary();
+    }, [loadLibrary]);
+
+    useEffect(() => {
+        if (!selectedTrackId) {
+            const firstUpload = library.uploads?.[0];
+            const firstBuiltin = library.builtin?.[0];
+            const next = firstUpload?.id || firstBuiltin?.id || "";
+            if (next) {
+                setSelectedTrackId(next);
+            }
+        }
+    }, [library, selectedTrackId]);
     const serverMusicError = realtime?.musicError || null;
     const friendlyMusicError = useMemo(() => {
         if (!serverMusicError) return null;
@@ -1894,10 +2095,40 @@ function DMOverview({ game, onInspectPlayer }) {
         }
     }, [serverMusicError]);
     const displayMusicError = musicFormError || friendlyMusicError;
+    const playRealtime = realtime?.playMusic;
+    const pauseRealtime = realtime?.pauseMusic;
+    const seekRealtime = realtime?.seekMusic;
+    const stopRealtime = realtime?.stopMusic;
+    const audioTime = typeof musicControls?.currentTime === "number" ? musicControls.currentTime : 0;
+    const audioDuration = typeof musicControls?.duration === "number" ? musicControls.duration : 0;
+    const seekControl = typeof musicControls?.seek === "function" ? musicControls.seek : null;
+    const formatTime = (seconds) => {
+        const total = Math.max(0, Math.floor(Number(seconds) || 0));
+        const mins = Math.floor(total / 60);
+        const secs = total % 60;
+        return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+    };
+    const formatSize = (bytes) => {
+        const value = Number(bytes);
+        if (!Number.isFinite(value) || value <= 0) return null;
+        if (value >= 1024 * 1024) {
+            return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+        }
+        return `${Math.max(1, Math.round(value / 1024))} KB`;
+    };
+    const sliderValue = pendingSeek != null ? pendingSeek : audioTime;
+    const sliderMax = Math.max(
+        audioDuration > 0 ? audioDuration : 0,
+        currentMusic?.duration && currentMusic.duration > 0 ? currentMusic.duration : 0,
+        pendingSeek != null ? pendingSeek : 0,
+        sliderValue,
+    );
+    const musicStatus = currentMusic ? (currentMusic.playing ? "Playing" : "Paused") : "Stopped";
     useEffect(() => {
         if (currentTrackId) {
             setSelectedTrackId(currentTrackId);
         }
+        setPendingSeek(null);
     }, [currentTrackId]);
     useEffect(() => {
         if (musicFormError) {
@@ -2035,39 +2266,152 @@ function DMOverview({ game, onInspectPlayer }) {
         },
         {
             label: "Music",
-            value: currentMusic ? currentMusic.name : "Stopped",
-            hint: currentMusic ? "Playing via DM companion" : "No track playing",
+            value: currentMusic ? currentMusic.title : "Stopped",
+            hint: currentMusic
+                ? currentMusic.playing
+                    ? "Playing via DM companion"
+                    : "Paused on DM companion"
+                : "No track playing",
         },
     ];
 
     const canInspect = typeof onInspectPlayer === "function";
 
     const handlePlayTrack = useCallback(
-        async (event) => {
+        (event) => {
             event.preventDefault();
+            setMusicFormError(null);
             if (!selectedTrackId) {
                 setMusicFormError("Select a track before starting playback.");
                 return;
             }
             try {
-                await Games.playMusic(game.id, selectedTrackId);
+                if (typeof playRealtime === "function") {
+                    const sameTrack = realtime?.musicState?.trackId === selectedTrackId;
+                    const resumePosition = sameTrack ? audioTime : 0;
+                    playRealtime(selectedTrackId, { position: resumePosition });
+                }
             } catch (err) {
                 setMusicFormError(err.message);
             }
         },
-        [game.id, selectedTrackId]
+        [selectedTrackId, playRealtime, realtime?.musicState?.trackId, audioTime]
+    );
+
+    const handlePauseTrack = useCallback(
+        (event) => {
+            event.preventDefault();
+            setMusicFormError(null);
+            try {
+                if (typeof pauseRealtime === "function") {
+                    pauseRealtime(audioTime);
+                }
+            } catch (err) {
+                setMusicFormError(err.message);
+            }
+        },
+        [pauseRealtime, audioTime]
     );
 
     const handleStopTrack = useCallback(
-        async (event) => {
+        (event) => {
             event.preventDefault();
+            setMusicFormError(null);
             try {
-                await Games.stopMusic(game.id);
+                if (typeof stopRealtime === "function") {
+                    stopRealtime();
+                }
             } catch (err) {
                 setMusicFormError(err.message);
             }
         },
-        [game.id]
+        [stopRealtime]
+    );
+
+    const handleSeekChange = useCallback(
+        (event) => {
+            const value = Number(event.target.value);
+            if (!Number.isFinite(value) || value < 0) return;
+            setPendingSeek(value);
+            if (seekControl) {
+                seekControl(value);
+            }
+        },
+        [seekControl]
+    );
+
+    const handleSeekCommit = useCallback(() => {
+        if (pendingSeek == null) return;
+        try {
+            setMusicFormError(null);
+            if (typeof seekRealtime === "function") {
+                seekRealtime(pendingSeek, { playing: !!realtime?.musicState?.playing });
+            }
+        } catch (err) {
+            setMusicFormError(err.message);
+        } finally {
+            setPendingSeek(null);
+        }
+    }, [pendingSeek, seekRealtime, realtime?.musicState?.playing]);
+
+    const handleSeekKeyUp = useCallback(
+        (event) => {
+            if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
+                handleSeekCommit();
+            }
+        },
+        [handleSeekCommit]
+    );
+
+    const handleUploadTrack = useCallback(
+        async (event) => {
+            const file = event.target.files && event.target.files[0];
+            if (!file) return;
+            try {
+                setMusicFormError(null);
+                const response = await Games.music.upload(game.id, file);
+                if (response?.library) {
+                    setLibrary(response.library);
+                } else {
+                    await loadLibrary();
+                }
+            } catch (err) {
+                const message = err?.message;
+                switch (message) {
+                    case "upload_limit":
+                        setMusicFormError("Campaign storage is full. Remove a track before uploading another.");
+                        break;
+                    case "unsupported_type":
+                        setMusicFormError("Only MP3 uploads are supported.");
+                        break;
+                    case "file_too_large":
+                        setMusicFormError("That file is too large to upload.");
+                        break;
+                    default:
+                        setMusicFormError(message);
+                }
+            } finally {
+                event.target.value = "";
+            }
+        },
+        [game.id, loadLibrary]
+    );
+
+    const handleDeleteUpload = useCallback(
+        async (trackId) => {
+            if (!trackId) return;
+            try {
+                const response = await Games.music.deleteUpload(game.id, trackId);
+                if (response?.library) {
+                    setLibrary(response.library);
+                } else {
+                    await loadLibrary();
+                }
+            } catch (err) {
+                setMusicFormError(err.message);
+            }
+        },
+        [game.id, loadLibrary]
     );
 
     const handleSendAlert = useCallback(
@@ -2123,24 +2467,118 @@ function DMOverview({ game, onInspectPlayer }) {
                         <select
                             value={selectedTrackId}
                             onChange={(event) => setSelectedTrackId(event.target.value)}
+                            disabled={libraryLoading && library.uploads.length === 0 && library.builtin.length === 0}
                         >
-                            {tracks.map((track) => (
-                                <option key={track.id} value={track.id}>
-                                    {track.name}
-                                </option>
-                            ))}
+                            <option value="">Select a track</option>
+                            {library.uploads.length > 0 && (
+                                <optgroup label="Campaign uploads">
+                                    {library.uploads.map((track) => (
+                                        <option key={track.id} value={track.id}>
+                                            {track.title}
+                                        </option>
+                                    ))}
+                                </optgroup>
+                            )}
+                            {library.builtin.length > 0 && (
+                                <optgroup label="Built-in tracks">
+                                    {library.builtin.map((track) => (
+                                        <option key={track.id} value={track.id}>
+                                            {track.title}
+                                        </option>
+                                    ))}
+                                </optgroup>
+                            )}
                         </select>
                     </label>
                     {displayMusicError && <div className="text-error text-small">{displayMusicError}</div>}
-                    <div className="overview-actions">
-                        <button type="submit" className="btn btn-small">
-                            Play track
+                    <div className="music-controls-row">
+                        <button type="submit" className="btn btn-small" disabled={!selectedTrackId || libraryLoading}>
+                            {currentMusic?.playing ? "Restart" : "Play"}
                         </button>
-                        <button type="button" className="btn ghost btn-small" onClick={handleStopTrack}>
+                        <button
+                            type="button"
+                            className="btn ghost btn-small"
+                            onClick={handlePauseTrack}
+                            disabled={!currentMusic?.trackId || !currentMusic?.playing}
+                        >
+                            Pause
+                        </button>
+                        <button
+                            type="button"
+                            className="btn ghost btn-small"
+                            onClick={handleStopTrack}
+                            disabled={!currentMusic?.trackId}
+                        >
                             Stop
                         </button>
                     </div>
+                    {currentMusic ? (
+                        <div className="music-status-panel">
+                            <div className="music-status-heading">
+                                <strong>{currentMusic.title}</strong>
+                                {currentMusic.info && <span className="text-muted"> · {currentMusic.info}</span>}
+                            </div>
+                            <div className="music-status text-muted text-small">Status: {musicStatus}</div>
+                            <div className="music-seek">
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max={sliderMax > 0 ? sliderMax : sliderValue > 0 ? sliderValue : 1}
+                                    step="0.1"
+                                    value={sliderValue}
+                                    onChange={handleSeekChange}
+                                    onMouseUp={handleSeekCommit}
+                                    onTouchEnd={handleSeekCommit}
+                                    onBlur={handleSeekCommit}
+                                    onKeyUp={handleSeekKeyUp}
+                                />
+                                <div className="music-seek__labels">
+                                    <span>{formatTime(sliderValue)}</span>
+                                    <span>{formatTime(sliderMax)}</span>
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        <p className="text-muted text-small">No track selected.</p>
+                    )}
                 </form>
+                <div className="music-upload-section">
+                    <label className="field field--file">
+                        <span className="field__label">Upload MP3</span>
+                        <input type="file" accept="audio/mpeg" onChange={handleUploadTrack} disabled={libraryLoading} />
+                    </label>
+                    {library.uploads.length === 0 ? (
+                        <p className="text-muted text-small">Add custom ambience for this campaign.</p>
+                    ) : (
+                        <ul className="music-upload-list">
+                            {library.uploads.map((track) => {
+                                const sizeLabel = formatSize(track.size);
+                                const uploadedOn = track.createdAt ? new Date(track.createdAt).toLocaleDateString() : null;
+                                const metaParts = [];
+                                if (uploadedOn) metaParts.push(`Uploaded ${uploadedOn}`);
+                                if (sizeLabel) metaParts.push(sizeLabel);
+                                return (
+                                    <li key={track.id} className="music-upload-list__item">
+                                        <div className="music-upload-list__meta">
+                                            <strong>{track.title}</strong>
+                                            {metaParts.length > 0 && (
+                                                <span className="text-muted text-small"> · {metaParts.join(" · ")}</span>
+                                            )}
+                                        </div>
+                                        <button
+                                            type="button"
+                                            className="btn ghost btn-small"
+                                            onClick={() => handleDeleteUpload(track.id)}
+                                            disabled={libraryLoading}
+                                        >
+                                            Remove
+                                        </button>
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    )}
+                </div>
                 <form className="stack" onSubmit={handleSendAlert}>
                     <label className="field">
                         <span className="field__label">Send alert</span>

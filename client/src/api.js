@@ -531,6 +531,21 @@ export const Games = {
     list: (query) => api('/api/games', { query }),
     create: (name) => api('/api/games', { method: 'POST', body: { name } }),
     get: (id) => api(`/api/games/${encodeURIComponent(id)}`),
+    music: {
+        library: (id) => api(`/api/games/${encodeURIComponent(id)}/music/library`),
+        upload: (id, file) => {
+            const form = new FormData();
+            form.append('file', file);
+            return api(`/api/games/${encodeURIComponent(id)}/music/uploads`, {
+                method: 'POST',
+                body: form,
+            });
+        },
+        deleteUpload: (id, trackId) =>
+            api(`/api/games/${encodeURIComponent(id)}/music/uploads/${encodeURIComponent(trackId)}`, {
+                method: 'DELETE',
+            }),
+    },
     invite: (id) => api(`/api/games/${encodeURIComponent(id)}/invites`, { method: 'POST' }),
     delete: (id) => api(`/api/games/${encodeURIComponent(id)}`, { method: 'DELETE' }),
     joinByCode: (code) => api(`/api/games/join/${encodeURIComponent(code)}`, { method: 'POST' }),

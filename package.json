@@ -22,6 +22,7 @@
     "axios": "^1.12.2",
     "discord.js": "^14.14.1",
     "cors": "^2.8.5",
+    "multer": "^1.4.5-lts.2",
     "express": "^4.19.2",
     "express-session": "^1.18.0",
     "langchain": "^0.3.34",
