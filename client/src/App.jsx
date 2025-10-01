@@ -61,6 +61,7 @@ import { deepClone, normalizeCharacter, normalizeSkills } from "./utils/characte
 import { get } from "./utils/object";
 import { getMainMenuTrack } from "./utils/music";
 import { idsMatch, normalizeId } from "./utils/ids";
+import { buildKeybindManifest, installGlobalKeybindManifest } from "./utils/keybinds";
 import { COMBAT_SKILL_LIBRARY, findCombatSkillById, findCombatSkillByName } from "@shared/combatSkills.js";
 import RealtimeContext from "./contexts/RealtimeContext";
 import clientLogger from "./utils/clientLogger";
@@ -1469,6 +1470,10 @@ function GameView({
             }),
         [isDM, showServerManagement]
     );
+
+    const keybindManifest = useMemo(() => buildKeybindManifest(navItems), [navItems]);
+
+    useEffect(() => installGlobalKeybindManifest(keybindManifest), [keybindManifest]);
 
     const refreshCampaignList = useCallback(async () => {
         try {
