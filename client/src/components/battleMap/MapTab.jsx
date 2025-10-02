@@ -17,8 +17,6 @@ function isHexColor(value) {
     return /^#[0-9a-f]{6}$/i.test(normalized);
 }
 
-export default MapTab;
-
 function normalizeBrushPalette(palette) {
     const defaults = [...MAP_BRUSH_COLORS];
     if (!Array.isArray(palette)) return defaults;
@@ -1666,7 +1664,7 @@ function describeDemonTooltip(demon) {
     return parts.join(' · ');
 }
 
-function MapTab({ game, me }) {
+export default function MapTab({ game, me }) {
     const isDM = idsMatch(game.dmId, me.id);
     const realtime = useContext(RealtimeContext);
     const logBattle = useBattleLogger(game.id);
@@ -1870,30 +1868,6 @@ function MapTab({ game, me }) {
     const resetNpcForm = useCallback(() => {
         setNpcForm((prev) => createNpcTokenState({ type: prev.type }));
     }, []);
-
-    useEffect(() => {
-        if (!sidebarTabs.some((tab) => tab.key === sidebarTab)) {
-            setSidebarTab(sidebarTabs[0]?.key || 'tokens');
-        }
-    }, [sidebarTab, sidebarTabs]);
-
-    useEffect(() => {
-        if (!dmTokenTabs.some((tab) => tab.key === dmTokenTab)) {
-            setDmTokenTab(dmTokenTabs[0]?.key || 'all');
-        }
-    }, [dmTokenTab, dmTokenTabs]);
-
-    useEffect(() => {
-        if (activeDmTokens.length === 0) {
-            if (selectedDmTokenId !== null) {
-                setSelectedDmTokenId(null);
-            }
-            return;
-        }
-        if (!activeDmTokens.some((token) => token.id === selectedDmTokenId)) {
-            setSelectedDmTokenId(activeDmTokens[0].id);
-        }
-    }, [activeDmTokens, selectedDmTokenId]);
 
     useEffect(() => {
         if (!isDM || tool !== 'shape') {
@@ -2234,6 +2208,31 @@ function MapTab({ game, me }) {
         [dmTokenTab, dmTokenTabs],
     );
     const activeDmTokens = activeDmTokenTab.tokens || [];
+
+    useEffect(() => {
+        if (!sidebarTabs.some((tab) => tab.key === sidebarTab)) {
+            setSidebarTab(sidebarTabs[0]?.key || 'tokens');
+        }
+    }, [sidebarTab, sidebarTabs]);
+
+    useEffect(() => {
+        if (!dmTokenTabs.some((tab) => tab.key === dmTokenTab)) {
+            setDmTokenTab(dmTokenTabs[0]?.key || 'all');
+        }
+    }, [dmTokenTab, dmTokenTabs]);
+
+    useEffect(() => {
+        if (activeDmTokens.length === 0) {
+            if (selectedDmTokenId !== null) {
+                setSelectedDmTokenId(null);
+            }
+            return;
+        }
+        if (!activeDmTokens.some((token) => token.id === selectedDmTokenId)) {
+            setSelectedDmTokenId(activeDmTokens[0].id);
+        }
+    }, [activeDmTokens, selectedDmTokenId]);
+
     const selectedDmToken = useMemo(
         () => mapState.tokens.find((token) => token.id === selectedDmTokenId) || null,
         [mapState.tokens, selectedDmTokenId],
