@@ -5331,7 +5331,7 @@ app.get('/api/games/:id/music/track/:trackId', requireAuth, async (req, res) => 
 
     try {
         await fs.access(entry.filePath);
-    } catch (err) {
+    } catch {
         return res.status(404).json({ error: 'not_found' });
     }
 
