@@ -59,7 +59,7 @@ import { EMPTY_ARRAY, EMPTY_OBJECT } from "./utils/constants";
 import { createEmptySkillViewPrefs, sanitizeSkillViewPrefs } from "./utils/skillViewPrefs";
 import { deepClone, normalizeCharacter, normalizeSkills } from "./utils/character";
 import { get } from "./utils/object";
-import { getMainMenuTrack } from "./utils/music";
+import { getMainMenuTrack, getTrackById } from "./utils/music";
 import { idsMatch, normalizeId } from "./utils/ids";
 import { buildKeybindManifest, installGlobalKeybindManifest } from "./utils/keybinds";
 import { COMBAT_SKILL_LIBRARY, findCombatSkillById, findCombatSkillByName } from "@shared/combatSkills.js";
@@ -110,15 +110,33 @@ function normalizePlayerRecord(player) {
     return player;
 }
 
+function resolveDmId(game) {
+    if (!game || typeof game !== "object") return null;
+    const dm = game.dm && typeof game.dm === "object" ? game.dm : null;
+    const dmUser = dm && typeof dm.user === "object" ? dm.user : null;
+    const candidates = [
+        game.dmId,
+        dm?.userId,
+        dm?.id,
+        dmUser?.userId,
+        dmUser?.id,
+    ];
+    for (const candidate of candidates) {
+        const normalized = normalizeId(candidate);
+        if (normalized) return normalized;
+    }
+    return null;
+}
+
 function normalizeGameRecord(game) {
     if (!game || typeof game !== "object") return game;
-    const dmCandidate = normalizeId(game.dmId);
+    const resolvedDmId = resolveDmId(game);
     const normalizedDmId =
-        dmCandidate === null || dmCandidate === undefined
+        resolvedDmId === null || resolvedDmId === undefined
             ? game.dmId === null || game.dmId === undefined || game.dmId === ""
                 ? null
                 : String(game.dmId)
-            : dmCandidate;
+            : resolvedDmId;
 
     let playersChanged = false;
     let normalizedPlayers = game.players;
@@ -1558,6 +1576,192 @@ function GameView({
 
     const activeNav = navItems.find((item) => item.key === tab) || navItems[0] || null;
 
+    const viewMode = isDM ? "dm" : "player";
+
+    const renderTabContent = () => {
+        switch (tab) {
+            case "overview":
+                if (!isDM) return null;
+                return (
+                    <DMOverview
+                        game={game}
+                        onInspectPlayer={(player) => {
+                            if (!player?.userId) return;
+                            const nextId = normalizeId(player.userId) ?? player.userId;
+                            setDmSheetPlayerId(nextId ?? null);
+                            setTab("sheet");
+                        }}
+                    />
+                );
+            case "sheet":
+                return (
+                    <Sheet
+                        me={me}
+                        game={game}
+                        targetUserId={isDM ? dmSheetPlayerId : undefined}
+                        onChangePlayer={
+                            isDM
+                                ? (nextId) =>
+                                      setDmSheetPlayerId(normalizeId(nextId) ?? nextId ?? null)
+                                : undefined
+                        }
+                        onSave={async (ch) => {
+                            await Games.saveCharacter(game.id, ch);
+                            const full = await Games.get(game.id);
+                            setActive(normalizeGameRecord(full));
+                        }}
+                    />
+                );
+            case "party":
+                return (
+                    <Party
+                        mode={viewMode}
+                        game={game}
+                        selectedPlayerId={isDM ? dmSheetPlayerId : null}
+                        currentUserId={me.id}
+                        onSelectPlayer={
+                            isDM
+                                ? (player) => {
+                                      if (!player?.userId) return;
+                                      const nextId = normalizeId(player.userId) ?? player.userId;
+                                      setDmSheetPlayerId(nextId ?? null);
+                                      setTab("sheet");
+                                  }
+                                : undefined
+                        }
+                    />
+                );
+            case "map":
+                return <MapTab game={game} me={me} />;
+            case "items":
+                return (
+                    <ItemsTab
+                        game={game}
+                        me={me}
+                        onUpdate={async () => {
+                            const full = await Games.get(game.id);
+                            setActive(normalizeGameRecord(full));
+                        }}
+                        realtime={realtime}
+                    />
+                );
+            case "gear":
+                return (
+                    <GearTab
+                        game={game}
+                        me={me}
+                        onUpdate={async () => {
+                            const full = await Games.get(game.id);
+                            setActive(normalizeGameRecord(full));
+                        }}
+                    />
+                );
+            case "combatSkills":
+                return (
+                    <CombatSkillsTab
+                        game={game}
+                        me={me}
+                        onUpdate={async () => {
+                            const full = await Games.get(game.id);
+                            setActive(normalizeGameRecord(full));
+                        }}
+                    />
+                );
+            case "worldSkills":
+                return (
+                    <WorldSkillsTab
+                        game={game}
+                        me={me}
+                        onUpdate={async () => {
+                            const full = await Games.get(game.id);
+                            setActive(normalizeGameRecord(full));
+                        }}
+                    />
+                );
+            case "demons":
+                return (
+                    <DemonTab
+                        game={game}
+                        me={me}
+                        onUpdate={async () => {
+                            const full = await Games.get(game.id);
+                            setActive(normalizeGameRecord(full));
+                        }}
+                    />
+                );
+            case "storyLogs":
+                return <StoryLogsTab game={game} me={me} />;
+            case "help":
+                return <HelpTab />;
+            case "serverManagement":
+                if (!showServerManagement) return null;
+                return (
+                    <ServerManagementTab
+                        activeGameId={game.id}
+                        onGameDeleted={handleGameDeleted}
+                        onRefreshGames={refreshCampaignList}
+                        onRefreshActiveGame={refreshGameData}
+                    />
+                );
+            case "settings":
+                if (!isDM) return null;
+                return (
+                    <SettingsTab
+                        game={game}
+                        me={me}
+                        onUpdate={async (per) => {
+                            await Games.setPerms(game.id, per);
+                            const full = await Games.get(game.id);
+                            setActive(normalizeGameRecord(full));
+                        }}
+                        onGameRefresh={handleRefresh}
+                        onKickPlayer={
+                            isDM
+                                ? async (playerId) => {
+                                      if (!playerId) return;
+                                      try {
+                                          if (idsMatch(dmSheetPlayerId, playerId)) {
+                                              setDmSheetPlayerId(null);
+                                          }
+                                          await Games.removePlayer(game.id, playerId);
+                                          const full = await Games.get(game.id);
+                                          setActive(normalizeGameRecord(full));
+                                          setGames(normalizeGameList(await Games.list()));
+                                      } catch (e) {
+                                          alert(e.message);
+                                      }
+                                  }
+                                : undefined
+                        }
+                        onDelete={
+                            isDM
+                                ? async () => {
+                                      if (
+                                          !confirm(
+                                              `Delete the game "${game.name}"? This cannot be undone.`
+                                          )
+                                      ) {
+                                          return;
+                                      }
+                                      try {
+                                          await Games.delete(game.id);
+                                          setActive(null);
+                                          setDmSheetPlayerId(null);
+                                          setGames(normalizeGameList(await Games.list()));
+                                          alert("Game deleted");
+                                      } catch (e) {
+                                          alert(e.message);
+                                      }
+                                  }
+                                : undefined
+                        }
+                    />
+                );
+            default:
+                return null;
+        }
+    };
+
     const campaignPlayers = useMemo(
         () =>
             (game.players || []).filter(
@@ -1996,183 +2200,7 @@ function GameView({
                             </div>
                 </header>
 
-                <div className="app-content">
-                    {tab === "overview" && isDM && (
-                        <DMOverview
-                            game={game}
-                            onInspectPlayer={(player) => {
-                                if (!player?.userId) return;
-                                const nextId = normalizeId(player.userId) ?? player.userId;
-                                setDmSheetPlayerId(nextId ?? null);
-                                setTab("sheet");
-                            }}
-                        />
-                    )}
-
-                    {tab === "sheet" && (
-                        <Sheet
-                            me={me}
-                            game={game}
-                            targetUserId={isDM ? dmSheetPlayerId : undefined}
-                            onChangePlayer={
-                                isDM
-                                    ? (nextId) =>
-                                          setDmSheetPlayerId(
-                                              normalizeId(nextId) ?? nextId ?? null,
-                                          )
-                                    : undefined
-                            }
-                            onSave={async (ch) => {
-                                await Games.saveCharacter(game.id, ch);
-                                const full = await Games.get(game.id);
-                                setActive(normalizeGameRecord(full));
-                            }}
-                        />
-                    )}
-
-                    {tab === "party" && (
-                        <Party
-                            mode={isDM ? "dm" : "player"}
-                            game={game}
-                            selectedPlayerId={isDM ? dmSheetPlayerId : null}
-                            currentUserId={me.id}
-                            onSelectPlayer={
-                                isDM
-                                    ? (player) => {
-                                          if (!player?.userId) return;
-                                          const nextId = normalizeId(player.userId) ?? player.userId;
-                                          setDmSheetPlayerId(nextId ?? null);
-                                          setTab("sheet");
-                                      }
-                                    : undefined
-                            }
-                        />
-                    )}
-
-                    {tab === "map" && <MapTab game={game} me={me} />}
-
-                    {tab === "items" && (
-                        <ItemsTab
-                            game={game}
-                            me={me}
-                            onUpdate={async () => {
-                                const full = await Games.get(game.id);
-                                setActive(normalizeGameRecord(full));
-                            }}
-                            realtime={realtime}
-                        />
-                    )}
-
-                    {tab === "gear" && (
-                        <GearTab
-                            game={game}
-                            me={me}
-                            onUpdate={async () => {
-                                const full = await Games.get(game.id);
-                                setActive(normalizeGameRecord(full));
-                            }}
-                        />
-                    )}
-
-                    {tab === "combatSkills" && (
-                        <CombatSkillsTab
-                            game={game}
-                            me={me}
-                            onUpdate={async () => {
-                                const full = await Games.get(game.id);
-                                setActive(normalizeGameRecord(full));
-                            }}
-                        />
-                    )}
-
-                    {tab === "worldSkills" && (
-                        <WorldSkillsTab
-                            game={game}
-                            me={me}
-                            onUpdate={async () => {
-                                const full = await Games.get(game.id);
-                                setActive(normalizeGameRecord(full));
-                            }}
-                        />
-                    )}
-
-                    {tab === "demons" && (
-                        <DemonTab
-                            game={game}
-                            me={me}
-                            onUpdate={async () => {
-                                const full = await Games.get(game.id);
-                                setActive(normalizeGameRecord(full));
-                            }}
-                        />
-                    )}
-
-                    {tab === "storyLogs" && <StoryLogsTab game={game} me={me} />}
-
-                    {tab === "help" && <HelpTab />}
-
-                    {tab === "serverManagement" && showServerManagement && (
-                        <ServerManagementTab
-                            activeGameId={game.id}
-                            onGameDeleted={handleGameDeleted}
-                            onRefreshGames={refreshCampaignList}
-                            onRefreshActiveGame={refreshGameData}
-                        />
-                    )}
-
-                    {tab === "settings" && isDM && (
-                        <SettingsTab
-                            game={game}
-                            me={me}
-                            onUpdate={async (per) => {
-                                await Games.setPerms(game.id, per);
-                                const full = await Games.get(game.id);
-                                setActive(normalizeGameRecord(full));
-                            }}
-                            onGameRefresh={handleRefresh}
-                            onKickPlayer={
-                                isDM
-                                    ? async (playerId) => {
-                                          if (!playerId) return;
-                                          try {
-                                              if (idsMatch(dmSheetPlayerId, playerId)) {
-                                                  setDmSheetPlayerId(null);
-                                              }
-                                              await Games.removePlayer(game.id, playerId);
-                                              const full = await Games.get(game.id);
-                                              setActive(normalizeGameRecord(full));
-                                              setGames(normalizeGameList(await Games.list()));
-                                          } catch (e) {
-                                              alert(e.message);
-                                          }
-                                      }
-                                    : undefined
-                            }
-                            onDelete={
-                                isDM
-                                    ? async () => {
-                                          if (
-                                              !confirm(
-                                                  `Delete the game "${game.name}"? This cannot be undone.`
-                                              )
-                                          ) {
-                                              return;
-                                          }
-                                          try {
-                                              await Games.delete(game.id);
-                                              setActive(null);
-                                              setDmSheetPlayerId(null);
-                                              setGames(normalizeGameList(await Games.list()));
-                                              alert("Game deleted");
-                                          } catch (e) {
-                                              alert(e.message);
-                                          }
-                                      }
-                                    : undefined
-                            }
-                        />
-                    )}
-                </div>
+                <div className="app-content">{renderTabContent()}</div>
             </main>
                 </div>
                 <PersonaPromptCenter realtime={realtime} />

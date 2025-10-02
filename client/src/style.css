@@ -2644,9 +2644,9 @@ p  { margin: 0 0 .75rem; color: var(--text); }
 .nav-drawer__nav {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
     overflow-y: auto;
-    padding-right: 6px;
+    padding-right: 4px;
 }
 
 .nav-drawer__empty {
@@ -2664,7 +2664,7 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     margin: 0;
     padding: 0;
     display: grid;
-    gap: 12px;
+    gap: 10px;
 }
 
 .nav-drawer__item {
@@ -2674,12 +2674,12 @@ p  { margin: 0 0 .75rem; color: var(--text); }
 .nav-drawer__button {
     width: 100%;
     border: none;
-    border-radius: 20px;
+    border-radius: 16px;
     background: var(--surface-2);
-    padding: 16px 18px;
+    padding: 12px 16px;
     display: grid;
     grid-template-columns: auto 1fr auto;
-    gap: 16px;
+    gap: 12px;
     align-items: center;
     text-align: left;
     cursor: pointer;
@@ -2704,16 +2704,16 @@ p  { margin: 0 0 .75rem; color: var(--text); }
 }
 
 .nav-drawer__badge {
-    width: 42px;
-    height: 42px;
-    border-radius: 16px;
+    width: 36px;
+    height: 36px;
+    border-radius: 14px;
     background: color-mix(in oklab, var(--brand) 35%, var(--surface-2) 65%);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.85rem;
+    font-size: 0.75rem;
     font-weight: 700;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.08em;
 }
 
 .nav-drawer__button.is-active .nav-drawer__badge {
@@ -2723,17 +2723,19 @@ p  { margin: 0 0 .75rem; color: var(--text); }
 
 .nav-drawer__text {
     display: grid;
-    gap: 4px;
+    gap: 2px;
 }
 
 .nav-drawer__label {
-    font-size: 1rem;
+    font-size: 0.95rem;
     font-weight: 700;
+    line-height: 1.2;
 }
 
 .nav-drawer__desc {
-    font-size: 0.82rem;
+    font-size: 0.78rem;
     color: var(--muted);
+    line-height: 1.3;
 }
 
 .nav-drawer__button.is-active .nav-drawer__desc {
@@ -2749,8 +2751,8 @@ p  { margin: 0 0 .75rem; color: var(--text); }
 }
 
 .nav-drawer__chevron svg {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
 }
 
 .nav-trigger {
