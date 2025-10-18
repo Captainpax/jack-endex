@@ -1,5 +1,5 @@
 import {defineConfig} from 'vite'
-import react from '@vitejs/plugin-react'
+import vue from '@vitejs/plugin-vue'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -28,7 +28,7 @@ export default defineConfig({
         outDir: '../dist',
         emptyOutDir: true,
     },
-    plugins: [react()],
+    plugins: [vue()],
     resolve: {
         alias: {
             '@shared': path.resolve(projectRootDir, 'shared'),
