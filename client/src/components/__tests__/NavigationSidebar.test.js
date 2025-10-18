@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createApp, nextTick } from 'vue';
+import { mount } from '@vue/test-utils';
 
 import NavigationSidebar from '../NavigationSidebar.vue';
 import { buildNavigation } from '../../constants/navigation.js';
@@ -28,17 +28,14 @@ describe('NavigationSidebar', () => {
             availableKeys: AVAILABLE_KEYS,
         });
 
-        const container = document.createElement('div');
-        document.body.appendChild(container);
-
-        const Harness = {
+        const wrapper = mount({
             components: { NavigationSidebar },
             data: () => ({
                 items: navItems,
                 activeKey: navItems[0]?.key ?? null,
             }),
             methods: {
-                select(key) {
+                handleSelect(key) {
                     this.activeKey = key;
                 },
             },
@@ -46,26 +43,22 @@ describe('NavigationSidebar', () => {
                 <NavigationSidebar
                     :items="items"
                     :active-key="activeKey"
-                    @select="select"
+                    @select="handleSelect"
                 />
             `,
-        };
-
-        const app = createApp(Harness);
-        app.mount(container);
-        await nextTick();
+        });
 
         for (const item of navItems) {
-            const button = [...container.querySelectorAll('button')].find((el) =>
-                el.textContent.includes(item.label)
-            );
-            expect(button).toBeTruthy();
-            button.click();
-            await nextTick();
-            expect(button.getAttribute('aria-pressed')).toBe('true');
-        }
+            const button = wrapper
+                .findAll('button')
+                .find((candidate) => candidate.text().includes(item.label));
 
-        app.unmount();
-        container.remove();
+            expect(button).toBeTruthy();
+
+            await button.trigger('click');
+            await wrapper.vm.$nextTick();
+
+            expect(button.attributes('aria-pressed')).toBe('true');
+        }
     });
 });

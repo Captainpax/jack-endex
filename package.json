@@ -41,6 +41,7 @@
     "@testing-library/jest-dom": "^6.6.3",
     "@vitejs/plugin-vue": "^5.1.4",
     "@vue/compiler-sfc": "^3.5.13",
+    "@vue/test-utils": "^2.4.6",
     "concurrently": "^9.2.1",
     "eslint": "^9.33.0",
     "eslint-plugin-vue": "^9.32.0",
