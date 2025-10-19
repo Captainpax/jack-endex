@@ -28,12 +28,12 @@ const NAV_ITEMS = [
         key: "sheet",
         roles: [ROLE_DM, ROLE_PLAYER],
         label: {
-            [ROLE_DM]: "Character Sheets",
-            [ROLE_PLAYER]: "My Character",
+            [ROLE_DM]: "My Sheet",
+            [ROLE_PLAYER]: "My Sheet",
         },
         description: {
-            [ROLE_DM]: "Review and update any adventurer",
-            [ROLE_PLAYER]: "Update your stats and background",
+            [ROLE_DM]: "Review characters, gear, and skills",
+            [ROLE_PLAYER]: "Manage your character, gear, and skills",
         },
     },
     {
@@ -58,30 +58,6 @@ const NAV_ITEMS = [
         description: {
             [ROLE_DM]: "Craft and assign loot",
             [ROLE_PLAYER]: "Shared loot curated for the party",
-        },
-    },
-    {
-        key: "gear",
-        roles: [ROLE_DM, ROLE_PLAYER],
-        label: {
-            [ROLE_DM]: "Gear Locker",
-            [ROLE_PLAYER]: "My Gear",
-        },
-        description: {
-            [ROLE_DM]: "Track equipped slots",
-            [ROLE_PLAYER]: "Weapons, armor, and accessories",
-        },
-    },
-    {
-        key: "worldSkills",
-        roles: [ROLE_DM, ROLE_PLAYER],
-        label: {
-            [ROLE_DM]: "World Skills",
-            [ROLE_PLAYER]: "World Skills",
-        },
-        description: {
-            [ROLE_DM]: "Review party proficiencies",
-            [ROLE_PLAYER]: "Ranks, modifiers, and totals",
         },
     },
     {
