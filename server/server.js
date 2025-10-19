@@ -50,6 +50,8 @@ import {
 import {
     DISCORD_OAUTH_TOKEN_URL,
     applyDiscordTokenResponse,
+    refreshDiscordTokens,
+    shouldRefreshDiscordToken,
 } from './services/discordOAuth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -68,6 +70,7 @@ const userSockets = new Map();
 const pendingPersonaRequests = new Map();
 const pendingTrades = new Map();
 const storyBroadcastQueue = new Map();
+const discordBotIdentityCache = new Map();
 const FUSION_OVERRIDE_RANDOM = 'none';
 const DISCORD_API_BASE = 'https://discord.com/api/v10';
 const DISCORD_OAUTH_AUTHORIZE_URL = 'https://discord.com/oauth2/authorize';
@@ -164,6 +167,13 @@ const MAX_BATTLE_LOG_ACTION_LENGTH = 120;
 const MAX_BATTLE_LOG_MESSAGE_LENGTH = 400;
 const DEFAULT_DB_PATH = path.join(__dirname, 'data', 'db.json');
 let legacySeedPromise = null;
+
+const DISCORD_PERMISSION_FLAGS = Object.freeze({
+    ADMINISTRATOR: 0x8n,
+    MANAGE_GUILD: 0x20n,
+    VIEW_CHANNEL: 0x400n,
+    SEND_MESSAGES: 0x800n,
+});
 
 const MUSIC_UPLOAD_PREFIX = 'upload-';
 const MAX_MUSIC_UPLOADS = 40;
@@ -2302,6 +2312,8 @@ function readStoryConfigUpdate(body, game) {
     const current = ensureStoryConfig(game);
     const pollMsRaw = Number(body?.pollIntervalMs);
     const hasBotToken = Object.prototype.hasOwnProperty.call(body || {}, 'botToken');
+    const hasChannelName = Object.prototype.hasOwnProperty.call(body || {}, 'channelName');
+    const hasGuildName = Object.prototype.hasOwnProperty.call(body || {}, 'guildName');
     const allowedPlayers = new Set(
         Array.isArray(game.players)
             ? game.players.map((p) => (p && typeof p.userId === 'string' ? p.userId : null)).filter(Boolean)
@@ -2321,6 +2333,8 @@ function readStoryConfigUpdate(body, game) {
     return {
         channelId: readSnowflake(body?.channelId),
         guildId: readSnowflake(body?.guildId),
+        channelName: hasChannelName ? readDiscordName(body?.channelName) : current.channelName,
+        guildName: hasGuildName ? readDiscordName(body?.guildName) : current.guildName,
         webhookUrl: readWebhookUrl(body?.webhookUrl),
         botToken: hasBotToken ? readBotToken(body?.botToken) : current.botToken,
         allowPlayerPosts: !!body?.allowPlayerPosts,
@@ -2475,6 +2489,8 @@ function presentStoryConfig(story, { includeSecrets = false } = {}) {
         : {
               channelId: '',
               guildId: '',
+              channelName: '',
+              guildName: '',
               webhookUrl: '',
               botToken: '',
               allowPlayerPosts: false,
@@ -2484,6 +2500,8 @@ function presentStoryConfig(story, { includeSecrets = false } = {}) {
     const output = {
         channelId: normalized.channelId || '',
         guildId: normalized.guildId || '',
+        channelName: normalized.channelName || '',
+        guildName: normalized.guildName || '',
         allowPlayerPosts: !!normalized.allowPlayerPosts,
         scribeIds: Array.isArray(normalized.scribeIds) ? [...normalized.scribeIds] : [],
         pollIntervalMs: Number.isFinite(Number(normalized.pollIntervalMs))
@@ -4157,6 +4175,13 @@ function normalizeCurrencyDelta(value) {
     return rounded;
 }
 
+function createHttpError(status, code, message) {
+    const err = new Error(message || code || 'error');
+    err.status = status;
+    err.error = code || 'error';
+    return err;
+}
+
 /**
  * Validate a Discord snowflake identifier.
  *
@@ -4208,15 +4233,391 @@ function readBotToken(value) {
 }
 
 /**
+ * Normalize a human-readable Discord label (guild or channel name).
+ *
+ * @param {unknown} value
+ * @param {{ maxLength?: number }} [options]
+ * @returns {string}
+ */
+function readDiscordName(value, { maxLength = 100 } = {}) {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    if (!trimmed) return '';
+    const sanitized = trimmed.replace(/\s+/g, ' ').trim();
+    if (!sanitized) return '';
+    return sanitized.slice(0, maxLength);
+}
+
+function parsePermissionValue(value) {
+    if (typeof value === 'bigint') return value;
+    if (typeof value === 'number') {
+        if (!Number.isFinite(value)) return 0n;
+        const clamped = Math.max(0, Math.floor(value));
+        return BigInt(clamped);
+    }
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) return 0n;
+        try {
+            return BigInt(trimmed);
+        } catch {
+            return 0n;
+        }
+    }
+    return 0n;
+}
+
+function hasPermissionFlag(permissions, flag) {
+    if (typeof permissions !== 'bigint' || typeof flag !== 'bigint') return false;
+    return (permissions & flag) === flag;
+}
+
+function applyPermissionOverwrite(permissions, allow, deny) {
+    if (typeof permissions !== 'bigint') return permissions;
+    const allowBits = parsePermissionValue(allow);
+    const denyBits = parsePermissionValue(deny);
+    let next = permissions;
+    next &= ~denyBits;
+    next |= allowBits;
+    return next;
+}
+
+function buildDiscordGuildIconUrl(guild) {
+    if (!guild || typeof guild !== 'object') return null;
+    const id = typeof guild.id === 'string' ? guild.id : '';
+    const icon = typeof guild.icon === 'string' ? guild.icon : '';
+    if (!id || !icon) return null;
+    const ext = icon.startsWith('a_') ? 'gif' : 'png';
+    return `https://cdn.discordapp.com/icons/${id}/${icon}.${ext}?size=128`;
+}
+
+async function ensureUserDiscordAccessToken(
+    user,
+    { clientId, clientSecret } = {},
+    { forceRefresh = false, now = Date.now() } = {},
+) {
+    if (!user || typeof user !== 'object') {
+        throw createHttpError(401, 'unauthenticated', 'User session missing.');
+    }
+
+    const accessToken = typeof user.discordAccessToken === 'string' ? user.discordAccessToken : '';
+    if (!accessToken && !forceRefresh) {
+        throw createHttpError(409, 'discord_not_linked', 'Discord account not linked.');
+    }
+
+    const refreshToken = typeof user.discordRefreshToken === 'string' ? user.discordRefreshToken : '';
+    const needsRefresh = forceRefresh || shouldRefreshDiscordToken(user, { now });
+    if (!needsRefresh) {
+        if (accessToken) return accessToken;
+        throw createHttpError(409, 'discord_not_linked', 'Discord access token unavailable.');
+    }
+
+    if (!refreshToken) {
+        throw createHttpError(409, 'discord_relink_required', 'Discord refresh token missing.');
+    }
+    if (!clientId || !clientSecret) {
+        throw createHttpError(500, 'discord_oauth_not_configured', 'Discord OAuth client not configured.');
+    }
+
+    try {
+        await refreshDiscordTokens(user, { clientId, clientSecret, now });
+    } catch (err) {
+        discordLogger.warn('Failed to refresh Discord OAuth tokens for user.', {
+            userId: user?.id,
+            status: err?.status,
+            error: err?.error || err?.message,
+        });
+        const status = err?.status || 401;
+        const code = err?.error || 'discord_token_refresh_failed';
+        const message = err?.message || 'Failed to refresh Discord tokens.';
+        throw createHttpError(status, code, message);
+    }
+
+    const nextToken = typeof user.discordAccessToken === 'string' ? user.discordAccessToken : '';
+    if (!nextToken) {
+        throw createHttpError(401, 'discord_token_refresh_failed', 'Discord token refresh did not return an access token.');
+    }
+    return nextToken;
+}
+
+async function getDiscordBotIdentity(token, { now = Date.now(), ttlMs = 5 * 60_000 } = {}) {
+    if (!token) return null;
+    const cached = discordBotIdentityCache.get(token);
+    if (cached && (!cached.expiresAt || cached.expiresAt > now)) {
+        return cached.value;
+    }
+    try {
+        const res = await fetch(`${DISCORD_API_BASE}/users/@me`, {
+            headers: {
+                Authorization: `Bot ${token}`,
+                Accept: 'application/json',
+            },
+        });
+        if (!res.ok) {
+            discordLogger.warn('Failed to resolve Discord bot identity.', { status: res.status });
+            return null;
+        }
+        const payload = await res.json().catch(() => null);
+        if (!payload || typeof payload.id !== 'string') {
+            discordLogger.warn('Discord bot identity response missing id.');
+            return null;
+        }
+        const entry = { value: payload, expiresAt: now + Math.max(5_000, ttlMs) };
+        discordBotIdentityCache.set(token, entry);
+        return payload;
+    } catch (err) {
+        discordLogger.warn('Discord bot identity request failed.', { error: err?.message });
+        return null;
+    }
+}
+
+async function fetchDiscordBotMember(guildId, token, botId) {
+    if (!guildId || !token || !botId) {
+        return { botId, member: null, status: 0, error: 'missing_parameters' };
+    }
+    try {
+        const res = await fetch(`${DISCORD_API_BASE}/guilds/${guildId}/members/${botId}`, {
+            headers: {
+                Authorization: `Bot ${token}`,
+                Accept: 'application/json',
+            },
+        });
+        if (res.status === 404) {
+            return { botId, member: null, status: 404 };
+        }
+        if (!res.ok) {
+            return { botId, member: null, status: res.status, error: 'request_failed' };
+        }
+        const payload = await res.json().catch(() => null);
+        if (!payload || typeof payload !== 'object') {
+            return { botId, member: null, status: res.status, error: 'invalid_payload' };
+        }
+        return { botId, member: payload, status: res.status };
+    } catch (err) {
+        return { botId, member: null, status: 0, error: err?.message || 'request_failed' };
+    }
+}
+
+async function fetchDiscordGuildRoleMap(guildId, token) {
+    if (!guildId || !token) return null;
+    try {
+        const res = await fetch(`${DISCORD_API_BASE}/guilds/${guildId}/roles`, {
+            headers: {
+                Authorization: `Bot ${token}`,
+                Accept: 'application/json',
+            },
+        });
+        if (!res.ok) {
+            if (res.status !== 403) {
+                discordLogger.warn('Failed to fetch Discord guild roles.', { guildId, status: res.status });
+            }
+            return null;
+        }
+        const payload = await res.json().catch(() => null);
+        if (!Array.isArray(payload)) {
+            return null;
+        }
+        const map = new Map();
+        for (const role of payload) {
+            if (!role || typeof role !== 'object') continue;
+            const id = typeof role.id === 'string' ? role.id : '';
+            if (!id) continue;
+            const perms = parsePermissionValue(role.permissions);
+            map.set(id, perms);
+        }
+        return map;
+    } catch (err) {
+        discordLogger.warn('Discord guild roles request failed.', { guildId, error: err?.message });
+        return null;
+    }
+}
+
+function computeGuildPermissionContext(member, roleMap, guildId) {
+    if (!member || !roleMap) return null;
+    const baseRole = typeof roleMap.get === 'function' ? roleMap.get(guildId) : null;
+    let permissions = typeof baseRole === 'bigint' ? baseRole : 0n;
+    const roleIds = Array.isArray(member.roles)
+        ? member.roles.filter((roleId) => typeof roleId === 'string')
+        : [];
+    for (const roleId of roleIds) {
+        const rolePerms = roleMap.get(roleId);
+        if (typeof rolePerms === 'bigint') {
+            permissions |= rolePerms;
+        }
+    }
+    const roleSet = new Set(roleIds);
+    return {
+        permissions,
+        roleIds: roleSet,
+        isAdmin: hasPermissionFlag(permissions, DISCORD_PERMISSION_FLAGS.ADMINISTRATOR),
+    };
+}
+
+function computeChannelPermissionAccess(channel, { guildId, botId, permissionContext }) {
+    if (!channel || !permissionContext) {
+        return { canView: false, canSend: false };
+    }
+
+    if (permissionContext.isAdmin) {
+        return { canView: true, canSend: true };
+    }
+
+    let permissions = permissionContext.permissions;
+    if (typeof permissions !== 'bigint') {
+        return { canView: false, canSend: false };
+    }
+
+    const overwrites = Array.isArray(channel.permission_overwrites)
+        ? channel.permission_overwrites
+        : [];
+
+    const getType = (overwrite) => {
+        if (overwrite === null || overwrite === undefined) return -1;
+        if (typeof overwrite.type === 'number') return overwrite.type;
+        if (typeof overwrite.type === 'string') {
+            const parsed = Number.parseInt(overwrite.type, 10);
+            return Number.isFinite(parsed) ? parsed : -1;
+        }
+        return -1;
+    };
+
+    const everyone = overwrites.find(
+        (ow) => getType(ow) === 0 && typeof ow?.id === 'string' && ow.id === guildId,
+    );
+    if (everyone) {
+        permissions = applyPermissionOverwrite(permissions, everyone.allow, everyone.deny);
+    }
+
+    let roleAllows = 0n;
+    let roleDenies = 0n;
+    for (const ow of overwrites) {
+        if (getType(ow) !== 0) continue;
+        const id = typeof ow?.id === 'string' ? ow.id : '';
+        if (!id || !permissionContext.roleIds.has(id)) continue;
+        roleAllows |= parsePermissionValue(ow.allow);
+        roleDenies |= parsePermissionValue(ow.deny);
+    }
+    if (roleAllows || roleDenies) {
+        permissions = applyPermissionOverwrite(permissions, roleAllows, roleDenies);
+    }
+
+    const memberOverwrite = overwrites.find(
+        (ow) => getType(ow) === 1 && typeof ow?.id === 'string' && ow.id === botId,
+    );
+    if (memberOverwrite) {
+        permissions = applyPermissionOverwrite(permissions, memberOverwrite.allow, memberOverwrite.deny);
+    }
+
+    const canView = hasPermissionFlag(permissions, DISCORD_PERMISSION_FLAGS.VIEW_CHANNEL);
+    const canSend = canView && hasPermissionFlag(permissions, DISCORD_PERMISSION_FLAGS.SEND_MESSAGES);
+    return { canView, canSend };
+}
+
+async function computeBotChannelAccess(guildId, channels) {
+    const permissionsByChannel = new Map();
+    const botToken = getDiscordBotToken();
+    if (!botToken) {
+        return {
+            botId: null,
+            botPresent: false,
+            permissionsKnown: false,
+            permissionsByChannel,
+            reason: 'missing_bot_token',
+        };
+    }
+
+    const identity = await getDiscordBotIdentity(botToken);
+    if (!identity || typeof identity.id !== 'string') {
+        return {
+            botId: null,
+            botPresent: false,
+            permissionsKnown: false,
+            permissionsByChannel,
+            reason: 'bot_identity_unavailable',
+        };
+    }
+
+    const memberResult = await fetchDiscordBotMember(guildId, botToken, identity.id);
+    if (memberResult.status === 404) {
+        return {
+            botId: identity.id,
+            botPresent: false,
+            permissionsKnown: true,
+            permissionsByChannel,
+            reason: 'bot_not_in_guild',
+        };
+    }
+    if (memberResult.error) {
+        discordLogger.warn('Failed to fetch Discord bot member.', {
+            guildId,
+            status: memberResult.status,
+            error: memberResult.error,
+        });
+        return {
+            botId: identity.id,
+            botPresent: null,
+            permissionsKnown: false,
+            permissionsByChannel,
+            reason: 'bot_member_lookup_failed',
+        };
+    }
+
+    const roleMap = await fetchDiscordGuildRoleMap(guildId, botToken);
+    if (!roleMap) {
+        return {
+            botId: identity.id,
+            botPresent: true,
+            permissionsKnown: false,
+            permissionsByChannel,
+            reason: 'roles_unavailable',
+        };
+    }
+
+    const permissionContext = computeGuildPermissionContext(memberResult.member, roleMap, guildId);
+    if (!permissionContext) {
+        return {
+            botId: identity.id,
+            botPresent: true,
+            permissionsKnown: false,
+            permissionsByChannel,
+            reason: 'permission_context_unavailable',
+        };
+    }
+
+    if (Array.isArray(channels)) {
+        for (const channel of channels) {
+            const channelId = typeof channel?.id === 'string' ? channel.id : null;
+            if (!channelId) continue;
+            const access = computeChannelPermissionAccess(channel, {
+                guildId,
+                botId: identity.id,
+                permissionContext,
+            });
+            permissionsByChannel.set(channelId, access);
+        }
+    }
+
+    return {
+        botId: identity.id,
+        botPresent: true,
+        permissionsKnown: true,
+        permissionsByChannel,
+        reason: null,
+    };
+}
+
+/**
  * Ensure the story configuration is normalized on the game object.
  *
  * @param {any} game
- * @returns {{ channelId: string, guildId: string, webhookUrl: string, botToken: string, allowPlayerPosts: boolean, scribeIds: string[], pollIntervalMs: number }}
+ * @returns {{ channelId: string, guildId: string, channelName: string, guildName: string, webhookUrl: string, botToken: string, allowPlayerPosts: boolean, scribeIds: string[], pollIntervalMs: number }}
  */
 function ensureStoryConfig(game) {
     const raw = game && typeof game.story === 'object' ? game.story : {};
     const channelId = readSnowflake(raw.channelId);
     const guildId = readSnowflake(raw.guildId);
+    const channelName = readDiscordName(raw.channelName);
+    const guildName = readDiscordName(raw.guildName);
     const webhookUrl = readWebhookUrl(raw.webhookUrl);
     const botToken = readBotToken(raw.botToken);
     const allowPlayerPosts = !!raw.allowPlayerPosts;
@@ -4242,6 +4643,8 @@ function ensureStoryConfig(game) {
     const normalized = {
         channelId,
         guildId,
+        channelName,
+        guildName,
         webhookUrl,
         botToken,
         allowPlayerPosts,
@@ -4948,6 +5351,28 @@ function maskMasterBotSettings(settings) {
     };
 }
 
+function resolveDiscordOAuthClient(settings) {
+    const clientId =
+        typeof settings?.oauthClientId === 'string' && settings.oauthClientId
+            ? settings.oauthClientId
+            : typeof settings?.oauth?.clientId === 'string'
+                ? settings.oauth.clientId
+                : '';
+    const clientSecret =
+        typeof settings?.oauthClientSecret === 'string' && settings.oauthClientSecret
+            ? settings.oauthClientSecret
+            : typeof settings?.oauth?.clientSecret === 'string'
+                ? settings.oauth.clientSecret
+                : '';
+    const redirectUrl =
+        typeof settings?.oauthRedirectUri === 'string' && settings.oauthRedirectUri
+            ? settings.oauthRedirectUri
+            : typeof settings?.oauth?.redirectUrl === 'string'
+                ? settings.oauth.redirectUrl
+                : '';
+    return { clientId, clientSecret, redirectUrl };
+}
+
 async function getMasterBotSettings() {
     const doc = await ServerSetting.findOne({ key: MASTER_DISCORD_SETTINGS_KEY }).lean();
     if (!doc) return normalizeMasterBotSettings({});
@@ -5315,6 +5740,214 @@ app.get('/api/auth/discord/callback', async (req, res) => {
         discordLogger.error('Failed to upsert Discord user record.', err);
         const location = buildDiscordOAuthRedirectLocation({ error: 'discord_user_sync_failed' });
         await redirectWithSession(req, res, location);
+    }
+});
+
+app.get('/api/discord/guilds', requireAuth, async (req, res) => {
+    try {
+        const user = await User.findOne({ id: req.session.userId }).exec();
+        if (!user) {
+            return res.status(401).json({ error: 'unauthenticated' });
+        }
+        if (user.banned) {
+            return res.status(403).json({ error: 'forbidden' });
+        }
+
+        const scopes = Array.isArray(user.discordScopes) ? user.discordScopes : [];
+        if (!scopes.includes('guilds')) {
+            return res.status(409).json({ error: 'discord_scope_missing' });
+        }
+
+        const settings = await getMasterBotSettings();
+        const { clientId, clientSecret } = resolveDiscordOAuthClient(settings);
+
+        try {
+            await ensureUserDiscordAccessToken(user, { clientId, clientSecret });
+        } catch (err) {
+            return res.status(err.status || 500).json({ error: err.error || 'discord_token_error' });
+        }
+
+        const fetchGuilds = async () =>
+            fetch(`${DISCORD_API_BASE}/users/@me/guilds`, {
+                headers: {
+                    Authorization: `Bearer ${user.discordAccessToken}`,
+                    Accept: 'application/json',
+                },
+            });
+
+        let response = await fetchGuilds();
+        if (response.status === 401) {
+            try {
+                await ensureUserDiscordAccessToken(
+                    user,
+                    { clientId, clientSecret },
+                    { forceRefresh: true },
+                );
+                response = await fetchGuilds();
+            } catch (err) {
+                return res.status(err.status || 401).json({ error: err.error || 'discord_token_refresh_failed' });
+            }
+        }
+
+        if (!response.ok) {
+            return res.status(response.status || 502).json({ error: 'discord_guilds_fetch_failed' });
+        }
+
+        const payload = await response.json().catch(() => null);
+        if (!Array.isArray(payload)) {
+            return res.status(502).json({ error: 'discord_guilds_invalid_response' });
+        }
+
+        const simplified = payload
+            .filter((guild) => {
+                const permissions = parsePermissionValue(guild?.permissions);
+                return (
+                    hasPermissionFlag(permissions, DISCORD_PERMISSION_FLAGS.ADMINISTRATOR)
+                    || hasPermissionFlag(permissions, DISCORD_PERMISSION_FLAGS.MANAGE_GUILD)
+                );
+            })
+            .map((guild) => {
+                const permissions = parsePermissionValue(guild?.permissions);
+                const name = typeof guild?.name === 'string' && guild.name ? guild.name : 'Unnamed Guild';
+                return {
+                    id: typeof guild?.id === 'string' ? guild.id : '',
+                    name,
+                    icon: typeof guild?.icon === 'string' ? guild.icon : null,
+                    iconUrl: buildDiscordGuildIconUrl(guild),
+                    owner: !!guild?.owner,
+                    permissions: typeof guild?.permissions === 'string' ? guild.permissions : null,
+                    userCanManage:
+                        hasPermissionFlag(permissions, DISCORD_PERMISSION_FLAGS.ADMINISTRATOR)
+                        || hasPermissionFlag(permissions, DISCORD_PERMISSION_FLAGS.MANAGE_GUILD),
+                };
+            })
+            .filter((guild) => guild.id);
+
+        simplified.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+
+        res.json({ guilds: simplified, fetchedAt: new Date().toISOString() });
+    } catch (err) {
+        discordLogger.error('Failed to list Discord guilds for user.', {
+            userId: req.session.userId,
+            error: err?.message,
+        });
+        res.status(500).json({ error: 'discord_guilds_fetch_failed' });
+    }
+});
+
+app.get('/api/discord/guilds/:guildId/channels', requireAuth, async (req, res) => {
+    const guildId = readSnowflake(req.params?.guildId);
+    if (!guildId) {
+        return res.status(400).json({ error: 'invalid_guild_id' });
+    }
+
+    try {
+        const user = await User.findOne({ id: req.session.userId }).exec();
+        if (!user) {
+            return res.status(401).json({ error: 'unauthenticated' });
+        }
+        if (user.banned) {
+            return res.status(403).json({ error: 'forbidden' });
+        }
+
+        const scopes = Array.isArray(user.discordScopes) ? user.discordScopes : [];
+        if (!scopes.includes('guilds')) {
+            return res.status(409).json({ error: 'discord_scope_missing' });
+        }
+
+        const settings = await getMasterBotSettings();
+        const { clientId, clientSecret } = resolveDiscordOAuthClient(settings);
+
+        try {
+            await ensureUserDiscordAccessToken(user, { clientId, clientSecret });
+        } catch (err) {
+            return res.status(err.status || 500).json({ error: err.error || 'discord_token_error' });
+        }
+
+        const fetchChannels = async () =>
+            fetch(`${DISCORD_API_BASE}/guilds/${guildId}/channels`, {
+                headers: {
+                    Authorization: `Bearer ${user.discordAccessToken}`,
+                    Accept: 'application/json',
+                },
+            });
+
+        let response = await fetchChannels();
+        if (response.status === 401) {
+            try {
+                await ensureUserDiscordAccessToken(
+                    user,
+                    { clientId, clientSecret },
+                    { forceRefresh: true },
+                );
+                response = await fetchChannels();
+            } catch (err) {
+                return res.status(err.status || 401).json({ error: err.error || 'discord_token_refresh_failed' });
+            }
+        }
+
+        if (response.status === 404) {
+            return res.status(404).json({ error: 'discord_guild_not_found' });
+        }
+
+        if (!response.ok) {
+            return res.status(response.status || 502).json({ error: 'discord_channels_fetch_failed' });
+        }
+
+        const payload = await response.json().catch(() => null);
+        if (!Array.isArray(payload)) {
+            return res.status(502).json({ error: 'discord_channels_invalid_response' });
+        }
+
+        const textChannels = payload.filter((channel) => {
+            if (!channel || typeof channel !== 'object') return false;
+            const type = typeof channel.type === 'number' ? channel.type : Number(channel.type);
+            return type === 0 || type === 5;
+        });
+
+        const botAccess = await computeBotChannelAccess(guildId, textChannels);
+        const channels = textChannels.map((channel) => {
+            const id = typeof channel.id === 'string' ? channel.id : '';
+            const name = typeof channel.name === 'string' && channel.name ? channel.name : 'Unnamed Channel';
+            const parentId = typeof channel.parent_id === 'string' ? channel.parent_id : null;
+            const access = botAccess.permissionsByChannel.get(id) || { canView: null, canSend: null };
+            return {
+                id,
+                name,
+                type: typeof channel.type === 'number' ? channel.type : Number(channel.type) || 0,
+                topic: typeof channel.topic === 'string' ? channel.topic : null,
+                parentId,
+                position: Number.isFinite(Number(channel.position)) ? Number(channel.position) : null,
+                botCanRead: typeof access.canView === 'boolean' ? access.canView : null,
+                botCanPost: typeof access.canSend === 'boolean' ? access.canSend : null,
+            };
+        }).filter((channel) => channel.id);
+
+        channels.sort((a, b) => {
+            const posA = a.position ?? 0;
+            const posB = b.position ?? 0;
+            if (posA !== posB) return posA - posB;
+            return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+        });
+
+        res.json({
+            guildId,
+            channels,
+            bot: {
+                id: botAccess.botId,
+                present: botAccess.botPresent,
+                permissionsKnown: botAccess.permissionsKnown,
+                reason: botAccess.reason,
+            },
+            fetchedAt: new Date().toISOString(),
+        });
+    } catch (err) {
+        discordLogger.error('Failed to list Discord channels for guild.', {
+            guildId,
+            userId: req.session.userId,
+            error: err?.message,
+        });
+        res.status(500).json({ error: 'discord_channels_fetch_failed' });
     }
 });
 
