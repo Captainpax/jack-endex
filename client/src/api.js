@@ -870,7 +870,9 @@ export const StoryLogs = {
      * @param {string} gameId
      * @param {{
      *   channelId?: string,
+     *   channelName?: string,
      *   guildId?: string,
+     *   guildName?: string,
      *   webhookUrl?: string,
      *   botToken?: string,
      *   allowPlayerPosts?: boolean,
