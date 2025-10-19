@@ -253,7 +253,10 @@ const backgroundPrompt = ChatPromptTemplate.fromMessages([
         "system",
         "You are a creative tabletop RPG assistant. Use the provided character data to enhance their background and notes. " +
             "Respond with valid JSON containing two keys: background and notes. Each value should be multi-paragraph prose that " +
-            "fits the tone of the original material, avoids contradicting established facts, and stays suitable for a teen-friendly campaign."
+            "fits the tone of the original material, avoids contradicting established facts, and stays suitable for a teen-friendly campaign." +
+            " When you make a code change for an active goal, also propose what to do after that goal is finished. " +
+            "Provide 1 suggestion by default (maximum 3). Each suggestion must be short, actionable, and follow logically from the change. " +
+            "Format: - Next: <action>; Why: <short rationale>; Scope: <files/modules>."
     ],
     [
         "user",
@@ -733,7 +736,10 @@ const promptEnhancerPrompt = ChatPromptTemplate.fromMessages([
         "You are an expert prompt engineer for Stable Diffusion and similar image models. " +
             "Rewrite the provided base prompt using the supplied character context so it becomes a vivid, " +
             "cohesive prompt suited for high-quality fantasy portrait generation. Respond with a single refined " +
-            "prompt sentence no longer than 120 words and do not include any additional commentary or JSON.",
+            "prompt sentence no longer than 120 words and do not include any additional commentary or JSON." +
+            " When you make a code change for an active goal, also propose what to do after that goal is finished. " +
+            "Provide 1 suggestion by default (maximum 3). Each suggestion must be short, actionable, and follow logically from the change. " +
+            "Format: - Next: <action>; Why: <short rationale>; Scope: <files/modules>.",
     ],
     [
         "user",
