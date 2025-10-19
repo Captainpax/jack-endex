@@ -46,6 +46,10 @@ import {
     updateDemonEntry,
     writeDemonsFile,
 } from './services/demonCsvImport.js';
+import {
+    DISCORD_OAUTH_TOKEN_URL,
+    applyDiscordTokenResponse,
+} from './services/discordOAuth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -66,7 +70,6 @@ const storyBroadcastQueue = new Map();
 const FUSION_OVERRIDE_RANDOM = 'none';
 const DISCORD_API_BASE = 'https://discord.com/api/v10';
 const DISCORD_OAUTH_AUTHORIZE_URL = 'https://discord.com/oauth2/authorize';
-const DISCORD_OAUTH_TOKEN_URL = 'https://discord.com/api/oauth2/token';
 const DISCORD_OAUTH_SCOPES = Object.freeze(['identify', 'guilds']);
 const DISCORD_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const SERVER_ADMIN_USERNAMES = new Set(['captainpax', 'amzyoshio']);
@@ -4530,7 +4533,14 @@ function isServerAdminUser(user) {
 
 function sanitizeUserRecord(user) {
     if (!user || typeof user !== 'object') return user;
-    const { pass: _pass, ...rest } = user;
+    const source =
+        typeof user.toObject === 'function' ? user.toObject({ virtuals: true }) : { ...user };
+    const {
+        pass: _pass,
+        discordAccessToken: _discordAccessToken,
+        discordRefreshToken: _discordRefreshToken,
+        ...rest
+    } = source;
     return rest;
 }
 
@@ -4900,7 +4910,7 @@ app.get('/api/auth/discord/callback', async (req, res) => {
         return;
     }
 
-    let accessToken;
+    let tokenPayload;
     try {
         const body = new URLSearchParams({
             client_id: clientId,
@@ -4917,19 +4927,19 @@ app.get('/api/auth/discord/callback', async (req, res) => {
             body: body.toString(),
         });
 
-        const tokenPayload = await tokenResponse.json().catch(() => null);
-        if (!tokenResponse.ok || !tokenPayload || typeof tokenPayload.access_token !== 'string') {
+        const payload = await tokenResponse.json().catch(() => null);
+        if (!tokenResponse.ok || !payload || typeof payload.access_token !== 'string') {
             discordLogger.warn('Discord token exchange failed.', {
                 status: tokenResponse.status,
-                error: tokenPayload?.error,
-                error_description: tokenPayload?.error_description,
+                error: payload?.error,
+                error_description: payload?.error_description,
             });
             const location = buildDiscordOAuthRedirectLocation({ error: 'discord_token_exchange_failed' });
             await redirectWithSession(req, res, location);
             return;
         }
 
-        accessToken = tokenPayload.access_token;
+        tokenPayload = payload;
     } catch (err) {
         discordLogger.error('Failed to exchange Discord authorization code.', err);
         const location = buildDiscordOAuthRedirectLocation({ error: 'discord_token_request_failed' });
@@ -4937,6 +4947,7 @@ app.get('/api/auth/discord/callback', async (req, res) => {
         return;
     }
 
+    const accessToken = tokenPayload.access_token;
     let profile;
     try {
         const profileResponse = await fetch(`${DISCORD_API_BASE}/users/@me`, {
@@ -4976,9 +4987,11 @@ app.get('/api/auth/discord/callback', async (req, res) => {
 
         user.discordId = profile.id;
         user.discordUsername = typeof profile.username === 'string' ? profile.username : undefined;
+        user.discordDiscriminator = typeof profile.discriminator === 'string' ? profile.discriminator : undefined;
         user.discordGlobalName = typeof profile.global_name === 'string' ? profile.global_name : undefined;
         const avatarUrl = createDiscordAvatarUrl(profile);
         user.discordAvatar = avatarUrl || undefined;
+        applyDiscordTokenResponse(user, tokenPayload);
 
         await user.save();
 
@@ -5019,6 +5032,7 @@ app.get('/api/auth/me', async (req, res) => {
             ? {
                   id: sanitized.discordId,
                   username: sanitized.discordUsername || null,
+                  discriminator: sanitized.discordDiscriminator || null,
                   globalName: sanitized.discordGlobalName || null,
                   avatar: sanitized.discordAvatar || null,
               }

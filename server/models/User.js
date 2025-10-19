@@ -22,6 +22,10 @@ const userSchema = new mongoose.Schema(
             type: String,
             trim: true,
         },
+        discordDiscriminator: {
+            type: String,
+            trim: true,
+        },
         discordGlobalName: {
             type: String,
             trim: true,
@@ -29,6 +33,19 @@ const userSchema = new mongoose.Schema(
         discordAvatar: {
             type: String,
             trim: true,
+        },
+        discordAccessToken: {
+            type: String,
+        },
+        discordRefreshToken: {
+            type: String,
+        },
+        discordTokenExpiresAt: {
+            type: Date,
+        },
+        discordScopes: {
+            type: [String],
+            default: undefined,
         },
         banned: { type: Boolean, default: false },
     },
