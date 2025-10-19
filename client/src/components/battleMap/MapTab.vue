@@ -106,31 +106,13 @@
                     />
                 </template>
                 <template #battle-log>
-                    <section class="map-battle-log">
-                        <header class="map-battle-log__header">
-                            <h3>Battle log</h3>
-                            <p class="map-battle-log__description">
-                                Entries appear in real time as encounters unfold.
-                            </p>
-                        </header>
-                        <div class="map-battle-log__scroller">
-                            <p v-if="!battleLogEntries.length" class="map-battle-log__empty">
-                                No battle log entries yet.
-                            </p>
-                            <article v-for="entry in battleLogEntries" :key="entry.id" class="map-battle-log__entry">
-                                <div class="map-battle-log__meta">
-                                    <span class="map-battle-log__time">{{ formatLogTime(entry.createdAt) }}</span>
-                                    <span class="map-battle-log__actor">{{ resolveActorName(entry.actorId) }}</span>
-                                    <span class="map-battle-log__action"><code>{{ entry.action }}</code></span>
-                                </div>
-                                <p v-if="entry.message" class="map-battle-log__message">{{ entry.message }}</p>
-                                <details v-if="hasLogDetails(entry)" class="map-battle-log__details">
-                                    <summary>Details</summary>
-                                    <pre>{{ formatLogDetails(entry.details) }}</pre>
-                                </details>
-                            </article>
-                        </div>
-                    </section>
+                    <BattleLogTimeline
+                        :entries="battleLogEntries"
+                        :format-log-time="formatLogTime"
+                        :format-log-details="formatLogDetails"
+                        :has-log-details="hasLogDetails"
+                        :resolve-actor-name="resolveActorName"
+                    />
                 </template>
             </BattleMapSidebar>
         </template>
@@ -144,6 +126,7 @@ import { useBattleLogger } from '../../composables/useBattleLogger';
 import BattleMapHeader from './BattleMapHeader.vue';
 import BattleMapLayout from './BattleMapLayout.vue';
 import BattleMapSidebar from './BattleMapSidebar.vue';
+import BattleLogTimeline from './BattleLogTimeline.vue';
 import MapControlsPanel from './MapControlsPanel.vue';
 import MapEntitiesPanel from './MapEntitiesPanel.vue';
 import { describePlayerName, mapReadBoolean } from './mapShared';
@@ -1106,9 +1089,4 @@ function resolveTokenColor(color, kind) {
     gap: 8px;
 }
 
-.map-battle-log__description {
-    margin: 0;
-    font-size: 0.82rem;
-    color: var(--muted);
-}
 </style>
