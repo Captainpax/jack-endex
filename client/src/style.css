@@ -52,6 +52,15 @@
     --map-panel-border: rgba(15, 23, 42, 0.08);
     --map-panel-shadow: 0 18px 30px rgba(15, 23, 42, 0.08);
     --map-panel-muted: var(--muted);
+    --map-shell-radius: var(--radius-lg);
+    --map-shell-gap-lg: var(--space-6);
+    --map-shell-gap-md: var(--space-5);
+    --map-shell-gap-sm: var(--space-4);
+    --map-shell-padding-lg: clamp(var(--space-4), 3vw, var(--space-8));
+    --map-shell-padding-md: var(--space-4);
+    --map-shell-padding-sm: var(--space-3);
+    --map-shell-panel-gap: var(--space-4);
+    --map-shell-panel-padding: var(--space-5);
     --map-timeline-track: rgba(148, 163, 184, 0.3);
     --map-timeline-marker: rgba(148, 163, 184, 0.16);
     --map-timeline-card: var(--surface);
@@ -579,46 +588,54 @@ p  { margin: 0 0 .75rem; color: var(--text); }
 }
 
 /* Battle map */
-.map-tab {
+.map-tab,
+.battle-map-shell {
     display: grid;
-    gap: var(--space-6);
+    gap: var(--map-shell-gap-lg);
     background: var(--map-shell-bg);
-    border-radius: var(--radius-lg);
-    padding: clamp(var(--space-4), 3vw, var(--space-8));
+    border-radius: var(--map-shell-radius);
+    padding: var(--map-shell-padding-lg);
     box-shadow: var(--map-panel-shadow);
 }
 
-.map-tab__header {
+.map-tab__header,
+.battle-map-shell__header {
     background: var(--map-panel-surface);
     border: 1px solid var(--map-panel-border);
-    border-radius: var(--radius-lg);
-    padding: var(--space-5);
+    border-radius: calc(var(--map-shell-radius) - 4px);
+    padding: var(--map-shell-panel-padding);
     box-shadow: var(--shadow-sm);
     display: grid;
-    gap: var(--space-4);
+    gap: var(--map-shell-panel-gap);
 }
 
-.map-layout {
+.map-layout,
+.battle-map-shell__grid {
     display: grid;
-    gap: var(--space-6);
-    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: var(--map-shell-gap-lg);
+    grid-template-columns: minmax(0, 1.6fr) minmax(320px, 1fr);
+    grid-template-areas: 'board sidebar';
     align-items: start;
 }
 
-.map-board-wrapper {
+.map-board-wrapper,
+.battle-map-shell__board {
+    grid-area: board;
     display: grid;
-    gap: var(--space-4);
+    gap: var(--map-shell-panel-gap);
 }
 
-.map-sidebar {
+.map-sidebar,
+.battle-map-shell__sidebar {
+    grid-area: sidebar;
     display: grid;
-    gap: var(--space-4);
+    gap: var(--map-shell-panel-gap);
 }
 
 .map-sidebar__panel {
     background: var(--map-panel-surface);
     border: 1px solid var(--map-panel-border);
-    border-radius: var(--radius-lg);
+    border-radius: calc(var(--map-shell-radius) - 2px);
     box-shadow: var(--map-panel-shadow);
     overflow: hidden;
     transition: border-color var(--trans-fast), box-shadow var(--trans-fast), transform var(--trans-fast);
@@ -630,7 +647,7 @@ p  { margin: 0 0 .75rem; color: var(--text); }
 }
 
 .map-sidebar__panel-header {
-    padding: var(--space-4) var(--space-5) var(--space-3);
+    padding: var(--space-4) var(--map-shell-panel-padding) var(--space-3);
     display: grid;
     gap: var(--space-2);
 }
@@ -691,22 +708,21 @@ p  { margin: 0 0 .75rem; color: var(--text); }
 }
 
 .map-sidebar__panel-body {
-    padding: 0 var(--space-5) var(--space-5);
+    padding: 0 var(--map-shell-panel-padding) var(--map-shell-panel-gap);
     display: grid;
-    gap: var(--space-4);
+    gap: var(--map-shell-panel-gap);
 }
 
 .battle-log-timeline {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
+    display: grid;
+    gap: var(--map-shell-panel-gap);
 }
 
 .battle-log-timeline__header {
     display: flex;
     justify-content: space-between;
     align-items: flex-end;
-    gap: var(--space-4);
+    gap: var(--map-shell-panel-gap);
     flex-wrap: wrap;
 }
 
@@ -736,7 +752,6 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     font-weight: 600;
     color: var(--text);
 }
-
 .battle-log-timeline__select {
     background: var(--map-panel-surface-alt);
     border: 1px solid var(--map-panel-border);
@@ -795,7 +810,7 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     overflow-y: auto;
     padding-right: var(--space-2);
     display: grid;
-    gap: var(--space-4);
+    gap: var(--map-shell-panel-gap);
 }
 
 .battle-log-timeline__empty {
@@ -807,15 +822,15 @@ p  { margin: 0 0 .75rem; color: var(--text); }
 .battle-log-timeline__entry {
     position: relative;
     display: flex;
-    gap: var(--space-4);
-    padding-left: calc(var(--space-4) + var(--space-2));
+    gap: var(--map-shell-panel-gap);
+    padding-left: calc(var(--map-shell-panel-gap) + var(--space-2));
 }
 
 .battle-log-timeline__timeline-marker {
     position: absolute;
     left: var(--space-2);
     top: var(--space-2);
-    bottom: calc(-1 * var(--space-5));
+    bottom: calc(-1 * var(--map-shell-panel-padding));
     width: 2px;
     background: linear-gradient(180deg, var(--map-timeline-track), rgba(148, 163, 184, 0));
 }
@@ -827,7 +842,7 @@ p  { margin: 0 0 .75rem; color: var(--text); }
 .battle-log-timeline__card {
     background: var(--map-timeline-card);
     border: 1px solid var(--map-timeline-card-border);
-    border-radius: calc(var(--radius-lg) - 6px);
+    border-radius: calc(var(--map-shell-radius) - 6px);
     padding: var(--space-3);
     width: 100%;
     box-shadow: var(--map-timeline-card-shadow);
@@ -924,56 +939,37 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     max-height: 16rem;
     overflow: auto;
 }
-
-@media (max-width: 768px) {
-    .battle-log-timeline__header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: var(--space-3);
+@media (max-width: 1280px) {
+    .map-tab,
+    .battle-map-shell {
+        padding: var(--map-shell-padding-md);
+        gap: var(--map-shell-gap-md);
     }
 
-    .battle-log-timeline__filters {
-        width: 100%;
-        justify-content: flex-start;
+    .map-tab__header,
+    .battle-map-shell__header {
+        padding: var(--map-shell-panel-padding);
     }
 
-    .battle-log-timeline__summary {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: var(--space-2);
-    }
-
-    .battle-log-timeline__toggle {
-        align-self: flex-end;
+    .map-layout,
+    .battle-map-shell__grid {
+        gap: var(--map-shell-gap-md);
+        grid-template-columns: minmax(0, 1fr) minmax(280px, 0.9fr);
     }
 }
 
-@media (max-width: 1200px) {
-    .map-layout {
+@media (max-width: 960px) {
+    .map-layout,
+    .battle-map-shell__grid {
         grid-template-columns: minmax(0, 1fr);
+        grid-template-areas:
+            'board'
+            'sidebar';
     }
 
-    .map-sidebar {
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    }
-}
-
-@media (max-width: 768px) {
-    .map-tab {
-        padding: var(--space-4);
-        gap: var(--space-4);
-    }
-
-    .map-tab__header {
-        padding: var(--space-4);
-    }
-
-    .map-layout {
-        gap: var(--space-4);
-    }
-
-    .map-sidebar {
-        grid-template-columns: minmax(0, 1fr);
+    .map-sidebar,
+    .battle-map-shell__sidebar {
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     }
 
     .map-sidebar__panel {
@@ -981,24 +977,59 @@ p  { margin: 0 0 .75rem; color: var(--text); }
     }
 }
 
-@media (max-width: 520px) {
-    .map-tab {
-        padding: var(--space-3);
+@media (max-width: 640px) {
+    .map-tab,
+    .battle-map-shell {
+        padding: var(--map-shell-padding-sm);
+        gap: var(--map-shell-gap-sm);
     }
 
-    .map-tab__header {
+    .map-tab__header,
+    .battle-map-shell__header {
+        padding: var(--space-3);
         gap: var(--space-3);
     }
 
+    .map-layout,
+    .battle-map-shell__grid {
+        gap: var(--map-shell-gap-sm);
+    }
+
+    .map-sidebar,
+    .battle-map-shell__sidebar {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
     .map-sidebar__panel-header {
-        padding: var(--space-3);
+        padding: var(--space-3) var(--space-3) var(--space-2);
     }
 
     .map-sidebar__panel-body {
         padding: 0 var(--space-3) var(--space-4);
     }
-}
 
+    .battle-log-timeline__header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: var(--space-3);
+    }
+
+    .battle-log-timeline__filters {
+        width: 100%;
+        flex-direction: column;
+        align-items: stretch;
+        gap: var(--space-2);
+    }
+
+    .battle-log-timeline__summary {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .battle-log-timeline__toggle {
+        align-self: flex-end;
+    }
+}
 .map-board {
     position: relative;
     padding: 0;
