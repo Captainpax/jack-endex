@@ -11,9 +11,16 @@
                     :items="navigationItems"
                     :active-key="activeTab"
                     @select="handleSelectTab"
+                    :class="{ 'nav-drawer--muted': awaitingSelection }"
+                    :aria-disabled="awaitingSelection ? 'true' : 'false'"
                 />
-                <section class="app-shell__games" v-if="games.length">
+                <section
+                    class="app-shell__games"
+                    v-if="games.length"
+                    :class="{ 'app-shell__games--awaiting': awaitingSelection }"
+                >
                     <h2 class="app-shell__section-title">Campaigns</h2>
+                    <p v-if="awaitingSelection" class="app-shell__games-hint">{{ selectionPlaceholder }}</p>
                     <ul class="game-list">
                         <li
                             v-for="game in games"
@@ -49,7 +56,7 @@
             </section>
             <section class="app-shell__empty" v-else>
                 <p v-if="error" class="app-shell__error">{{ error }}</p>
-                <p v-else class="app-shell__placeholder">Select a campaign to begin.</p>
+                <p v-else-if="selectionPlaceholder" class="app-shell__placeholder">{{ selectionPlaceholder }}</p>
             </section>
         </main>
         <p v-else class="app-shell__loading">Loading session…</p>
@@ -103,6 +110,7 @@ const activeTab = ref('overview');
 const storyLogSnapshot = ref(null);
 const helpDocs = ref(null);
 const error = ref('');
+const selectionPlaceholder = ref('Select a campaign to begin.');
 
 const me = computed(() => auth.user.value);
 
@@ -110,6 +118,8 @@ const realtime = useRealtimeConnection({ gameId: activeGameId });
 provide(realtimeSymbol, realtime);
 
 const battleLogger = useBattleLogger(activeGameId);
+
+const awaitingSelection = computed(() => games.value.length > 0 && !activeGameId.value);
 
 const navigationItems = computed(() => {
     const user = me.value;
@@ -287,7 +297,13 @@ function handleSelectTab(key) {
 
 function selectGame(id) {
     const normalized = normalizeId(id);
-    if (!normalized || activeGameId.value === normalized) return;
+    if (!normalized) return;
+    if (activeGameId.value === normalized) {
+        if (!activeGame.value) {
+            fetchGame(normalized);
+        }
+        return;
+    }
     activeGameId.value = normalized;
 }
 
@@ -326,12 +342,10 @@ async function refreshGames() {
                   dmId: normalizeId(game.dmId) ?? game.dmId,
               }))
             : [];
-        if (!activeGameId.value && games.value.length > 0) {
-            activeGameId.value = games.value[0].id;
-        } else if (activeGameId.value) {
+        if (activeGameId.value) {
             const match = games.value.find((game) => idsMatch(game.id, activeGameId.value));
-            if (!match && games.value.length > 0) {
-                activeGameId.value = games.value[0].id;
+            if (!match) {
+                activeGameId.value = null;
             }
         }
     } catch (err) {
@@ -344,7 +358,7 @@ async function refreshGames() {
 
 async function fetchGame(id) {
     if (!id) {
-        activeGame.value = null;
+        clearActiveGameState();
         return;
     }
     try {
@@ -357,6 +371,7 @@ async function fetchGame(id) {
                   dmId: normalizeId(data.dmId) ?? data.dmId,
               }
             : null;
+        selectionPlaceholder.value = activeGame.value ? '' : 'Select a campaign to begin.';
         if (activeTab.value === 'storyLogs') {
             await fetchStoryLog();
         }
@@ -366,6 +381,10 @@ async function fetchGame(id) {
     } catch (err) {
         console.error(err);
         error.value = err?.message || 'Failed to load campaign.';
+        activeGame.value = null;
+        storyLogSnapshot.value = null;
+        helpDocs.value = null;
+        selectionPlaceholder.value = 'Select a campaign to begin.';
     }
 }
 
@@ -416,15 +435,25 @@ function resetDashboard() {
     storyLogSnapshot.value = null;
     helpDocs.value = null;
     error.value = '';
+    selectionPlaceholder.value = 'Select a campaign to begin.';
 }
 
 watch(activeGameId, (id) => {
     if (!id) {
-        activeGame.value = null;
+        clearActiveGameState();
         return;
     }
+    selectionPlaceholder.value = '';
     fetchGame(id);
 });
+
+function clearActiveGameState() {
+    activeGame.value = null;
+    storyLogSnapshot.value = null;
+    helpDocs.value = null;
+    error.value = '';
+    selectionPlaceholder.value = 'Select a campaign to begin.';
+}
 
 onMounted(() => {
     initializeDashboard();
@@ -590,6 +619,20 @@ const HelpPanel = {
     flex-direction: column;
     gap: 1rem;
     box-shadow: inset 0 0 0 1px rgba(120, 175, 255, 0.15);
+}
+
+.app-shell__games--awaiting {
+    box-shadow: inset 0 0 0 2px rgba(130, 248, 255, 0.45);
+    background: rgba(12, 17, 35, 0.85);
+}
+
+.app-shell__games-hint {
+    margin: 0;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.85rem;
+    background: rgba(130, 248, 255, 0.1);
+    color: rgba(190, 240, 255, 0.9);
+    font-size: 0.85rem;
 }
 
 .app-shell__section-title {
