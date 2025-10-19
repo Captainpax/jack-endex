@@ -1593,6 +1593,22 @@ for (const candidate of INDEX_CANDIDATES) {
 }
 
 // --- game helpers ---
+const SHEET_SLUG_PREFIX = 'sheet-';
+
+function normalizeSheetSlug(value) {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim().toLowerCase();
+    if (!trimmed) return '';
+    const sanitized = trimmed.replace(/[^a-z0-9-]/g, '');
+    if (!sanitized) return '';
+    if (sanitized.startsWith(SHEET_SLUG_PREFIX)) return sanitized;
+    return `${SHEET_SLUG_PREFIX}${sanitized}`;
+}
+
+function generateSheetSlug() {
+    return `${SHEET_SLUG_PREFIX}${uuid().replace(/[^a-z0-9-]/gi, '').toLowerCase()}`;
+}
+
 function normalizeFusionArcana(value) {
     if (typeof value !== 'string') return '';
     const trimmed = value.trim().toLowerCase();
@@ -1655,9 +1671,19 @@ function presentFusionChart(chart) {
 function ensureGameShape(game) {
     if (!game || typeof game !== 'object') return null;
     if (Array.isArray(game.players)) {
+        const seenSheetSlugs = new Set();
         game.players = game.players
             .map((p) => ensurePlayerShape(p))
-            .filter(Boolean);
+            .filter(Boolean)
+            .map((player) => {
+                let sheetSlug = normalizeSheetSlug(player.sheetSlug);
+                if (!sheetSlug) sheetSlug = generateSheetSlug();
+                while (seenSheetSlugs.has(sheetSlug)) {
+                    sheetSlug = generateSheetSlug();
+                }
+                seenSheetSlugs.add(sheetSlug);
+                return { ...player, sheetSlug };
+            });
     } else {
         game.players = [];
     }
@@ -2143,6 +2169,8 @@ function ensurePlayerShape(player) {
         out.inventory = [];
     }
     out.gear = ensureGearState(out);
+    const normalizedSlug = normalizeSheetSlug(out.sheetSlug);
+    out.sheetSlug = normalizedSlug || generateSheetSlug();
     return out;
 }
 
@@ -6015,13 +6043,12 @@ app.post('/api/games/join/:code', requireAuth, async (req, res) => {
     if (!game) return res.status(404).json({ error: 'not_found' });
 
     if (!isMember(game, req.session.userId)) {
-        game.players.push({
-            userId: req.session.userId,
-            role: 'player',
-            character: null,
-            inventory: [],
-        gear: { bag: [], slots: { weapon: null, armor: null, accessory: null } },
-        });
+        const joiningUser =
+            findUser(db, req.session.userId) || { id: req.session.userId, username: '' };
+        const newEntry = createPlayerEntry(joiningUser, 'player');
+        if (newEntry) {
+            game.players.push(newEntry);
+        }
     }
 
     game.invites = game.invites.map((inv) => inv && inv.code === code

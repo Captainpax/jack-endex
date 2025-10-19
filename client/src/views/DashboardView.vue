@@ -49,14 +49,13 @@
 
 <script setup>
 import { computed, onMounted, provide, ref, unref, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 
 import NavigationSidebar from '../components/NavigationSidebar.vue';
 import LoadingBar from '../components/LoadingBar.vue';
 import MapTab from '../components/battleMap/MapTab.vue';
 import ItemsTab from '../components/ItemsTab.vue';
-import GearTab from '../components/GearTab.vue';
-import WorldSkillsTab from '../components/WorldSkillsTab.vue';
+import MySheetTab from '../components/MySheetTab.vue';
 import DemonTab from '../components/DemonTab.vue';
 import ServerManagementTab from '../components/ServerManagementTab.vue';
 
@@ -73,27 +72,134 @@ import {
 } from '../utils/gameDescriptions';
 import { idsMatch } from '../utils/ids';
 
+const DEFAULT_TAB = 'overview';
+const DEFAULT_SHEET_SECTION = 'character';
+const SHEET_SECTION_KEYS = new Set(['character', 'gear', 'worldSkills']);
+const LEGACY_SHEET_TABS = new Set(['gear', 'worldSkills']);
 const SUPPORTED_TAB_KEYS = new Set([
     'overview',
     'map',
+    'sheet',
     'items',
-    'gear',
-    'worldSkills',
     'demons',
     'storyLogs',
     'help',
     'serverManagement',
 ]);
+const ROUTE_TAB_KEYS = new Set([...SUPPORTED_TAB_KEYS, ...LEGACY_SHEET_TABS]);
 
 const SERVER_ADMIN_USERNAMES = new Set(['captainpax', 'amzyoshio']);
 
+function resolveRouteParam(value) {
+    if (Array.isArray(value)) {
+        return value.length ? String(value[0]) : '';
+    }
+    if (value == null) return '';
+    return String(value);
+}
+
+function normalizeSheetSlug(value) {
+    if (typeof value !== 'string') return '';
+    return value.trim().toLowerCase();
+}
+
+function normalizeSheetSection(value) {
+    if (typeof value !== 'string') return DEFAULT_SHEET_SECTION;
+    const normalized = value.trim();
+    return SHEET_SECTION_KEYS.has(normalized) ? normalized : DEFAULT_SHEET_SECTION;
+}
+
+function normalizeDashboardRouteParams(params) {
+    const normalized = {};
+    const tab = resolveRouteParam(params?.tab);
+    if (tab) {
+        normalized.tab = tab;
+    }
+    const slug = normalizeSheetSlug(resolveRouteParam(params?.sheetSlug));
+    if (slug) {
+        normalized.sheetSlug = slug;
+    }
+    const section = normalizeSheetSection(resolveRouteParam(params?.sheetSection));
+    if (section && section !== DEFAULT_SHEET_SECTION) {
+        normalized.sheetSection = section;
+    }
+    return normalized;
+}
+
+function extractDashboardRouteState(currentRoute) {
+    const params = currentRoute?.params || {};
+    const rawTab = resolveRouteParam(params.tab);
+    let tab = ROUTE_TAB_KEYS.has(rawTab) ? rawTab : DEFAULT_TAB;
+    let sheetSlug = '';
+    let sheetSection = DEFAULT_SHEET_SECTION;
+
+    if (LEGACY_SHEET_TABS.has(tab)) {
+        sheetSection = tab;
+        tab = 'sheet';
+    }
+
+    if (tab === 'sheet') {
+        sheetSlug = normalizeSheetSlug(resolveRouteParam(params.sheetSlug));
+        if (sheetSection !== DEFAULT_SHEET_SECTION) {
+            sheetSection = normalizeSheetSection(sheetSection);
+        } else {
+            sheetSection = normalizeSheetSection(resolveRouteParam(params.sheetSection));
+        }
+    }
+
+    return { tab, sheetSlug, sheetSection };
+}
+
+function buildDashboardRouteParams({ tab, sheetSlug, sheetSection }) {
+    const params = {};
+    if (tab && tab !== DEFAULT_TAB) {
+        params.tab = tab;
+    }
+    if (tab === 'sheet') {
+        const normalizedSlug = normalizeSheetSlug(sheetSlug);
+        const normalizedSection = normalizeSheetSection(sheetSection);
+        if (normalizedSlug) {
+            params.sheetSlug = normalizedSlug;
+        }
+        if (normalizedSection && normalizedSection !== DEFAULT_SHEET_SECTION) {
+            params.sheetSection = normalizedSection;
+        }
+    }
+    return params;
+}
+
+function dashboardParamsDiffer(current, next) {
+    const keys = new Set([...Object.keys(current || {}), ...Object.keys(next || {})]);
+    for (const key of keys) {
+        if ((current?.[key] ?? '') !== (next?.[key] ?? '')) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function navigateToDashboard({ tab, sheetSlug, sheetSection }, { replace = false } = {}) {
+    const params = buildDashboardRouteParams({ tab, sheetSlug, sheetSection });
+    const method = replace ? router.replace : router.push;
+    return method
+        .call(router, { name: 'dashboard', params, query: { ...route.query } })
+        .catch((error) => {
+            if (error?.name !== 'NavigationDuplicated') {
+                console.error(error);
+            }
+        });
+}
+
 const router = useRouter();
+const route = useRoute();
 const auth = useAuthStore();
 const gamesStore = useGamesStore();
 
 const loading = ref(true);
 const logoutBusy = ref(false);
-const activeTab = ref('overview');
+const activeTab = ref(DEFAULT_TAB);
+const activeSheetSlug = ref('');
+const activeSheetSection = ref(DEFAULT_SHEET_SECTION);
 const storyLogSnapshot = ref(null);
 const helpDocList = ref([]);
 const helpDocCache = ref({});
@@ -139,10 +245,8 @@ const activeComponent = computed(() => {
             return MapTab;
         case 'items':
             return ItemsTab;
-        case 'gear':
-            return GearTab;
-        case 'worldSkills':
-            return WorldSkillsTab;
+        case 'sheet':
+            return MySheetTab;
         case 'demons':
             return DemonTab;
         case 'storyLogs':
@@ -165,10 +269,15 @@ const activeComponentProps = computed(() => {
             return { game, me: me.value, logger: battleLogger, realtime };
         case ItemsTab:
             return { game, me: me.value, realtime, onUpdate: refreshActiveGame };
-        case GearTab:
-            return { game, me: me.value };
-        case WorldSkillsTab:
-            return { game, me: me.value };
+        case MySheetTab:
+            return {
+                game,
+                me: me.value,
+                slug: activeSheetSlug.value,
+                section: activeSheetSection.value,
+                'onUpdate:slug': handleSheetSlugChange,
+                'onUpdate:section': handleSheetSectionChange,
+            };
         case DemonTab:
             return { game, me: me.value };
         case StoryLogsPanel:
@@ -200,12 +309,49 @@ function isServerAdminClient(user) {
 
 function handleSelectTab(key) {
     if (!SUPPORTED_TAB_KEYS.has(key)) return;
-    activeTab.value = key;
-    if (key === 'storyLogs') {
-        fetchStoryLog();
-    } else if (key === 'help') {
-        fetchHelpDocs();
+    navigateToDashboard({
+        tab: key,
+        sheetSlug: key === 'sheet' ? activeSheetSlug.value : '',
+        sheetSection: key === 'sheet' ? activeSheetSection.value : DEFAULT_SHEET_SECTION,
+    });
+}
+
+function updateSheetRoute({ slug = activeSheetSlug.value, section = activeSheetSection.value } = {}) {
+    const normalizedSlug = normalizeSheetSlug(slug);
+    const normalizedSection = normalizeSheetSection(section);
+
+    if (normalizedSlug !== activeSheetSlug.value) {
+        activeSheetSlug.value = normalizedSlug;
     }
+    if (normalizedSection !== activeSheetSection.value) {
+        activeSheetSection.value = normalizedSection;
+    }
+
+    if (activeTab.value !== 'sheet') {
+        return;
+    }
+
+    const currentState = extractDashboardRouteState(route);
+    if (
+        currentState.tab === 'sheet' &&
+        currentState.sheetSlug === normalizedSlug &&
+        currentState.sheetSection === normalizedSection
+    ) {
+        return;
+    }
+
+    navigateToDashboard(
+        { tab: 'sheet', sheetSlug: normalizedSlug, sheetSection: normalizedSection },
+        { replace: true }
+    );
+}
+
+function handleSheetSlugChange(value) {
+    updateSheetRoute({ slug: value, section: activeSheetSection.value });
+}
+
+function handleSheetSectionChange(value) {
+    updateSheetRoute({ slug: activeSheetSlug.value, section: value });
 }
 
 async function initializeDashboard() {
@@ -341,7 +487,7 @@ async function logout() {
 
 function resetDashboard() {
     gamesStore.reset();
-    activeTab.value = 'overview';
+    activeTab.value = DEFAULT_TAB;
     storyLogSnapshot.value = null;
     helpDocList.value = [];
     helpDocCache.value = {};
@@ -353,6 +499,32 @@ function clearActiveGameState() {
     helpDocList.value = [];
     helpDocCache.value = {};
 }
+
+watch(
+    () => route.params,
+    (params) => {
+        const previousTab = activeTab.value;
+        const { tab, sheetSlug, sheetSection } = extractDashboardRouteState(route);
+        activeTab.value = tab;
+        activeSheetSlug.value = sheetSlug;
+        activeSheetSection.value = sheetSection;
+
+        if (tab !== previousTab) {
+            if (tab === 'storyLogs') {
+                fetchStoryLog();
+            } else if (tab === 'help') {
+                fetchHelpDocs();
+            }
+        }
+
+        const normalizedCurrent = normalizeDashboardRouteParams(params);
+        const nextParams = buildDashboardRouteParams({ tab, sheetSlug, sheetSection });
+        if (dashboardParamsDiffer(normalizedCurrent, nextParams)) {
+            navigateToDashboard({ tab, sheetSlug, sheetSection }, { replace: true });
+        }
+    },
+    { immediate: true }
+);
 
 watch(storeError, (message) => {
     if (message) {

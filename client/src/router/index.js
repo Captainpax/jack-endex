@@ -8,7 +8,8 @@ import { useGamesStore } from '../composables/useGamesStore';
 
 export const routes = [
     {
-        path: '/',
+        path: '/dashboard/:tab?/:sheetSlug?/:sheetSection?',
+        alias: '/',
         name: 'dashboard',
         component: DashboardView,
         meta: { requiresAuth: true, requiresActiveGame: true },
