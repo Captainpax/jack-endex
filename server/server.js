@@ -32,6 +32,7 @@ import {
     writeItemEntries,
 } from './lib/itemImport.js';
 import { filterGamesForUser } from './lib/filterGamesForUser.js';
+import { presentDungeonMaster } from './lib/presentDungeonMaster.js';
 import { DEFAULT_WORLD_SKILLS } from '../shared/worldSkills.js';
 import { findCombatSkillById, findCombatSkillByName } from '../shared/combatSkills.js';
 import { MUSIC_TRACKS, getMusicTrack } from '../shared/music/index.js';
@@ -1689,11 +1690,13 @@ function presentGame(game, { includeSecrets = false } = {}) {
             return { ...player, online };
         })
         : [];
+    const dm = presentDungeonMaster({ ...normalized, players });
     const fusionChart = ensureFusionChart(normalized);
     return {
         id: normalized.id,
         name: normalized.name,
         dmId: normalized.dmId,
+        dm,
         players,
         items: normalized.items,
         gear: normalized.gear,

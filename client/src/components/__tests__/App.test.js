@@ -90,4 +90,34 @@ describe('App', () => {
         expect(activeMeta.exists()).toBe(true);
         expect(activeMeta.text()).toContain('Dungeon Master');
     });
+
+    it('renders DM information from the dm summary payload', async () => {
+        const dmId = 'dm-777';
+        const game = {
+            id: 'game-2',
+            name: 'Summary Campaign',
+            dmId,
+            dm: { userId: dmId, username: 'SummaryDM', displayName: 'Summary DM' },
+            updatedAt: '2024-02-01T00:00:00.000Z',
+            players: [
+                { userId: 'player-1', role: 'player', username: 'Player One' },
+            ],
+        };
+
+        mockAuth.me.mockResolvedValue({ id: 'player-1', username: 'Player One' });
+        mockGames.list.mockResolvedValue([game]);
+        mockGames.get.mockResolvedValue(game);
+
+        const wrapper = shallowMount(App);
+
+        await flushAll();
+
+        const meta = wrapper.find('.game-list__meta');
+        expect(meta.exists()).toBe(true);
+        expect(meta.text()).toContain('Summary DM');
+
+        const activeMeta = wrapper.find('.app-shell__content-meta');
+        expect(activeMeta.exists()).toBe(true);
+        expect(activeMeta.text()).toContain('Summary DM');
+    });
 });

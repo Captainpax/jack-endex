@@ -1,3 +1,5 @@
+import { presentDungeonMaster } from './presentDungeonMaster.js';
+
 export function filterGamesForUser(games, userId, isUserOnlineInGame = () => false) {
     if (!Array.isArray(games) || !userId) return [];
 
@@ -9,11 +11,8 @@ export function filterGamesForUser(games, userId, isUserOnlineInGame = () => fal
             const isDm = game.dmId === userId;
             return isPlayer || isDm;
         })
-        .map((game) => ({
-            id: game.id,
-            name: game.name,
-            dmId: game.dmId,
-            players: Array.isArray(game.players)
+        .map((game) => {
+            const players = Array.isArray(game.players)
                 ? game.players.map((player) => {
                     if (!player || typeof player !== 'object') {
                         return player;
@@ -22,6 +21,16 @@ export function filterGamesForUser(games, userId, isUserOnlineInGame = () => fal
                     const online = isUserOnlineInGame(game.id, player.userId);
                     return { ...player, online };
                 })
-                : [],
-        }));
+                : [];
+
+            const dm = presentDungeonMaster({ ...game, players });
+
+            return {
+                id: game.id,
+                name: game.name,
+                dmId: game.dmId,
+                dm,
+                players,
+            };
+        });
 }
