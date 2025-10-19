@@ -108,7 +108,8 @@ const activeGameId = ref(null);
 const activeGame = ref(null);
 const activeTab = ref('overview');
 const storyLogSnapshot = ref(null);
-const helpDocs = ref(null);
+const helpDocList = ref([]);
+const helpDocCache = ref({});
 const error = ref('');
 const selectionPlaceholder = ref('Select a campaign to begin.');
 
@@ -174,7 +175,12 @@ const activeComponentProps = computed(() => {
         case StoryLogsPanel:
             return { snapshot: storyLogSnapshot.value, onRefresh: fetchStoryLog };
         case HelpPanel:
-            return { docs: helpDocs.value, onRefresh: fetchHelpDocs };
+            return {
+                docs: helpDocList.value,
+                cache: helpDocCache.value,
+                onRefresh: () => fetchHelpDocs({ resetCache: true }),
+                onLoadDoc: fetchHelpDocContent,
+            };
         case ServerManagementTab:
             return {
                 activeGameId: game.id,
@@ -383,7 +389,8 @@ async function fetchGame(id) {
         error.value = err?.message || 'Failed to load campaign.';
         activeGame.value = null;
         storyLogSnapshot.value = null;
-        helpDocs.value = null;
+        helpDocList.value = [];
+        helpDocCache.value = {};
         selectionPlaceholder.value = 'Select a campaign to begin.';
     }
 }
@@ -401,14 +408,49 @@ async function fetchStoryLog() {
     }
 }
 
-async function fetchHelpDocs() {
+async function fetchHelpDocs(options = {}) {
+    const resetCache = options?.resetCache ?? false;
+    if (resetCache) {
+        helpDocCache.value = {};
+    }
+    if (!resetCache && helpDocList.value.length) {
+        return;
+    }
     try {
         const docs = await Help.docs();
-        helpDocs.value = docs || null;
+        const list = Array.isArray(docs) ? docs : [];
+        helpDocList.value = list;
+        if (resetCache) {
+            helpDocCache.value = {};
+        } else {
+            const valid = new Set(list.map((doc) => doc?.filename).filter(Boolean));
+            const entries = Object.entries(helpDocCache.value || {}).filter(([key]) => valid.has(key));
+            const nextCache = Object.fromEntries(entries);
+            helpDocCache.value = nextCache;
+        }
         error.value = '';
     } catch (err) {
         console.error(err);
         error.value = err?.message || 'Failed to load help content.';
+        helpDocList.value = [];
+    }
+}
+
+async function fetchHelpDocContent(filename) {
+    const target = typeof filename === 'string' ? filename : '';
+    if (!target) return '';
+    const cache = helpDocCache.value || {};
+    if (typeof cache[target] === 'string') {
+        return cache[target];
+    }
+    try {
+        const content = await Help.getDoc(target);
+        const text = typeof content === 'string' ? content : '';
+        helpDocCache.value = { ...cache, [target]: text };
+        return text;
+    } catch (err) {
+        console.error(err);
+        throw err;
     }
 }
 
@@ -433,7 +475,8 @@ function resetDashboard() {
     activeGame.value = null;
     activeTab.value = 'overview';
     storyLogSnapshot.value = null;
-    helpDocs.value = null;
+    helpDocList.value = [];
+    helpDocCache.value = {};
     error.value = '';
     selectionPlaceholder.value = 'Select a campaign to begin.';
 }
@@ -450,7 +493,8 @@ watch(activeGameId, (id) => {
 function clearActiveGameState() {
     activeGame.value = null;
     storyLogSnapshot.value = null;
-    helpDocs.value = null;
+    helpDocList.value = [];
+    helpDocCache.value = {};
     error.value = '';
     selectionPlaceholder.value = 'Select a campaign to begin.';
 }
@@ -740,33 +784,178 @@ const StoryLogsPanel = {
 const HelpPanel = {
     name: 'HelpPanel',
     props: {
-        docs: { type: [Array, Object], default: null },
+        docs: { type: Array, default: () => [] },
+        cache: { type: Object, default: () => ({}) },
         onRefresh: { type: Function, default: null },
+        onLoadDoc: { type: Function, default: null },
     },
     setup(props) {
-        const refresh = () => props.onRefresh?.();
-        const entries = computed(() => {
-            const raw = props.docs;
-            if (Array.isArray(raw)) return raw;
-            if (raw && typeof raw === 'object') {
-                return Object.entries(raw).map(([key, value]) => ({ key, value }));
+        const selected = ref('');
+        const loading = ref(false);
+        const content = ref('');
+        const errorMessage = ref('');
+        let activeToken = 0;
+
+        const documents = computed(() => (Array.isArray(props.docs) ? props.docs : []));
+        const selectedDoc = computed(() =>
+            documents.value.find((doc) => doc?.filename === selected.value) || null
+        );
+
+        watch(
+            documents,
+            (list) => {
+                if (!list.length) {
+                    activeToken += 1;
+                    selected.value = '';
+                    content.value = '';
+                    errorMessage.value = '';
+                    loading.value = false;
+                    return;
+                }
+                if (selected.value && !list.some((doc) => doc?.filename === selected.value)) {
+                    activeToken += 1;
+                    selected.value = '';
+                    content.value = '';
+                    errorMessage.value = '';
+                    loading.value = false;
+                }
+            },
+            { immediate: true }
+        );
+
+        watch(
+            () => props.cache,
+            (cache) => {
+                if (!selected.value) return;
+                const cached = cache?.[selected.value];
+                if (typeof cached === 'string') {
+                    content.value = cached;
+                    errorMessage.value = '';
+                    loading.value = false;
+                }
             }
-            return [];
-        });
-        return { refresh, entries };
+        );
+
+        async function loadDocument(filename) {
+            if (typeof props.onLoadDoc !== 'function') {
+                content.value = '';
+                errorMessage.value = '';
+                loading.value = false;
+                return;
+            }
+            activeToken += 1;
+            const token = activeToken;
+            loading.value = true;
+            errorMessage.value = '';
+            try {
+                const text = await props.onLoadDoc(filename);
+                if (token === activeToken && selected.value === filename) {
+                    content.value = typeof text === 'string' ? text : '';
+                }
+            } catch (err) {
+                if (token === activeToken && selected.value === filename) {
+                    content.value = '';
+                    errorMessage.value = err?.message || 'Failed to load document.';
+                }
+            } finally {
+                if (token === activeToken && selected.value === filename) {
+                    loading.value = false;
+                }
+            }
+        }
+
+        const selectDoc = (filename) => {
+            const target = typeof filename === 'string' ? filename : '';
+            if (!target) return;
+            if (selected.value !== target) {
+                selected.value = target;
+            }
+            const cached = props.cache?.[target];
+            if (typeof cached === 'string') {
+                content.value = cached;
+                errorMessage.value = '';
+                loading.value = false;
+                return;
+            }
+            if (loading.value && target === selected.value) {
+                return;
+            }
+            errorMessage.value = '';
+            content.value = '';
+            void loadDocument(target);
+        };
+
+        const refresh = () => {
+            activeToken += 1;
+            selected.value = '';
+            content.value = '';
+            errorMessage.value = '';
+            loading.value = false;
+            props.onRefresh?.();
+        };
+
+        return {
+            documents,
+            selected,
+            selectedDoc,
+            selectDoc,
+            refresh,
+            loading,
+            content,
+            errorMessage,
+        };
     },
     template: `
-        <section class="panel">
+        <section class="panel help-panel">
             <header class="panel__header">
                 <h3 class="panel__title">Help & documentation</h3>
                 <button type="button" class="button button--small" @click="refresh">Refresh</button>
             </header>
-            <ul class="panel__list" v-if="entries.length">
-                <li v-for="entry in entries" :key="entry.key" class="panel__list-item">
-                    <strong>{{ entry.key }}</strong>
-                    <span>{{ typeof entry.value === 'string' ? entry.value : 'Document ready' }}</span>
-                </li>
-            </ul>
+            <div v-if="documents.length" class="help-panel__body">
+                <aside class="help-panel__list">
+                    <ul class="help-panel__doc-list">
+                        <li
+                            v-for="doc in documents"
+                            :key="doc.filename || doc.name"
+                            class="help-panel__doc-item"
+                        >
+                            <button
+                                type="button"
+                                class="help-panel__doc-button"
+                                :class="{ 'is-active': doc.filename === selected }"
+                                @click="selectDoc(doc.filename)"
+                            >
+                                <span class="help-panel__doc-name">{{ doc.name || doc.filename }}</span>
+                                <span
+                                    v-if="doc.name && doc.name !== doc.filename"
+                                    class="help-panel__doc-filename"
+                                >
+                                    {{ doc.filename }}
+                                </span>
+                            </button>
+                        </li>
+                    </ul>
+                </aside>
+                <article class="help-panel__viewer">
+                    <header v-if="selectedDoc" class="help-panel__viewer-header">
+                        <h4 class="help-panel__viewer-title">
+                            {{ selectedDoc.name || selectedDoc.filename }}
+                        </h4>
+                        <span
+                            v-if="selectedDoc.name && selectedDoc.name !== selectedDoc.filename"
+                            class="help-panel__viewer-meta"
+                        >
+                            {{ selectedDoc.filename }}
+                        </span>
+                    </header>
+                    <p v-if="!selected" class="help-panel__placeholder">
+                        Choose a document to view its contents.
+                    </p>
+                    <p v-else-if="loading" class="help-panel__placeholder">Loading document…</p>
+                    <p v-else-if="errorMessage" class="help-panel__error">{{ errorMessage }}</p>
+                    <pre v-else class="help-panel__content">{{ content }}</pre>
+                </article>
+            </div>
             <p v-else class="panel__placeholder">No documentation available.</p>
         </section>
     `,
@@ -1231,6 +1420,130 @@ const HelpPanel = {
     color: rgba(255, 255, 255, 0.55);
 }
 
+.help-panel__body {
+    display: grid;
+    grid-template-columns: minmax(12rem, 15rem) 1fr;
+    gap: 1.25rem;
+    margin-top: 1rem;
+}
+
+.help-panel__list {
+    background: rgba(12, 17, 35, 0.55);
+    border-radius: 1rem;
+    padding: 0.75rem;
+    box-shadow: inset 0 0 0 1px rgba(120, 175, 255, 0.12);
+}
+
+.help-panel__doc-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.help-panel__doc-button {
+    width: 100%;
+    text-align: left;
+    border: 1px solid rgba(130, 248, 255, 0.18);
+    background: rgba(12, 15, 30, 0.35);
+    border-radius: 0.75rem;
+    padding: 0.6rem 0.75rem;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    transition: border-color 0.2s ease, background 0.2s ease, transform 0.15s ease;
+}
+
+.help-panel__doc-button:hover {
+    border-color: rgba(130, 248, 255, 0.4);
+    background: rgba(130, 248, 255, 0.16);
+}
+
+.help-panel__doc-button.is-active {
+    border-color: rgba(130, 248, 255, 0.55);
+    background: rgba(130, 248, 255, 0.22);
+    transform: translateX(2px);
+}
+
+.help-panel__doc-name {
+    display: block;
+    font-weight: 600;
+}
+
+.help-panel__doc-filename {
+    display: block;
+    font-size: 0.75rem;
+    color: rgba(190, 240, 255, 0.7);
+}
+
+.help-panel__viewer {
+    background: rgba(12, 17, 35, 0.5);
+    border-radius: 1rem;
+    padding: 1rem;
+    box-shadow: inset 0 0 0 1px rgba(120, 175, 255, 0.12);
+    min-height: 12rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.help-panel__viewer-header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.help-panel__viewer-title {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.help-panel__viewer-meta {
+    font-size: 0.8rem;
+    color: rgba(190, 240, 255, 0.7);
+}
+
+.help-panel__placeholder {
+    margin: 0;
+    color: rgba(190, 240, 255, 0.75);
+}
+
+.help-panel__error {
+    margin: 0;
+    color: #ffb0b0;
+}
+
+.help-panel__content {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.55;
+    font-size: 0.9rem;
+    font-family: 'Fira Code', 'SFMono-Regular', 'SFMono', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+        monospace;
+    background: rgba(6, 9, 20, 0.65);
+    border-radius: 0.85rem;
+    padding: 1rem;
+    max-height: 32rem;
+    overflow: auto;
+}
+
+.help-panel__content::-webkit-scrollbar {
+    width: 0.6rem;
+}
+
+.help-panel__content::-webkit-scrollbar-thumb {
+    background: rgba(130, 248, 255, 0.3);
+    border-radius: 999px;
+}
+
+.help-panel__content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
 @media (max-width: 960px) {
     .app-shell__body {
         grid-template-columns: 1fr;
@@ -1238,6 +1551,18 @@ const HelpPanel = {
 
     .app-shell__sidebar {
         order: 2;
+    }
+
+    .help-panel__body {
+        grid-template-columns: 1fr;
+    }
+
+    .help-panel__list {
+        order: 2;
+    }
+
+    .help-panel__viewer {
+        order: 1;
     }
 }
 </style>
