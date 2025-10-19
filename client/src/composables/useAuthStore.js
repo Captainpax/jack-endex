@@ -14,6 +14,18 @@ function normalizeUser(user) {
     return { ...user, id: normalizedId };
 }
 
+function extractUser(sessionOrUser) {
+    if (!sessionOrUser || typeof sessionOrUser !== 'object') {
+        return sessionOrUser ?? null;
+    }
+
+    if ('user' in sessionOrUser && sessionOrUser.user) {
+        return sessionOrUser.user;
+    }
+
+    return sessionOrUser;
+}
+
 export function useAuthStore() {
     async function fetchSession({ force = false } = {}) {
         if (force) {
@@ -26,7 +38,8 @@ export function useAuthStore() {
 
         try {
             const session = await Auth.me();
-            state.user = normalizeUser(session) ?? null;
+            const user = extractUser(session);
+            state.user = normalizeUser(user) ?? null;
         } catch (error) {
             console.error(error);
             state.user = null;
@@ -48,7 +61,8 @@ export function useAuthStore() {
         }
     }
 
-    function setUser(user) {
+    function setUser(sessionOrUser) {
+        const user = extractUser(sessionOrUser);
         state.user = normalizeUser(user);
     }
 

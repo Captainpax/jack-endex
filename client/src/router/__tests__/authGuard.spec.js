@@ -8,8 +8,7 @@ import { Auth } from '../../api';
 vi.mock('../../api', () => ({
     Auth: {
         me: vi.fn(),
-        login: vi.fn(),
-        register: vi.fn(),
+        discordStartUrl: vi.fn(),
         logout: vi.fn(),
     },
 }));
