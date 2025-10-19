@@ -18,6 +18,18 @@ const userSchema = new mongoose.Schema(
             sparse: true,
             index: true,
         },
+        discordUsername: {
+            type: String,
+            trim: true,
+        },
+        discordGlobalName: {
+            type: String,
+            trim: true,
+        },
+        discordAvatar: {
+            type: String,
+            trim: true,
+        },
         banned: { type: Boolean, default: false },
     },
     {
