@@ -1,5 +1,6 @@
 import { createApp } from 'vue';
 import App from './App.vue';
+import router from './router';
 import LoadingBar from './components/LoadingBar.vue';
 import './style.css';
 
@@ -14,9 +15,12 @@ const darkThemePlugin = {
 const app = createApp(App);
 
 app.use(darkThemePlugin);
+app.use(router);
 app.component('LoadingBar', LoadingBar);
 
-app.mount('#root');
+router.isReady().then(() => {
+    app.mount('#root');
+});
 
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
     window.addEventListener('load', () => {
