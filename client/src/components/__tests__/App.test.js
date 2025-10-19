@@ -3,6 +3,7 @@ import { shallowMount } from '@vue/test-utils';
 import { nextTick } from 'vue';
 
 import App from '../../App.vue';
+import { createAppRouter } from '../../router';
 
 const mockAuth = {
     me: vi.fn(),
@@ -55,6 +56,18 @@ async function flushAll() {
     await nextTick();
 }
 
+async function mountApp() {
+    const router = createAppRouter();
+    await router.push('/');
+    await router.isReady();
+    const wrapper = shallowMount(App, {
+        global: {
+            plugins: [router],
+        },
+    });
+    return { wrapper, router };
+}
+
 describe('App', () => {
     beforeEach(() => {
         mockAuth.me.mockReset();
@@ -78,13 +91,18 @@ describe('App', () => {
         mockGames.list.mockResolvedValue([game]);
         mockGames.get.mockResolvedValue(game);
 
-        const wrapper = shallowMount(App);
+        const { wrapper } = await mountApp();
 
         await flushAll();
 
         const meta = wrapper.find('.game-list__meta');
         expect(meta.exists()).toBe(true);
         expect(meta.text()).toContain('Dungeon Master');
+
+        const selectButton = wrapper.find('.game-list__button');
+        expect(selectButton.exists()).toBe(true);
+        await selectButton.trigger('click');
+        await flushAll();
 
         const activeMeta = wrapper.find('.app-shell__content-meta');
         expect(activeMeta.exists()).toBe(true);
@@ -108,13 +126,18 @@ describe('App', () => {
         mockGames.list.mockResolvedValue([game]);
         mockGames.get.mockResolvedValue(game);
 
-        const wrapper = shallowMount(App);
+        const { wrapper } = await mountApp();
 
         await flushAll();
 
         const meta = wrapper.find('.game-list__meta');
         expect(meta.exists()).toBe(true);
         expect(meta.text()).toContain('Summary DM');
+
+        const selectButton = wrapper.find('.game-list__button');
+        expect(selectButton.exists()).toBe(true);
+        await selectButton.trigger('click');
+        await flushAll();
 
         const activeMeta = wrapper.find('.app-shell__content-meta');
         expect(activeMeta.exists()).toBe(true);

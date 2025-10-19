@@ -11,35 +11,19 @@
                     :items="navigationItems"
                     :active-key="activeTab"
                     @select="handleSelectTab"
-                    :class="{ 'nav-drawer--muted': awaitingSelection }"
-                    :aria-disabled="awaitingSelection ? 'true' : 'false'"
                 />
-                <section
-                    class="app-shell__games"
-                    v-if="games.length"
-                    :class="{ 'app-shell__games--awaiting': awaitingSelection }"
-                >
-                    <h2 class="app-shell__section-title">Campaigns</h2>
-                    <p v-if="awaitingSelection" class="app-shell__games-hint">{{ selectionPlaceholder }}</p>
-                    <ul class="game-list">
-                        <li
-                            v-for="game in games"
-                            :key="game.id"
-                            :class="['game-list__item', { 'is-active': activeGameId === game.id }]"
-                        >
-                            <button type="button" class="game-list__button" @click="() => selectGame(game.id)">
-                                <span class="game-list__name">{{ game.name || `Campaign ${game.id}` }}</span>
-                                <span class="game-list__meta">
-                                    DM · {{ describeGameDungeonMaster(game) }} · Players {{ game.players?.length || 0 }}
-                                </span>
-                            </button>
-                        </li>
-                    </ul>
-                </section>
                 <section class="app-shell__actions">
-                    <button type="button" class="button" @click="refreshGames" :disabled="refreshing">
-                        {{ refreshing ? 'Refreshing…' : 'Refresh games' }}
+                    <button
+                        type="button"
+                        class="button"
+                        @click="refreshActiveGame"
+                        :disabled="refreshingCampaign"
+                    >
+                        {{ refreshingCampaign ? 'Refreshing…' : 'Refresh campaign' }}
                     </button>
+                    <RouterLink class="button button--muted" :to="{ name: 'campaigns' }">
+                        Switch campaign
+                    </RouterLink>
                     <button type="button" class="button button--muted" @click="logout" :disabled="logoutBusy">
                         {{ logoutBusy ? 'Signing out…' : 'Sign out' }}
                     </button>
@@ -56,7 +40,7 @@
             </section>
             <section class="app-shell__empty" v-else>
                 <p v-if="error" class="app-shell__error">{{ error }}</p>
-                <p v-else-if="selectionPlaceholder" class="app-shell__placeholder">{{ selectionPlaceholder }}</p>
+                <p v-else-if="emptyPlaceholder" class="app-shell__placeholder">{{ emptyPlaceholder }}</p>
             </section>
         </main>
         <p v-else class="app-shell__loading">Loading session…</p>
@@ -76,12 +60,18 @@ import WorldSkillsTab from '../components/WorldSkillsTab.vue';
 import DemonTab from '../components/DemonTab.vue';
 import ServerManagementTab from '../components/ServerManagementTab.vue';
 
-import { Games, Help, StoryLogs } from '../api';
+import { Help, StoryLogs } from '../api';
 import { buildNavigation } from '../constants/navigation';
-import { idsMatch, normalizeId } from '../utils/ids';
 import { realtimeSymbol, useRealtimeConnection } from '../composables/useRealtimeConnection';
 import { useBattleLogger } from '../composables/useBattleLogger';
 import { useAuthStore } from '../composables/useAuthStore';
+import { useGamesStore } from '../composables/useGamesStore';
+import {
+    describeGameDungeonMaster,
+    describePlayer,
+    formatGameUpdated,
+} from '../utils/gameDescriptions';
+import { idsMatch } from '../utils/ids';
 
 const SUPPORTED_TAB_KEYS = new Set([
     'overview',
@@ -99,28 +89,37 @@ const SERVER_ADMIN_USERNAMES = new Set(['captainpax', 'amzyoshio']);
 
 const router = useRouter();
 const auth = useAuthStore();
+const gamesStore = useGamesStore();
 
 const loading = ref(true);
-const refreshing = ref(false);
 const logoutBusy = ref(false);
-const games = ref([]);
-const activeGameId = ref(null);
-const activeGame = ref(null);
 const activeTab = ref('overview');
 const storyLogSnapshot = ref(null);
 const helpDocList = ref([]);
 const helpDocCache = ref({});
 const error = ref('');
-const selectionPlaceholder = ref('Select a campaign to begin.');
 
 const me = computed(() => auth.user.value);
+const activeGameId = computed(() => gamesStore.activeGameId.value);
+const activeGame = computed(() => gamesStore.activeGame.value);
+const refreshingCampaign = computed(
+    () => gamesStore.loadingActiveGame.value || gamesStore.loadingList.value
+);
+const storeError = computed(() => gamesStore.error.value);
 
 const realtime = useRealtimeConnection({ gameId: activeGameId });
 provide(realtimeSymbol, realtime);
 
 const battleLogger = useBattleLogger(activeGameId);
 
-const awaitingSelection = computed(() => games.value.length > 0 && !activeGameId.value);
+const emptyPlaceholder = computed(() => {
+    if (loading.value) return '';
+    if (refreshingCampaign.value) return 'Loading campaign…';
+    if (!gamesStore.activeGameId.value) return 'Select a campaign to begin.';
+    return '';
+});
+
+const formatUpdated = formatGameUpdated;
 
 const navigationItems = computed(() => {
     const user = me.value;
@@ -165,7 +164,7 @@ const activeComponentProps = computed(() => {
         case MapTab:
             return { game, me: me.value, logger: battleLogger, realtime };
         case ItemsTab:
-            return { game, me: me.value, realtime, onUpdate: () => fetchGame(game.id) };
+            return { game, me: me.value, realtime, onUpdate: refreshActiveGame };
         case GearTab:
             return { game, me: me.value };
         case WorldSkillsTab:
@@ -185,7 +184,7 @@ const activeComponentProps = computed(() => {
             return {
                 activeGameId: game.id,
                 onRefreshGames: refreshGames,
-                onRefreshActiveGame: () => fetchGame(game.id),
+                onRefreshActiveGame: refreshActiveGame,
             };
         default:
             return { game, me: me.value };
@@ -199,98 +198,6 @@ function isServerAdminClient(user) {
     return username ? SERVER_ADMIN_USERNAMES.has(username) : false;
 }
 
-function describePlayer(player) {
-    if (!player) return 'Unknown';
-    if (typeof player === 'string') return player;
-    if (player.character?.name) return player.character.name;
-    if (player.username) return player.username;
-    if (player.displayName) return player.displayName;
-    if (player.userId) return player.userId;
-    return 'Unknown';
-}
-
-function normalizeDungeonMasterSummary(dm, fallbackId) {
-    if (!dm || typeof dm !== 'object') return null;
-    const normalized = { ...dm };
-    const resolvedId =
-        normalizeId(normalized.userId) ??
-        normalizeId(normalized.id) ??
-        normalizeId(normalized.user?.id) ??
-        normalizeId(fallbackId);
-    normalized.userId = resolvedId ?? null;
-
-    const role =
-        typeof normalized.role === 'string' && normalized.role.trim()
-            ? normalized.role.trim()
-            : 'dm';
-    normalized.role = role.toLowerCase() === 'dm' ? 'dm' : role;
-
-    if (!normalized.username && typeof normalized.user?.username === 'string') {
-        const trimmed = normalized.user.username.trim();
-        if (trimmed) normalized.username = trimmed;
-    }
-
-    if (!normalized.displayName) {
-        if (typeof normalized.user?.displayName === 'string') {
-            const trimmed = normalized.user.displayName.trim();
-            if (trimmed) normalized.displayName = trimmed;
-        }
-        if (!normalized.displayName && normalized.username) {
-            normalized.displayName = normalized.username;
-        }
-    }
-
-    return normalized;
-}
-
-function resolveGameDungeonMaster(game) {
-    if (!game) return null;
-    const normalizedDmId = normalizeId(game.dmId) ?? game.dmId ?? null;
-
-    const dmSummary =
-        game.dm && typeof game.dm === 'object'
-            ? normalizeDungeonMasterSummary(game.dm, normalizedDmId)
-            : null;
-    if (dmSummary) return dmSummary;
-
-    const players = Array.isArray(game.players) ? game.players : [];
-    if (players.length) {
-        const byRole = players.find((player) => player?.role === 'dm');
-        if (byRole) return byRole;
-    }
-
-    if (normalizedDmId && players.length) {
-        const byId = players.find((player) => {
-            if (!player) return false;
-            const { userId, id, user } = player;
-            return (
-                idsMatch(userId, normalizedDmId) ||
-                idsMatch(id, normalizedDmId) ||
-                idsMatch(user?.id, normalizedDmId)
-            );
-        });
-        if (byId) return byId;
-    }
-
-    if (typeof game.dm === 'string' && game.dm) return game.dm;
-    if (game.dm && typeof game.dm === 'object') {
-        return dmSummary ?? normalizedDmId;
-    }
-    if (game.dm) return game.dm;
-    return normalizedDmId;
-}
-
-function describeGameDungeonMaster(game) {
-    return describePlayer(resolveGameDungeonMaster(game));
-}
-
-function formatUpdated(value) {
-    if (!value) return 'recently';
-    const timestamp = Date.parse(value);
-    if (!Number.isFinite(timestamp)) return 'recently';
-    return new Date(timestamp).toLocaleString();
-}
-
 function handleSelectTab(key) {
     if (!SUPPORTED_TAB_KEYS.has(key)) return;
     activeTab.value = key;
@@ -299,18 +206,6 @@ function handleSelectTab(key) {
     } else if (key === 'help') {
         fetchHelpDocs();
     }
-}
-
-function selectGame(id) {
-    const normalized = normalizeId(id);
-    if (!normalized) return;
-    if (activeGameId.value === normalized) {
-        if (!activeGame.value) {
-            fetchGame(normalized);
-        }
-        return;
-    }
-    activeGameId.value = normalized;
 }
 
 async function initializeDashboard() {
@@ -326,7 +221,17 @@ async function initializeDashboard() {
             return;
         }
 
-        await refreshGames();
+        await gamesStore.initialize();
+        error.value = storeError.value || '';
+        if (!gamesStore.activeGameId.value) {
+            await router.replace({ name: 'campaigns' });
+            return;
+        }
+        if (activeTab.value === 'storyLogs') {
+            await fetchStoryLog();
+        } else if (activeTab.value === 'help') {
+            await fetchHelpDocs();
+        }
     } catch (err) {
         console.error(err);
         error.value = err?.message || 'Failed to load session information.';
@@ -336,62 +241,25 @@ async function initializeDashboard() {
 }
 
 async function refreshGames() {
-    if (!me.value) return;
     try {
-        refreshing.value = true;
-        const list = await Games.list();
-        error.value = '';
-        games.value = Array.isArray(list)
-            ? list.map((game) => ({
-                  ...game,
-                  id: normalizeId(game.id) ?? game.id,
-                  dmId: normalizeId(game.dmId) ?? game.dmId,
-              }))
-            : [];
-        if (activeGameId.value) {
-            const match = games.value.find((game) => idsMatch(game.id, activeGameId.value));
-            if (!match) {
-                activeGameId.value = null;
-            }
-        }
+        await gamesStore.fetchGames();
+        error.value = storeError.value || '';
     } catch (err) {
         console.error(err);
         error.value = err?.message || 'Failed to refresh campaigns.';
-    } finally {
-        refreshing.value = false;
     }
 }
 
-async function fetchGame(id) {
-    if (!id) {
-        clearActiveGameState();
-        return;
-    }
+async function refreshActiveGame() {
+    if (!gamesStore.activeGameId.value) return;
     try {
-        const data = await Games.get(id);
-        error.value = '';
-        activeGame.value = data
-            ? {
-                  ...data,
-                  id: normalizeId(data.id) ?? data.id,
-                  dmId: normalizeId(data.dmId) ?? data.dmId,
-              }
-            : null;
-        selectionPlaceholder.value = activeGame.value ? '' : 'Select a campaign to begin.';
-        if (activeTab.value === 'storyLogs') {
-            await fetchStoryLog();
-        }
-        if (activeTab.value === 'help') {
-            await fetchHelpDocs();
-        }
+        await gamesStore.refreshActiveGame();
+        error.value = storeError.value || '';
     } catch (err) {
         console.error(err);
         error.value = err?.message || 'Failed to load campaign.';
-        activeGame.value = null;
-        storyLogSnapshot.value = null;
-        helpDocList.value = [];
-        helpDocCache.value = {};
-        selectionPlaceholder.value = 'Select a campaign to begin.';
+        clearActiveGameState();
+        gamesStore.setActiveGame(null);
     }
 }
 
@@ -458,6 +326,7 @@ async function logout() {
     if (!me.value) return;
     try {
         logoutBusy.value = true;
+        loading.value = true;
         await auth.logout();
         resetDashboard();
         await router.replace({ name: 'auth' });
@@ -466,38 +335,71 @@ async function logout() {
         error.value = err?.message || 'Failed to log out.';
     } finally {
         logoutBusy.value = false;
+        loading.value = false;
     }
 }
 
 function resetDashboard() {
-    games.value = [];
-    activeGameId.value = null;
-    activeGame.value = null;
+    gamesStore.reset();
     activeTab.value = 'overview';
     storyLogSnapshot.value = null;
     helpDocList.value = [];
     helpDocCache.value = {};
     error.value = '';
-    selectionPlaceholder.value = 'Select a campaign to begin.';
 }
 
-watch(activeGameId, (id) => {
-    if (!id) {
-        clearActiveGameState();
-        return;
-    }
-    selectionPlaceholder.value = '';
-    fetchGame(id);
-});
-
 function clearActiveGameState() {
-    activeGame.value = null;
     storyLogSnapshot.value = null;
     helpDocList.value = [];
     helpDocCache.value = {};
-    error.value = '';
-    selectionPlaceholder.value = 'Select a campaign to begin.';
 }
+
+watch(storeError, (message) => {
+    if (message) {
+        error.value = message;
+    }
+});
+
+watch(
+    activeGame,
+    async (game) => {
+        if (game?.id) {
+            error.value = storeError.value || '';
+            if (activeTab.value === 'storyLogs') {
+                await fetchStoryLog();
+            } else if (activeTab.value === 'help') {
+                await fetchHelpDocs();
+            }
+            return;
+        }
+
+        clearActiveGameState();
+
+        if (loading.value) return;
+        const current = router.currentRoute.value;
+        if (current?.name && current.name !== 'campaigns' && current.name !== 'auth') {
+            try {
+                await router.replace({ name: 'campaigns' });
+            } catch (err) {
+                console.error(err);
+            }
+        }
+    }
+);
+
+watch(
+    activeGameId,
+    async (id, previous) => {
+        if (id) return;
+        if (previous && !loading.value) {
+            try {
+                await gamesStore.fetchGames();
+            } catch (err) {
+                console.error(err);
+            }
+        }
+    }
+);
 
 onMounted(() => {
     initializeDashboard();
@@ -1001,74 +903,6 @@ const HelpPanel = {
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
-}
-
-.app-shell__games {
-    background: rgba(12, 17, 35, 0.75);
-    border-radius: 1.5rem;
-    padding: 1.25rem;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    box-shadow: inset 0 0 0 1px rgba(120, 175, 255, 0.15);
-}
-
-.app-shell__games--awaiting {
-    box-shadow: inset 0 0 0 2px rgba(130, 248, 255, 0.45);
-    background: rgba(12, 17, 35, 0.85);
-}
-
-.app-shell__games-hint {
-    margin: 0;
-    padding: 0.5rem 0.75rem;
-    border-radius: 0.85rem;
-    background: rgba(130, 248, 255, 0.1);
-    color: rgba(190, 240, 255, 0.9);
-    font-size: 0.85rem;
-}
-
-.app-shell__section-title {
-    margin: 0;
-    font-size: 1rem;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.85);
-}
-
-.game-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-}
-
-.game-list__item {
-    margin: 0;
-}
-
-.game-list__button {
-    width: 100%;
-    background: rgba(4, 9, 25, 0.6);
-    border: none;
-    border-radius: 1rem;
-    padding: 0.85rem 1rem;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.35rem;
-    color: inherit;
-    text-align: left;
-    font: inherit;
-    cursor: pointer;
-    transition: transform 0.15s ease, box-shadow 0.2s ease;
-    box-shadow: 0 12px 25px rgba(80, 180, 255, 0.1);
-}
-
-.game-list__item.is-active .game-list__button,
-.game-list__button:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 12px 25px rgba(80, 180, 255, 0.35);
 }
 
 .button:disabled {
