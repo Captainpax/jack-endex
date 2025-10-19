@@ -512,6 +512,24 @@ export const api = (path, opts) => apiClient.request(path, opts);
 
 // ---------------- Specific Domain Facades ----------------
 
+/**
+ * @typedef {Object} GameDungeonMasterSummary
+ * @property {string|null} [userId]
+ * @property {string|null} [username]
+ * @property {string|null} [displayName]
+ * @property {string} [role]
+ * @property {boolean} [online]
+ */
+
+/**
+ * @typedef {Object} GameListEntry
+ * @property {string} id
+ * @property {string} name
+ * @property {string|null} dmId
+ * @property {GameDungeonMasterSummary|null|undefined} [dm]
+ * @property {any[]} players
+ */
+
 export const Auth = {
     me: () => api('/api/auth/me', { cache: 3000 }),
     login: (username, password) => api('/api/auth/login', {
@@ -528,6 +546,10 @@ export const Auth = {
 };
 
 export const Games = {
+    /**
+     * @param {Record<string, any>} [query]
+     * @returns {Promise<GameListEntry[]>}
+     */
     list: (query) => api('/api/games', { query }),
     create: (name) => api('/api/games', { method: 'POST', body: { name } }),
     get: (id) => api(`/api/games/${encodeURIComponent(id)}`),

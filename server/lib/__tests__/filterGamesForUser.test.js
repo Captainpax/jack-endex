@@ -22,6 +22,12 @@ describe('filterGamesForUser', () => {
             id: 'game-1',
             name: 'DM Only',
             dmId: 'user-a',
+            dm: {
+                userId: 'user-a',
+                username: null,
+                displayName: null,
+                role: 'dm',
+            },
         });
     });
 
@@ -33,6 +39,7 @@ describe('filterGamesForUser', () => {
                 name: 'Player Game',
                 dmId: 'user-x',
                 players: [
+                    { userId: 'user-x', role: 'dm', username: 'GMX' },
                     { userId: 'user-c', role: 'player' },
                 ],
             },
@@ -41,6 +48,12 @@ describe('filterGamesForUser', () => {
         const result = filterGamesForUser(games, 'user-c', onlineLookup);
 
         expect(result).toHaveLength(1);
+        expect(result[0].dm).toEqual({
+            userId: 'user-x',
+            username: 'GMX',
+            displayName: 'GMX',
+            role: 'dm',
+        });
         expect(result[0].players).toEqual([
             { userId: 'user-c', role: 'player', online: true },
         ]);
