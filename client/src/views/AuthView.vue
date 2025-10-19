@@ -7,47 +7,53 @@
                 <p class="auth-card__subtitle">Sign in to continue to your campaigns</p>
             </header>
             <div class="auth-card__forms">
-                <form class="auth-form" @submit.prevent="handleLogin">
-                    <h2 class="auth-form__title">Sign in</h2>
-                    <label class="auth-form__field">
-                        <span>Username</span>
-                        <input type="text" v-model="loginUsername" autocomplete="username" required />
-                    </label>
-                    <label class="auth-form__field">
-                        <span>Password</span>
-                        <input type="password" v-model="loginPassword" autocomplete="current-password" required />
-                    </label>
-                    <p v-if="loginError" class="auth-form__error">{{ loginError }}</p>
-                    <button type="submit" class="button" :disabled="loginBusy">
-                        {{ loginBusy ? 'Signing in…' : 'Sign in' }}
-                    </button>
-                </form>
-                <div class="auth-divider">
-                    <span>or</span>
+                <div class="auth-card__panels">
+                    <form class="auth-form" @submit.prevent="handleLogin">
+                        <header class="auth-form__header">
+                            <h2 class="auth-form__title">Sign in</h2>
+                        </header>
+                        <label class="auth-form__field">
+                            <span>Username</span>
+                            <input type="text" v-model="loginUsername" autocomplete="username" required />
+                        </label>
+                        <label class="auth-form__field">
+                            <span>Password</span>
+                            <input type="password" v-model="loginPassword" autocomplete="current-password" required />
+                        </label>
+                        <p v-if="loginError" class="auth-form__error">{{ loginError }}</p>
+                        <button type="submit" class="button" :disabled="loginBusy">
+                            {{ loginBusy ? 'Signing in…' : 'Sign in' }}
+                        </button>
+                    </form>
+                    <div class="auth-divider" aria-hidden="true">
+                        <span>or</span>
+                    </div>
+                    <form class="auth-form" @submit.prevent="handleRegister">
+                        <header class="auth-form__header">
+                            <h2 class="auth-form__title">Create account</h2>
+                        </header>
+                        <label class="auth-form__field">
+                            <span>Username</span>
+                            <input type="text" v-model="registerUsername" autocomplete="new-username" required />
+                        </label>
+                        <label class="auth-form__field">
+                            <span>Email</span>
+                            <input type="email" v-model="registerEmail" autocomplete="email" required />
+                        </label>
+                        <label class="auth-form__field">
+                            <span>Password</span>
+                            <input type="password" v-model="registerPassword" autocomplete="new-password" required />
+                        </label>
+                        <label class="auth-form__field">
+                            <span>Confirm password</span>
+                            <input type="password" v-model="registerConfirm" autocomplete="new-password" required />
+                        </label>
+                        <p v-if="registerError" class="auth-form__error">{{ registerError }}</p>
+                        <button type="submit" class="button" :disabled="registerBusy">
+                            {{ registerBusy ? 'Creating account…' : 'Create account' }}
+                        </button>
+                    </form>
                 </div>
-                <form class="auth-form" @submit.prevent="handleRegister">
-                    <h2 class="auth-form__title">Create account</h2>
-                    <label class="auth-form__field">
-                        <span>Username</span>
-                        <input type="text" v-model="registerUsername" autocomplete="new-username" required />
-                    </label>
-                    <label class="auth-form__field">
-                        <span>Email</span>
-                        <input type="email" v-model="registerEmail" autocomplete="email" required />
-                    </label>
-                    <label class="auth-form__field">
-                        <span>Password</span>
-                        <input type="password" v-model="registerPassword" autocomplete="new-password" required />
-                    </label>
-                    <label class="auth-form__field">
-                        <span>Confirm password</span>
-                        <input type="password" v-model="registerConfirm" autocomplete="new-password" required />
-                    </label>
-                    <p v-if="registerError" class="auth-form__error">{{ registerError }}</p>
-                    <button type="submit" class="button" :disabled="registerBusy">
-                        {{ registerBusy ? 'Creating account…' : 'Create account' }}
-                    </button>
-                </form>
             </div>
         </section>
     </div>
@@ -145,69 +151,86 @@ async function handleRegister() {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 2rem;
+    padding: clamp(1.5rem, 4vw, 3.5rem);
     background: radial-gradient(circle at top left, rgba(15, 50, 110, 0.9), rgba(4, 9, 25, 0.98));
     color: #f5f9ff;
 }
 
 .auth-card {
-    width: min(900px, 100%);
+    --panel-gap: clamp(1.5rem, 4vw, 3rem);
+    --form-padding: clamp(1.5rem, 3vw, 2.5rem);
+    --form-radius: clamp(1rem, 2vw, 1.75rem);
+    --heading-gap: clamp(0.35rem, 0.8vw, 0.65rem);
+    --divider-spacing: clamp(1.5rem, 5vw, 3.25rem);
+    width: clamp(320px, 90vw, 820px);
     background: rgba(8, 12, 26, 0.85);
-    border-radius: 2rem;
+    border-radius: clamp(1.75rem, 3vw, 2.5rem);
     box-shadow: 0 25px 50px rgba(4, 20, 45, 0.55);
-    padding: 2.5rem;
+    padding: clamp(1.75rem, 4vw, 3rem);
     display: flex;
     flex-direction: column;
-    gap: 2rem;
+    gap: clamp(1.5rem, 3vw, 2.5rem);
 }
 
 .auth-card__header {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: clamp(0.5rem, 1vw, 0.75rem);
     text-align: center;
 }
 
 .auth-card__title {
     margin: 0;
-    font-size: 2.25rem;
+    font-size: clamp(2rem, 1.5vw + 1.5rem, 2.75rem);
     font-weight: 700;
 }
 
 .auth-card__subtitle {
     margin: 0;
-    font-size: 1rem;
+    font-size: clamp(0.95rem, 0.5vw + 0.85rem, 1.1rem);
     color: rgba(255, 255, 255, 0.75);
 }
 
 .auth-card__forms {
+    width: 100%;
+}
+
+.auth-card__panels {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 2rem;
-    align-items: start;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    column-gap: var(--panel-gap);
+    row-gap: var(--panel-gap);
+    align-items: stretch;
 }
 
 .auth-form {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: clamp(0.75rem, 1.5vw, 1.25rem);
     background: rgba(12, 17, 35, 0.8);
-    padding: 1.75rem;
-    border-radius: 1.25rem;
+    padding: var(--form-padding);
+    border-radius: var(--form-radius);
     box-shadow: inset 0 0 0 1px rgba(120, 175, 255, 0.15);
+}
+
+.auth-form__header {
+    display: flex;
+    flex-direction: column;
+    gap: var(--heading-gap);
+    margin-bottom: clamp(0.25rem, 0.5vw, 0.75rem);
 }
 
 .auth-form__title {
     margin: 0;
-    font-size: 1.5rem;
+    font-size: clamp(1.35rem, 0.5vw + 1.2rem, 1.65rem);
     font-weight: 600;
 }
 
 .auth-form__field {
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
-    font-size: 0.95rem;
+    gap: clamp(0.35rem, 0.6vw, 0.6rem);
+    font-size: clamp(0.95rem, 0.3vw + 0.85rem, 1.05rem);
 }
 
 .auth-form__field span {
@@ -215,8 +238,8 @@ async function handleRegister() {
 }
 
 .auth-form__field input {
-    padding: 0.6rem 0.75rem;
-    border-radius: 0.85rem;
+    padding: clamp(0.6rem, 1vw, 0.85rem) clamp(0.75rem, 1.5vw, 1.1rem);
+    border-radius: clamp(0.85rem, 1.5vw, 1.15rem);
     border: 1px solid rgba(120, 175, 255, 0.25);
     background: rgba(8, 12, 26, 0.8);
     color: inherit;
@@ -231,30 +254,47 @@ async function handleRegister() {
 
 .auth-form__error {
     color: #ff8a8a;
-    font-size: 0.9rem;
+    font-size: clamp(0.85rem, 0.3vw + 0.8rem, 0.95rem);
 }
 
 .auth-divider {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
+    width: clamp(2.25rem, 5vw, 3.25rem);
+    min-height: 100%;
     color: rgba(255, 255, 255, 0.6);
     text-transform: uppercase;
-    font-size: 0.85rem;
+    font-size: clamp(0.75rem, 0.3vw + 0.7rem, 0.85rem);
     font-weight: 600;
+    letter-spacing: 0.18em;
 }
 
-.auth-divider::before,
-.auth-divider::after {
+.auth-divider::before {
     content: '';
-    flex: 1;
-    height: 1px;
+    position: absolute;
+    top: var(--divider-spacing);
+    bottom: var(--divider-spacing);
+    left: 50%;
+    width: 1px;
     background: rgba(255, 255, 255, 0.2);
-    margin: 0 1rem;
+    transform: translateX(-50%);
+}
+
+.auth-divider span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem 0.35rem;
+    border-radius: 999px;
+    background: rgba(12, 17, 35, 0.95);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
 }
 
 .button {
     align-self: flex-start;
+    margin-top: clamp(0.25rem, 1vw, 0.75rem);
 }
 
 .button:disabled {
@@ -262,13 +302,62 @@ async function handleRegister() {
     cursor: not-allowed;
 }
 
-@media (max-width: 920px) {
-    .auth-card__forms {
-        grid-template-columns: 1fr;
+@media (max-width: 1024px) {
+    .auth-card {
+        --panel-gap: clamp(1.25rem, 4vw, 2.25rem);
+        --divider-spacing: clamp(1.25rem, 4vw, 2.5rem);
+    }
+
+    .auth-card__title {
+        font-size: clamp(1.85rem, 2vw + 1.1rem, 2.4rem);
+    }
+}
+
+@media (max-width: 900px) {
+    .auth-card__panels {
+        grid-template-columns: minmax(0, 1fr);
     }
 
     .auth-divider {
-        margin: -1rem 0;
+        width: 100%;
+        min-height: auto;
+        padding-block: clamp(1rem, 3vw, 1.5rem);
+        letter-spacing: 0.1em;
+    }
+
+    .auth-divider::before {
+        top: 50%;
+        bottom: auto;
+        left: clamp(1.5rem, 6vw, 3rem);
+        right: clamp(1.5rem, 6vw, 3rem);
+        width: auto;
+        height: 1px;
+        transform: translateY(-50%);
+    }
+
+    .auth-divider span {
+        padding: 0.25rem 0.65rem;
+    }
+}
+
+@media (max-width: 600px) {
+    .auth-view {
+        padding: clamp(1rem, 6vw, 2rem);
+    }
+
+    .auth-card {
+        padding: clamp(1.25rem, 6vw, 2rem);
+        gap: clamp(1.25rem, 5vw, 2rem);
+    }
+
+    .auth-form {
+        gap: clamp(0.65rem, 4vw, 1rem);
+    }
+
+    .button {
+        width: 100%;
+        align-self: stretch;
+        text-align: center;
     }
 }
 </style>
