@@ -6039,3 +6039,104 @@ pre  { padding: 12px; overflow: auto; }
 .matrix-rain.is-active .matrix-rain__glow {
     opacity: 1;
 }
+
+/* --- Collapsible sections ------------------------------------------------ */
+.collapsible-section {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow-sm);
+    display: grid;
+    gap: 0;
+    transition: border-color var(--trans-fast), box-shadow var(--trans-fast), background var(--trans-fast);
+}
+
+.collapsible-section + .collapsible-section {
+    margin-top: 12px;
+}
+
+.collapsible-section .collapsible-section {
+    margin-top: 12px;
+    background: var(--surface-2);
+    box-shadow: none;
+}
+
+.collapsible-section__header {
+    padding: 12px 16px;
+}
+
+.collapsible-section__toggle {
+    appearance: none;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+    padding: 0;
+    border-radius: var(--radius-sm);
+    transition: color var(--trans-fast);
+}
+
+.collapsible-section__toggle:hover {
+    color: var(--brand-600);
+}
+
+.collapsible-section__toggle:focus-visible {
+    outline: none;
+    box-shadow: var(--focus);
+    border-radius: var(--radius-sm);
+}
+
+.collapsible-section__icon {
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    transition: transform var(--trans-fast);
+}
+
+.collapsible-section__icon svg {
+    width: 100%;
+    height: 100%;
+}
+
+.collapsible-section--expanded .collapsible-section__icon {
+    transform: rotate(180deg);
+}
+
+.collapsible-section__header-content {
+    flex: 1;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.collapsible-section__body {
+    padding: 0 16px 0;
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows var(--trans) ease, opacity var(--trans-fast) ease, padding var(--trans-fast) ease, margin var(--trans-fast) ease;
+    opacity: 0;
+    pointer-events: none;
+    margin-top: 0;
+}
+
+.collapsible-section--expanded .collapsible-section__body {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    pointer-events: auto;
+    padding-bottom: 16px;
+    margin-top: 8px;
+}
+
+.collapsible-section__body-inner {
+    overflow: hidden;
+    display: grid;
+    gap: 12px;
+}
