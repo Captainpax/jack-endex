@@ -33,6 +33,7 @@ import {
 } from './lib/itemImport.js';
 import { filterGamesForUser } from './lib/filterGamesForUser.js';
 import { presentDungeonMaster } from './lib/presentDungeonMaster.js';
+import { createRootRouteHandler } from './lib/createRootRouteHandler.js';
 import { DEFAULT_WORLD_SKILLS } from '../shared/worldSkills.js';
 import { findCombatSkillById, findCombatSkillByName } from '../shared/combatSkills.js';
 import { MUSIC_TRACKS, getMusicTrack } from '../shared/music/index.js';
@@ -7665,13 +7666,32 @@ app.get('/api/help/docs', async (_req, res) => {
 app.use('/api/ai', localAiRoutes);
 app.use('/api/personas', personas);
 
+const handleRootRoute = createRootRouteHandler({ spaIndexPath: SPA_INDEX });
+app.get('/', handleRootRoute);
+
 // Static files (if built)
 app.use('/txtdocs', express.static(TXT_DOCS_PATH));
 app.use(express.static(PUBLIC_PATH));
 app.use(express.static(DIST_PATH));
 
 if (SPA_INDEX) {
-    app.get(['/join/:code', '/game/:id', '/game/:id/*'], (_req, res) => {
+    const SPA_FALLBACK_ROUTES = [
+        '/login',
+        '/login/*',
+        '/signup',
+        '/signup/*',
+        '/forgot-password',
+        '/forgot-password/*',
+        '/reset-password',
+        '/reset-password/*',
+        '/verify-email',
+        '/verify-email/*',
+        '/join/:code',
+        '/game/:id',
+        '/game/:id/*',
+    ];
+
+    app.get(SPA_FALLBACK_ROUTES, (_req, res) => {
         res.sendFile(SPA_INDEX);
     });
 }
