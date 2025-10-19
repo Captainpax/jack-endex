@@ -830,6 +830,12 @@ export const Help = {
         api(`/txtdocs/${encodeURIComponent(filename)}`, { expect: 'text' }),
 };
 
+export const Discord = {
+    guilds: () => api('/api/discord/guilds', { cache: 5_000 }),
+    guildChannels: (guildId) =>
+        api(`/api/discord/guilds/${encodeURIComponent(guildId)}/channels`),
+};
+
 export const Personas = {
     list: (params) => api('/api/personas', { query: params, cache: 5000 }),
     search: (q) => api('/api/personas/search', { query: { q }, cache: 5000 }),
