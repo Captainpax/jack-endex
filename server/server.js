@@ -24,6 +24,7 @@ import Demon from './models/Demon.js';
 import Item from './models/Item.js';
 import ServerSetting from './models/ServerSetting.js';
 import { loadDemonEntries } from './lib/demonImport.js';
+import { createSecretBox, SECRET_MASK } from './lib/secretStorage.js';
 import {
     loadItemEntries,
     parseHealingEffect,
@@ -96,6 +97,15 @@ const DEFAULT_MASTER_BOT_SETTINGS = Object.freeze({
         clientSecret: '',
         redirectUrl: '',
     },
+    oauthClientId: '',
+    oauthClientSecret: '',
+    oauthRedirectUri: '',
+    botToken: '',
+    botApplicationId: '',
+    defaultInviteUrl: '',
+    defaultPresence: '',
+    displayName: '',
+    avatarAsset: '',
 });
 const readiness = {
     db: false,
@@ -181,6 +191,8 @@ const DB_CONNECT_RETRY_DELAY_MS = Math.max(500, envNumber('MONGODB_CONNECT_RETRY
 
 const SESSION_SECRET = envString('SESSION_SECRET', 'dev-secret');
 const RAW_CORS_ORIGINS = envString('CORS_ORIGINS', 'https://jack-endex.darkmatterservers.com');
+const MASTER_BOT_SECRET_KEY = envString('MASTER_BOT_SECRET_KEY', '');
+const masterBotSecretBox = createSecretBox(MASTER_BOT_SECRET_KEY);
 const ALLOWED_ORIGINS = RAW_CORS_ORIGINS
     .split(',')
     .map((origin) => origin.trim())
@@ -4626,60 +4638,302 @@ function normalizeEventToggles(raw, template) {
     return base;
 }
 
-function normalizeOAuthSettings(raw) {
-    const template = DEFAULT_MASTER_BOT_SETTINGS.oauth;
-    const source = raw && typeof raw === 'object' ? raw : {};
-    const clientId = typeof source.clientId === 'string' ? source.clientId.trim() : template.clientId;
-    const clientSecret = typeof source.clientSecret === 'string'
-        ? source.clientSecret.trim()
-        : template.clientSecret;
-    const redirectUrlRaw = typeof source.redirectUrl === 'string'
-        ? source.redirectUrl.trim()
-        : template.redirectUrl;
+function isPlainObject(value) {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
 
-    let redirectUrl = '';
-    if (redirectUrlRaw) {
-        try {
-            const url = new URL(redirectUrlRaw);
-            if (url.protocol === 'http:' || url.protocol === 'https:') {
-                redirectUrl = url.toString();
-            }
-        } catch {
-            redirectUrl = '';
+function pickStringValue({ value, fallbackChain = [], maxLength = 256, allowEmpty = true }) {
+    const attempt = (candidate) => {
+        if (typeof candidate !== 'string') return null;
+        const trimmed = candidate.trim();
+        if (!trimmed) {
+            return allowEmpty ? '' : null;
+        }
+        return trimmed.slice(0, maxLength);
+    };
+
+    if (value !== undefined) {
+        if (value === null) return '';
+        const fromValue = attempt(value);
+        if (fromValue !== null) {
+            return fromValue;
         }
     }
 
+    for (const fallback of fallbackChain) {
+        if (fallback === null) return '';
+        const fromFallback = attempt(fallback);
+        if (fromFallback !== null) {
+            return fromFallback;
+        }
+    }
+
+    return '';
+}
+
+function normalizeHttpUrl(value, fallback = '') {
+    const attempt = (candidate) => {
+        if (typeof candidate !== 'string') return null;
+        const trimmed = candidate.trim();
+        if (!trimmed) {
+            return '';
+        }
+        try {
+            const url = new URL(trimmed);
+            if (url.protocol === 'http:' || url.protocol === 'https:') {
+                return url.toString();
+            }
+        } catch {
+            return null;
+        }
+        return null;
+    };
+
+    if (value !== undefined) {
+        if (value === null) return '';
+        const fromValue = attempt(value);
+        if (fromValue !== null) {
+            return fromValue;
+        }
+    }
+
+    if (fallback !== undefined) {
+        if (fallback === null) return '';
+        const fromFallback = attempt(fallback);
+        if (fromFallback !== null) {
+            return fromFallback;
+        }
+    }
+
+    return '';
+}
+
+function resolveSecretField(value, { fallback = '', maxLength = 512 } = {}) {
+    if (value === undefined) {
+        return typeof fallback === 'string' ? fallback.slice(0, maxLength) : '';
+    }
+    if (value === null) {
+        return '';
+    }
+    if (value === SECRET_MASK) {
+        return typeof fallback === 'string' ? fallback.slice(0, maxLength) : '';
+    }
+    if (masterBotSecretBox.isEncrypted(value)) {
+        const decrypted = masterBotSecretBox.decrypt(value);
+        return typeof decrypted === 'string' ? decrypted.slice(0, maxLength) : '';
+    }
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) return '';
+        return trimmed.slice(0, maxLength);
+    }
+    if (typeof fallback === 'string') {
+        return fallback.slice(0, maxLength);
+    }
+    return '';
+}
+
+function normalizeOAuthSettings(raw, { fallback = DEFAULT_MASTER_BOT_SETTINGS.oauth } = {}) {
+    const template = isPlainObject(fallback) ? fallback : DEFAULT_MASTER_BOT_SETTINGS.oauth;
+    const source = isPlainObject(raw) ? raw : {};
+    const clientId = pickStringValue({
+        value: source.clientId,
+        fallbackChain: [template.clientId, DEFAULT_MASTER_BOT_SETTINGS.oauth.clientId],
+        maxLength: 128,
+        allowEmpty: true,
+    });
+    const clientSecret = resolveSecretField(source.clientSecret, {
+        fallback: template.clientSecret || DEFAULT_MASTER_BOT_SETTINGS.oauth.clientSecret,
+        maxLength: 256,
+    });
+    const redirectUrl = normalizeHttpUrl(source.redirectUrl, template.redirectUrl || DEFAULT_MASTER_BOT_SETTINGS.oauth.redirectUrl);
+    return { clientId, clientSecret, redirectUrl };
+}
+
+function normalizeMasterBotSettings(raw, { existing } = {}) {
+    const source = isPlainObject(raw) ? raw : {};
+    const fallback = isPlainObject(existing) ? existing : DEFAULT_MASTER_BOT_SETTINGS;
+    const fallbackOauth = normalizeOAuthSettings(fallback.oauth || {});
+    const legacyOauth = normalizeOAuthSettings(source.oauth, { fallback: fallbackOauth });
+
+    const prefix = pickStringValue({
+        value: source.prefix,
+        fallbackChain: [fallback.prefix, DEFAULT_MASTER_BOT_SETTINGS.prefix],
+        allowEmpty: false,
+        maxLength: 16,
+    }) || DEFAULT_MASTER_BOT_SETTINGS.prefix;
+
+    const adminRolesSource = Array.isArray(source.adminRoles) ? source.adminRoles : fallback.adminRoles;
+    const adminRoles = normalizeStringList(adminRolesSource ?? DEFAULT_MASTER_BOT_SETTINGS.adminRoles);
+
+    const channelBindingsSource = isPlainObject(source.channelBindings)
+        ? source.channelBindings
+        : fallback.channelBindings;
+    const channelBindings = normalizeStringMap(
+        channelBindingsSource ?? fallback.channelBindings,
+        DEFAULT_MASTER_BOT_SETTINGS.channelBindings,
+    );
+
+    const webhooksSource = isPlainObject(source.webhooks) ? source.webhooks : fallback.webhooks;
+    const webhooks = normalizeStringMap(webhooksSource ?? fallback.webhooks, DEFAULT_MASTER_BOT_SETTINGS.webhooks);
+
+    const eventsSource = isPlainObject(source.events) ? source.events : fallback.events;
+    const events = normalizeEventToggles(eventsSource ?? fallback.events, DEFAULT_MASTER_BOT_SETTINGS.events);
+
+    const oauthClientId = pickStringValue({
+        value: source.oauthClientId,
+        fallbackChain: [legacyOauth.clientId, fallback.oauthClientId, fallbackOauth.clientId],
+        maxLength: 128,
+        allowEmpty: true,
+    });
+
+    const fallbackOauthSecret = resolveSecretField(
+        fallback.oauthClientSecret !== undefined ? fallback.oauthClientSecret : fallbackOauth.clientSecret,
+        { fallback: DEFAULT_MASTER_BOT_SETTINGS.oauthClientSecret, maxLength: 256 },
+    );
+
+    const oauthClientSecret = resolveSecretField(
+        source.oauthClientSecret !== undefined ? source.oauthClientSecret : legacyOauth.clientSecret,
+        { fallback: fallbackOauthSecret, maxLength: 256 },
+    );
+
+    const redirectFallback = normalizeHttpUrl(
+        fallback.oauthRedirectUri !== undefined ? fallback.oauthRedirectUri : fallbackOauth.redirectUrl,
+        DEFAULT_MASTER_BOT_SETTINGS.oauthRedirectUri || DEFAULT_MASTER_BOT_SETTINGS.oauth.redirectUrl,
+    );
+
+    const oauthRedirectUri = normalizeHttpUrl(
+        source.oauthRedirectUri,
+        legacyOauth.redirectUrl || redirectFallback,
+    );
+
+    const botToken = resolveSecretField(source.botToken, {
+        fallback: fallback.botToken || DEFAULT_MASTER_BOT_SETTINGS.botToken,
+        maxLength: 256,
+    });
+
+    const botApplicationId = pickStringValue({
+        value: source.botApplicationId,
+        fallbackChain: [fallback.botApplicationId, DEFAULT_MASTER_BOT_SETTINGS.botApplicationId],
+        maxLength: 128,
+        allowEmpty: true,
+    });
+
+    const defaultInviteUrl = normalizeHttpUrl(
+        source.defaultInviteUrl,
+        fallback.defaultInviteUrl || DEFAULT_MASTER_BOT_SETTINGS.defaultInviteUrl,
+    );
+
+    const defaultPresence = pickStringValue({
+        value: source.defaultPresence,
+        fallbackChain: [fallback.defaultPresence, DEFAULT_MASTER_BOT_SETTINGS.defaultPresence],
+        maxLength: 256,
+        allowEmpty: true,
+    });
+
+    const displayName = pickStringValue({
+        value: source.displayName,
+        fallbackChain: [fallback.displayName, DEFAULT_MASTER_BOT_SETTINGS.displayName],
+        maxLength: 100,
+        allowEmpty: true,
+    });
+
+    const avatarAsset = pickStringValue({
+        value: source.avatarAsset,
+        fallbackChain: [fallback.avatarAsset, DEFAULT_MASTER_BOT_SETTINGS.avatarAsset],
+        maxLength: 256,
+        allowEmpty: true,
+    });
+
     return {
-        clientId: clientId.slice(0, 128),
-        clientSecret: clientSecret.slice(0, 256),
-        redirectUrl,
+        prefix,
+        adminRoles,
+        channelBindings,
+        webhooks,
+        events,
+        oauth: {
+            clientId: oauthClientId,
+            clientSecret: oauthClientSecret,
+            redirectUrl: oauthRedirectUri,
+        },
+        oauthClientId,
+        oauthClientSecret,
+        oauthRedirectUri,
+        botToken,
+        botApplicationId,
+        defaultInviteUrl,
+        defaultPresence,
+        displayName,
+        avatarAsset,
     };
 }
 
-function normalizeMasterBotSettings(raw) {
-    const source = raw && typeof raw === 'object' ? raw : {};
-    const prefix = typeof source.prefix === 'string' && source.prefix.trim()
-        ? source.prefix.trim()
-        : DEFAULT_MASTER_BOT_SETTINGS.prefix;
-    const adminRoles = normalizeStringList(source.adminRoles ?? DEFAULT_MASTER_BOT_SETTINGS.adminRoles);
-    const channelBindings = normalizeStringMap(source.channelBindings, DEFAULT_MASTER_BOT_SETTINGS.channelBindings);
-    const webhooks = normalizeStringMap(source.webhooks, DEFAULT_MASTER_BOT_SETTINGS.webhooks);
-    const events = normalizeEventToggles(source.events, DEFAULT_MASTER_BOT_SETTINGS.events);
-    const oauth = normalizeOAuthSettings(source.oauth);
-    return { prefix, adminRoles, channelBindings, webhooks, events, oauth };
+function prepareMasterBotSettingsForStorage(settings) {
+    const oauthClientSecretStored = masterBotSecretBox.encrypt(settings.oauthClientSecret);
+    const botTokenStored = masterBotSecretBox.encrypt(settings.botToken);
+    return {
+        prefix: settings.prefix,
+        adminRoles: [...settings.adminRoles],
+        channelBindings: { ...settings.channelBindings },
+        webhooks: { ...settings.webhooks },
+        events: { ...settings.events },
+        oauth: {
+            clientId: settings.oauthClientId,
+            clientSecret: oauthClientSecretStored,
+            redirectUrl: settings.oauthRedirectUri,
+        },
+        oauthClientId: settings.oauthClientId,
+        oauthClientSecret: oauthClientSecretStored,
+        oauthRedirectUri: settings.oauthRedirectUri,
+        botToken: botTokenStored,
+        botApplicationId: settings.botApplicationId,
+        defaultInviteUrl: settings.defaultInviteUrl,
+        defaultPresence: settings.defaultPresence,
+        displayName: settings.displayName,
+        avatarAsset: settings.avatarAsset,
+    };
+}
+
+function maskMasterBotSettings(settings) {
+    const maskedSecret = settings.oauthClientSecret ? SECRET_MASK : '';
+    const maskedBotToken = settings.botToken ? SECRET_MASK : '';
+    return {
+        prefix: settings.prefix,
+        adminRoles: [...settings.adminRoles],
+        channelBindings: { ...settings.channelBindings },
+        webhooks: { ...settings.webhooks },
+        events: { ...settings.events },
+        oauth: {
+            clientId: settings.oauthClientId,
+            clientSecret: maskedSecret,
+            redirectUrl: settings.oauthRedirectUri,
+        },
+        oauthClientId: settings.oauthClientId,
+        oauthClientSecret: maskedSecret,
+        oauthRedirectUri: settings.oauthRedirectUri,
+        botToken: maskedBotToken,
+        botApplicationId: settings.botApplicationId,
+        defaultInviteUrl: settings.defaultInviteUrl,
+        defaultPresence: settings.defaultPresence,
+        displayName: settings.displayName,
+        avatarAsset: settings.avatarAsset,
+    };
 }
 
 async function getMasterBotSettings() {
     const doc = await ServerSetting.findOne({ key: MASTER_DISCORD_SETTINGS_KEY }).lean();
-    if (!doc) return { ...DEFAULT_MASTER_BOT_SETTINGS };
-    return normalizeMasterBotSettings(doc.value);
+    if (!doc) return normalizeMasterBotSettings({});
+    return normalizeMasterBotSettings(doc.value || {});
 }
 
 async function saveMasterBotSettings(settings) {
-    const normalized = normalizeMasterBotSettings(settings);
+    const currentDoc = await ServerSetting.findOne({ key: MASTER_DISCORD_SETTINGS_KEY }).lean();
+    const existing = currentDoc ? normalizeMasterBotSettings(currentDoc.value || {}) : normalizeMasterBotSettings({});
+    const normalized = normalizeMasterBotSettings(settings, { existing });
+    const stored = prepareMasterBotSettingsForStorage(normalized);
     await ServerSetting.findOneAndUpdate(
         { key: MASTER_DISCORD_SETTINGS_KEY },
-        { value: normalized },
+        { value: stored },
         { upsert: true, setDefaultsOnInsert: true },
     );
     return normalized;
@@ -4831,9 +5085,18 @@ function buildDiscordOAuthRedirectLocation({ error } = {}) {
 app.get('/api/auth/discord/start', async (req, res) => {
     try {
         const settings = await getMasterBotSettings();
-        const oauth = settings?.oauth || {};
-        const clientId = typeof oauth.clientId === 'string' ? oauth.clientId : '';
-        const redirectUrl = typeof oauth.redirectUrl === 'string' ? oauth.redirectUrl : '';
+        const clientId =
+            typeof settings.oauthClientId === 'string' && settings.oauthClientId
+                ? settings.oauthClientId
+                : typeof settings.oauth?.clientId === 'string'
+                    ? settings.oauth.clientId
+                    : '';
+        const redirectUrl =
+            typeof settings.oauthRedirectUri === 'string' && settings.oauthRedirectUri
+                ? settings.oauthRedirectUri
+                : typeof settings.oauth?.redirectUrl === 'string'
+                    ? settings.oauth.redirectUrl
+                    : '';
 
         if (!clientId || !redirectUrl) {
             return res.status(400).json({ error: 'discord_oauth_not_configured' });
@@ -4899,10 +5162,24 @@ app.get('/api/auth/discord/callback', async (req, res) => {
     }
 
     const settings = await getMasterBotSettings();
-    const oauth = settings?.oauth || {};
-    const clientId = typeof oauth.clientId === 'string' ? oauth.clientId : '';
-    const clientSecret = typeof oauth.clientSecret === 'string' ? oauth.clientSecret : '';
-    const redirectUrl = typeof oauth.redirectUrl === 'string' ? oauth.redirectUrl : '';
+    const clientId =
+        typeof settings.oauthClientId === 'string' && settings.oauthClientId
+            ? settings.oauthClientId
+            : typeof settings.oauth?.clientId === 'string'
+                ? settings.oauth.clientId
+                : '';
+    const clientSecret =
+        typeof settings.oauthClientSecret === 'string' && settings.oauthClientSecret
+            ? settings.oauthClientSecret
+            : typeof settings.oauth?.clientSecret === 'string'
+                ? settings.oauth.clientSecret
+                : '';
+    const redirectUrl =
+        typeof settings.oauthRedirectUri === 'string' && settings.oauthRedirectUri
+            ? settings.oauthRedirectUri
+            : typeof settings.oauth?.redirectUrl === 'string'
+                ? settings.oauth.redirectUrl
+                : '';
 
     if (!clientId || !clientSecret || !redirectUrl) {
         const location = buildDiscordOAuthRedirectLocation({ error: 'discord_oauth_not_configured' });
@@ -5440,12 +5717,12 @@ app.post('/api/admin/items/sync', requireServerAdmin, async (_req, res) => {
 
 app.get('/api/admin/master-bot', requireServerAdmin, async (_req, res) => {
     const settings = await getMasterBotSettings();
-    res.json(settings);
+    res.json(maskMasterBotSettings(settings));
 });
 
 app.put('/api/admin/master-bot', requireServerAdmin, async (req, res) => {
     const saved = await saveMasterBotSettings(req.body || {});
-    res.json(saved);
+    res.json(maskMasterBotSettings(saved));
 });
 
 // --- Games ---

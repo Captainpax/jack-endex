@@ -164,6 +164,15 @@ to `https://jack-api.darkmatterservers.com` stay encrypted end-to-end.
 
 ## Discord integration
 
+### Master bot configuration & secret storage
+
+Administrators can configure a "master" Discord bot under **Admin → Master bot**. The settings document now tracks additional
+metadata for OAuth (`oauthClientId`, `oauthClientSecret`, `oauthRedirectUri`), bot authentication (`botToken`,
+`botApplicationId`, `defaultInviteUrl`), and presentation defaults (`defaultPresence`, `displayName`, `avatarAsset`). Sensitive
+fields are protected at rest with AES-256-GCM when `MASTER_BOT_SECRET_KEY` is defined in `.env`. The helper that performs this
+encryption/decryption lives in `server/lib/secretStorage.js` and can be reused for other secrets. Without the key the values are
+stored in plain text, so make sure to provide a strong, 32+ character passphrase in production.
+
 ### Story synchronization
 
 Each campaign can read and post to a dedicated Discord channel. In **Settings → Discord story integration** the DM can set:
