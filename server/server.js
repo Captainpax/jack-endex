@@ -31,6 +31,7 @@ import {
     updateItemEntry,
     writeItemEntries,
 } from './lib/itemImport.js';
+import { filterGamesForUser } from './lib/filterGamesForUser.js';
 import { DEFAULT_WORLD_SKILLS } from '../shared/worldSkills.js';
 import { findCombatSkillById, findCombatSkillByName } from '../shared/combatSkills.js';
 import { MUSIC_TRACKS, getMusicTrack } from '../shared/music/index.js';
@@ -5081,20 +5082,7 @@ app.put('/api/admin/master-bot', requireServerAdmin, async (req, res) => {
 // --- Games ---
 app.get('/api/games', requireAuth, async (req, res) => {
     const db = await readDB();
-    const games = (db.games || [])
-        .filter(g => g && Array.isArray(g.players) && g.players.some(p => p.userId === req.session.userId))
-        .map((g) => ({
-            id: g.id,
-            name: g.name,
-            dmId: g.dmId,
-            players: Array.isArray(g.players)
-                ? g.players.map((p) => {
-                    if (!p || typeof p !== 'object') return p;
-                    const online = isUserOnlineInGame(g.id, p.userId);
-                    return { ...p, online };
-                })
-                : [],
-        }));
+    const games = filterGamesForUser(db.games || [], req.session.userId, isUserOnlineInGame);
     res.json(games);
 });
 
