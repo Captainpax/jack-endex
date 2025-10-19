@@ -530,18 +530,23 @@ export const api = (path, opts) => apiClient.request(path, opts);
  * @property {any[]} players
  */
 
+const DISCORD_AUTH_START_PATH = '/api/auth/discord/start';
+
 export const Auth = {
     me: () => api('/api/auth/me', { cache: 3000 }),
-    login: (username, password) => api('/api/auth/login', {
-        method: 'POST',
-        body: { username, password },
-        noRetry: true,
-    }),
-    register: (username, password, email, confirmPassword) => api('/api/auth/register', {
-        method: 'POST',
-        body: { username, password, email, confirmPassword },
-        noRetry: true,
-    }),
+    /**
+     * Build the Discord OAuth start URL. Optionally include a redirect path that
+     * the server will use after authentication completes.
+     * @param {{ redirect?: string }} [options]
+     */
+    discordStartUrl: (options = {}) => {
+        const redirect = typeof options.redirect === 'string' ? options.redirect.trim() : '';
+        if (!redirect) {
+            return DISCORD_AUTH_START_PATH;
+        }
+        const query = buildQuery({ redirect });
+        return appendQueryString(DISCORD_AUTH_START_PATH, query);
+    },
     logout: () => api('/api/auth/logout', { method: 'POST', noRetry: true }),
 };
 
