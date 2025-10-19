@@ -207,32 +207,197 @@
                     </div>
                 </header>
                 <p v-if="masterBotError" class="panel__error">{{ masterBotError }}</p>
-                <dl v-else-if="masterBot" class="masterbot">
-                    <div class="masterbot__row">
-                        <dt>Status</dt>
-                        <dd>{{ masterBot.enabled ? 'Enabled' : 'Disabled' }}</dd>
+                <div v-else class="masterbot-layout">
+                    <form class="masterbot-form" @submit.prevent="handleSaveMasterBot">
+                        <div class="masterbot-form__grid">
+                            <div class="form-field" :class="{ 'form-field--error': masterBotFormErrors.prefix }">
+                                <label class="form-field__label" for="masterbot-prefix">Command prefix</label>
+                                <input
+                                    id="masterbot-prefix"
+                                    v-model="masterBotForm.prefix"
+                                    type="text"
+                                    maxlength="16"
+                                    @input="clearMasterBotFieldError('prefix')"
+                                />
+                                <p v-if="masterBotFormErrors.prefix" class="form-field__error">
+                                    {{ masterBotFormErrors.prefix }}
+                                </p>
+                            </div>
+                            <div class="form-field">
+                                <label class="form-field__label" for="masterbot-display">Display name</label>
+                                <input
+                                    id="masterbot-display"
+                                    v-model="masterBotForm.displayName"
+                                    type="text"
+                                    maxlength="100"
+                                    placeholder="Jack Endex"
+                                    @input="clearMasterBotFieldError('displayName')"
+                                />
+                            </div>
+                            <div class="form-field form-field--full">
+                                <label class="form-field__label" for="masterbot-status">Status text</label>
+                                <textarea
+                                    id="masterbot-status"
+                                    v-model="masterBotForm.defaultPresence"
+                                    rows="2"
+                                    maxlength="256"
+                                    placeholder="Running the Jack Endex bot"
+                                    @input="clearMasterBotFieldError('defaultPresence')"
+                                ></textarea>
+                            </div>
+                            <div class="form-field" :class="{ 'form-field--error': masterBotFormErrors.defaultInviteUrl }">
+                                <label class="form-field__label" for="masterbot-invite">Default invite link</label>
+                                <input
+                                    id="masterbot-invite"
+                                    v-model="masterBotForm.defaultInviteUrl"
+                                    type="url"
+                                    placeholder="https://discord.com/api/oauth2/authorize?..."
+                                    @input="clearMasterBotFieldError('defaultInviteUrl')"
+                                />
+                                <p v-if="masterBotFormErrors.defaultInviteUrl" class="form-field__error">
+                                    {{ masterBotFormErrors.defaultInviteUrl }}
+                                </p>
+                            </div>
+                            <div class="form-field">
+                                <label class="form-field__label" for="masterbot-client-id">OAuth client ID</label>
+                                <input
+                                    id="masterbot-client-id"
+                                    v-model="masterBotForm.oauthClientId"
+                                    type="text"
+                                    maxlength="128"
+                                    placeholder="123456789012345678"
+                                    @input="clearMasterBotFieldError('oauthClientId')"
+                                />
+                            </div>
+                            <div class="form-field">
+                                <label class="form-field__label" for="masterbot-app-id">Application ID</label>
+                                <input
+                                    id="masterbot-app-id"
+                                    v-model="masterBotForm.botApplicationId"
+                                    type="text"
+                                    maxlength="128"
+                                    placeholder="123456789012345678"
+                                    @input="clearMasterBotFieldError('botApplicationId')"
+                                />
+                            </div>
+                            <div class="form-field form-field--full" :class="{ 'form-field--error': masterBotFormErrors.oauthRedirectUri }">
+                                <label class="form-field__label" for="masterbot-redirect">OAuth redirect URL</label>
+                                <input
+                                    id="masterbot-redirect"
+                                    v-model="masterBotForm.oauthRedirectUri"
+                                    type="url"
+                                    placeholder="https://jack-endex.example.com/api/discord/callback"
+                                    @input="clearMasterBotFieldError('oauthRedirectUri')"
+                                />
+                                <p v-if="masterBotFormErrors.oauthRedirectUri" class="form-field__error">
+                                    {{ masterBotFormErrors.oauthRedirectUri }}
+                                </p>
+                            </div>
+                            <div class="form-field form-field--full" :class="{ 'form-field--error': masterBotFormErrors.avatarAsset }">
+                                <label class="form-field__label" for="masterbot-avatar-url">Bot icon</label>
+                                <div class="masterbot-avatar">
+                                    <input
+                                        id="masterbot-avatar-url"
+                                        v-model="masterBotForm.avatarAsset"
+                                        type="url"
+                                        placeholder="https://cdn.discordapp.com/..."
+                                        @input="handleAvatarUrlInput"
+                                    />
+                                    <div v-if="masterBotFormAvatarPreview" class="masterbot-avatar__preview">
+                                        <img :src="masterBotFormAvatarPreview" alt="Bot icon preview" />
+                                    </div>
+                                </div>
+                                <div class="masterbot-avatar__actions">
+                                    <label class="button button--small masterbot-avatar__upload">
+                                        <input type="file" accept="image/*" @change="handleAvatarFileChange" />
+                                        Upload image
+                                    </label>
+                                    <button
+                                        type="button"
+                                        class="button button--small"
+                                        :disabled="!masterBotForm.avatarAsset"
+                                        @click="clearAvatarAsset"
+                                    >
+                                        Remove
+                                    </button>
+                                    <span v-if="masterBotAvatarFileName" class="masterbot-avatar__filename">
+                                        {{ masterBotAvatarFileName }}
+                                    </span>
+                                </div>
+                                <p v-if="masterBotFormErrors.avatarAsset" class="form-field__error">
+                                    {{ masterBotFormErrors.avatarAsset }}
+                                </p>
+                            </div>
+                        </div>
+                        <div class="masterbot-form__messages">
+                            <p v-if="masterBotSubmitError" class="panel__error">{{ masterBotSubmitError }}</p>
+                            <p v-if="masterBotSaveNotice" class="panel__success">{{ masterBotSaveNotice }}</p>
+                        </div>
+                        <div class="masterbot-form__actions">
+                            <button type="submit" class="button" :disabled="masterBotSaving">
+                                {{ masterBotSaving ? 'Saving…' : 'Save settings' }}
+                            </button>
+                        </div>
+                    </form>
+                    <div class="masterbot-preview">
+                        <template v-if="masterBotLoading">
+                            <p class="panel__placeholder">Loading settings…</p>
+                        </template>
+                        <template v-else-if="masterBotHasPreview">
+                            <div class="masterbot-preview__profile">
+                                <div class="masterbot-preview__avatar">
+                                    <template v-if="masterBotAvatarPreview">
+                                        <img :src="masterBotAvatarPreview" alt="Bot avatar" />
+                                    </template>
+                                    <template v-else>
+                                        🤖
+                                    </template>
+                                </div>
+                                <div>
+                                    <p class="masterbot-preview__name">
+                                        {{ masterBotPreview.displayName?.trim() || 'Unnamed bot' }}
+                                    </p>
+                                    <p class="masterbot-preview__status">
+                                        {{ masterBotPreview.defaultPresence?.trim() || 'No status configured yet.' }}
+                                    </p>
+                                </div>
+                            </div>
+                            <div class="masterbot-preview__meta" v-if="masterBotPreview.defaultInviteUrl?.trim()">
+                                <p class="masterbot-preview__invite">{{ masterBotPreview.defaultInviteUrl }}</p>
+                            </div>
+                            <div class="masterbot-preview__actions">
+                                <a
+                                    v-if="masterBotPreview.defaultInviteUrl?.trim()"
+                                    :href="masterBotPreview.defaultInviteUrl"
+                                    class="button button--small masterbot-preview__link"
+                                    target="_blank"
+                                    rel="noopener"
+                                >
+                                    Open invite
+                                </a>
+                                <button
+                                    type="button"
+                                    class="button button--small"
+                                    :disabled="!masterBotPreview.defaultInviteUrl?.trim()"
+                                    @click="handleCopyInvite"
+                                >
+                                    {{ masterBotInviteCopyState === 'copied' ? 'Copied!' : 'Copy invite link' }}
+                                </button>
+                            </div>
+                            <p v-if="masterBotInviteCopyError" class="panel__error">{{ masterBotInviteCopyError }}</p>
+                        </template>
+                        <template v-else>
+                            <p class="panel__placeholder">No configuration saved yet.</p>
+                        </template>
                     </div>
-                    <div class="masterbot__row" v-if="masterBot.guildId">
-                        <dt>Guild</dt>
-                        <dd>{{ masterBot.guildId }}</dd>
-                    </div>
-                    <div class="masterbot__row" v-if="masterBot.channelId">
-                        <dt>Channel</dt>
-                        <dd>{{ masterBot.channelId }}</dd>
-                    </div>
-                    <div class="masterbot__row" v-if="masterBot.webhookUrl">
-                        <dt>Webhook</dt>
-                        <dd class="masterbot__mono">{{ masterBot.webhookUrl }}</dd>
-                    </div>
-                </dl>
-                <p v-else-if="!masterBotLoading" class="panel__placeholder">No configuration found.</p>
+                </div>
             </section>
         </div>
     </section>
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue';
+import { computed, onUnmounted, ref, watch } from 'vue';
 
 import { ServerAdmin } from '../api';
 import { useAuthStore } from '../composables/useAuthStore';
@@ -274,6 +439,50 @@ const itemsSyncing = ref(false);
 const masterBot = ref(null);
 const masterBotLoading = ref(false);
 const masterBotError = ref('');
+
+const MASTER_BOT_TEMPLATE = Object.freeze({
+    prefix: '!',
+    adminRoles: [],
+    channelBindings: { announcements: '', logs: '', commands: '' },
+    webhooks: { gameStart: '', alerts: '' },
+    events: { sendGameStartMessage: true, autoSyncUsers: false, notifyDemonUpdate: false },
+    oauth: { clientId: '', clientSecret: '', redirectUrl: '' },
+    oauthClientId: '',
+    oauthClientSecret: '',
+    oauthRedirectUri: '',
+    botToken: '',
+    botApplicationId: '',
+    defaultInviteUrl: '',
+    defaultPresence: '',
+    displayName: '',
+    avatarAsset: '',
+});
+
+const masterBotForm = ref(createMasterBotForm());
+const masterBotFormErrors = ref({});
+const masterBotSaving = ref(false);
+const masterBotSubmitError = ref('');
+const masterBotSaveNotice = ref('');
+const masterBotInviteCopyState = ref('');
+const masterBotInviteCopyError = ref('');
+const masterBotAvatarFileName = ref('');
+
+const masterBotPreview = computed(() => (masterBot.value ? createMasterBotForm(masterBot.value) : null));
+const masterBotHasPreview = computed(() => {
+    const preview = masterBotPreview.value;
+    if (!preview) return false;
+    return Boolean(
+        (preview.displayName && preview.displayName.trim()) ||
+            (preview.defaultPresence && preview.defaultPresence.trim()) ||
+            (preview.defaultInviteUrl && preview.defaultInviteUrl.trim()) ||
+            (preview.avatarAsset && preview.avatarAsset.trim()),
+    );
+});
+const masterBotAvatarPreview = computed(() => getAvatarPreview(masterBotPreview.value?.avatarAsset));
+const masterBotFormAvatarPreview = computed(() => getAvatarPreview(masterBotForm.value.avatarAsset));
+
+let masterBotSaveNoticeTimer = null;
+let masterBotInviteTimer = null;
 
 const usersTotalPages = computed(() => (users.value.length ? Math.ceil(users.value.length / PAGE_SIZE) : 0));
 const gamesTotalPages = computed(() => (games.value.length ? Math.ceil(games.value.length / PAGE_SIZE) : 0));
@@ -338,7 +547,17 @@ function resetState() {
     items.value = [];
     itemsError.value = '';
     masterBot.value = null;
+    masterBotLoading.value = false;
     masterBotError.value = '';
+    masterBotForm.value = createMasterBotForm();
+    masterBotFormErrors.value = {};
+    masterBotSaving.value = false;
+    masterBotSubmitError.value = '';
+    masterBotSaveNotice.value = '';
+    masterBotInviteCopyState.value = '';
+    masterBotInviteCopyError.value = '';
+    masterBotAvatarFileName.value = '';
+    clearMasterBotTimers();
 }
 
 function refreshActive() {
@@ -502,6 +721,7 @@ async function loadMasterBot() {
     try {
         const result = await ServerAdmin.masterBot.get();
         masterBot.value = result || null;
+        syncMasterBotForm(result || {});
     } catch (error) {
         console.error('[admin] Failed to load master bot settings', error);
         masterBotError.value = 'Failed to load master bot settings.';
@@ -509,6 +729,351 @@ async function loadMasterBot() {
         masterBotLoading.value = false;
     }
 }
+
+function syncMasterBotForm(settings) {
+    masterBotForm.value = createMasterBotForm(settings);
+    masterBotFormErrors.value = {};
+    masterBotSubmitError.value = '';
+    masterBotAvatarFileName.value = '';
+    masterBotInviteCopyState.value = '';
+    masterBotInviteCopyError.value = '';
+    setMasterBotSaveNotice('');
+}
+
+function clearMasterBotTimers() {
+    if (masterBotSaveNoticeTimer) {
+        clearTimeout(masterBotSaveNoticeTimer);
+        masterBotSaveNoticeTimer = null;
+    }
+    if (masterBotInviteTimer) {
+        clearTimeout(masterBotInviteTimer);
+        masterBotInviteTimer = null;
+    }
+}
+
+function isPlainObject(value) {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function createMasterBotForm(seed = {}) {
+    const source = isPlainObject(seed) ? seed : {};
+    const oauthSource = isPlainObject(source.oauth) ? source.oauth : {};
+
+    return {
+        prefix: typeof source.prefix === 'string' ? source.prefix : MASTER_BOT_TEMPLATE.prefix,
+        adminRoles: Array.isArray(source.adminRoles) ? [...source.adminRoles] : [...MASTER_BOT_TEMPLATE.adminRoles],
+        channelBindings: {
+            ...MASTER_BOT_TEMPLATE.channelBindings,
+            ...(isPlainObject(source.channelBindings) ? source.channelBindings : {}),
+        },
+        webhooks: {
+            ...MASTER_BOT_TEMPLATE.webhooks,
+            ...(isPlainObject(source.webhooks) ? source.webhooks : {}),
+        },
+        events: {
+            ...MASTER_BOT_TEMPLATE.events,
+            ...(isPlainObject(source.events) ? source.events : {}),
+        },
+        oauthClientId:
+            typeof source.oauthClientId === 'string'
+                ? source.oauthClientId
+                : typeof oauthSource.clientId === 'string'
+                ? oauthSource.clientId
+                : MASTER_BOT_TEMPLATE.oauthClientId,
+        oauthClientSecret:
+            typeof source.oauthClientSecret === 'string'
+                ? source.oauthClientSecret
+                : typeof oauthSource.clientSecret === 'string'
+                ? oauthSource.clientSecret
+                : MASTER_BOT_TEMPLATE.oauthClientSecret,
+        oauthRedirectUri:
+            typeof source.oauthRedirectUri === 'string'
+                ? source.oauthRedirectUri
+                : typeof oauthSource.redirectUrl === 'string'
+                ? oauthSource.redirectUrl
+                : MASTER_BOT_TEMPLATE.oauthRedirectUri,
+        botToken: typeof source.botToken === 'string' ? source.botToken : MASTER_BOT_TEMPLATE.botToken,
+        botApplicationId:
+            typeof source.botApplicationId === 'string'
+                ? source.botApplicationId
+                : MASTER_BOT_TEMPLATE.botApplicationId,
+        defaultInviteUrl:
+            typeof source.defaultInviteUrl === 'string'
+                ? source.defaultInviteUrl
+                : MASTER_BOT_TEMPLATE.defaultInviteUrl,
+        defaultPresence:
+            typeof source.defaultPresence === 'string'
+                ? source.defaultPresence
+                : MASTER_BOT_TEMPLATE.defaultPresence,
+        displayName:
+            typeof source.displayName === 'string' ? source.displayName : MASTER_BOT_TEMPLATE.displayName,
+        avatarAsset:
+            typeof source.avatarAsset === 'string' ? source.avatarAsset : MASTER_BOT_TEMPLATE.avatarAsset,
+        oauth: {
+            clientId:
+                typeof oauthSource.clientId === 'string'
+                    ? oauthSource.clientId
+                    : typeof source.oauthClientId === 'string'
+                    ? source.oauthClientId
+                    : MASTER_BOT_TEMPLATE.oauth.clientId,
+            clientSecret:
+                typeof oauthSource.clientSecret === 'string'
+                    ? oauthSource.clientSecret
+                    : typeof source.oauthClientSecret === 'string'
+                    ? source.oauthClientSecret
+                    : MASTER_BOT_TEMPLATE.oauth.clientSecret,
+            redirectUrl:
+                typeof oauthSource.redirectUrl === 'string'
+                    ? oauthSource.redirectUrl
+                    : typeof source.oauthRedirectUri === 'string'
+                    ? source.oauthRedirectUri
+                    : MASTER_BOT_TEMPLATE.oauth.redirectUrl,
+        },
+    };
+}
+
+function sanitizeOptionalString(value) {
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+function sanitizePrefix(value) {
+    const trimmed = sanitizeOptionalString(value);
+    return trimmed || '!';
+}
+
+function getAvatarPreview(value) {
+    const input = sanitizeOptionalString(value);
+    if (!input) return '';
+    if (isDataImage(input)) return input;
+    if (isValidHttpUrl(input)) return input;
+    return '';
+}
+
+function isValidHttpUrl(value) {
+    const input = sanitizeOptionalString(value);
+    if (!input) return false;
+    try {
+        const url = new URL(input);
+        return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch {
+        return false;
+    }
+}
+
+function isDataImage(value) {
+    return /^data:image\//i.test(value || '');
+}
+
+function validateMasterBotForm(form) {
+    const errors = {};
+    if (!sanitizePrefix(form.prefix)) {
+        errors.prefix = 'Prefix is required.';
+    }
+    const redirectUrl = sanitizeOptionalString(form.oauthRedirectUri);
+    if (redirectUrl && !isValidHttpUrl(redirectUrl)) {
+        errors.oauthRedirectUri = 'Enter a valid redirect URL.';
+    }
+    const inviteUrl = sanitizeOptionalString(form.defaultInviteUrl);
+    if (inviteUrl && !isValidHttpUrl(inviteUrl)) {
+        errors.defaultInviteUrl = 'Enter a valid invite link.';
+    }
+    const avatarValue = sanitizeOptionalString(form.avatarAsset);
+    if (avatarValue && !isDataImage(avatarValue) && !isValidHttpUrl(avatarValue)) {
+        errors.avatarAsset = 'Upload an image or supply a valid image URL.';
+    }
+    return errors;
+}
+
+function clearMasterBotFieldError(field) {
+    if (!field) return;
+    if (!masterBotFormErrors.value[field]) return;
+    const next = { ...masterBotFormErrors.value };
+    delete next[field];
+    masterBotFormErrors.value = next;
+}
+
+function setMasterBotFieldError(field, message) {
+    if (!field) return;
+    masterBotFormErrors.value = { ...masterBotFormErrors.value, [field]: message };
+}
+
+function prepareMasterBotPayload(form, previous) {
+    const base = createMasterBotForm(previous || {});
+    const next = createMasterBotForm(form || {});
+    const payload = {
+        ...base,
+        ...next,
+        adminRoles: next.adminRoles,
+        channelBindings: next.channelBindings,
+        webhooks: next.webhooks,
+        events: next.events,
+    };
+
+    payload.prefix = sanitizePrefix(next.prefix);
+    payload.displayName = sanitizeOptionalString(next.displayName);
+    payload.defaultPresence = sanitizeOptionalString(next.defaultPresence);
+    payload.defaultInviteUrl = sanitizeOptionalString(next.defaultInviteUrl);
+    payload.botApplicationId = sanitizeOptionalString(next.botApplicationId);
+    payload.oauthClientId = sanitizeOptionalString(next.oauthClientId);
+    payload.oauthClientSecret = typeof next.oauthClientSecret === 'string' ? next.oauthClientSecret.trim() : '';
+    payload.oauthRedirectUri = sanitizeOptionalString(next.oauthRedirectUri);
+    payload.avatarAsset = typeof next.avatarAsset === 'string' ? next.avatarAsset.trim() : '';
+    payload.botToken = typeof next.botToken === 'string' ? next.botToken.trim() : '';
+    payload.oauth = {
+        clientId: payload.oauthClientId,
+        clientSecret: payload.oauthClientSecret,
+        redirectUrl: payload.oauthRedirectUri,
+    };
+
+    return payload;
+}
+
+function handleAvatarUrlInput() {
+    masterBotAvatarFileName.value = '';
+    clearMasterBotFieldError('avatarAsset');
+}
+
+async function handleAvatarFileChange(event) {
+    const file = event?.target?.files?.[0];
+    if (!file) return;
+    if (!file.type || !file.type.startsWith('image/')) {
+        setMasterBotFieldError('avatarAsset', 'Please choose an image file.');
+        masterBotForm.value.avatarAsset = '';
+        masterBotAvatarFileName.value = '';
+        if (event?.target) event.target.value = '';
+        return;
+    }
+
+    try {
+        const dataUrl = await readFileAsDataUrl(file);
+        if (!dataUrl) {
+            setMasterBotFieldError('avatarAsset', 'Unable to read the selected image.');
+        } else {
+            masterBotForm.value.avatarAsset = dataUrl;
+            masterBotAvatarFileName.value = file.name || '';
+            clearMasterBotFieldError('avatarAsset');
+        }
+    } catch (error) {
+        console.error('[admin] Failed to load bot avatar', error);
+        setMasterBotFieldError('avatarAsset', 'Failed to process the selected image.');
+        masterBotForm.value.avatarAsset = '';
+        masterBotAvatarFileName.value = '';
+    } finally {
+        if (event?.target) {
+            event.target.value = '';
+        }
+    }
+}
+
+function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            resolve(typeof reader.result === 'string' ? reader.result : '');
+        };
+        reader.onerror = () => {
+            reject(new Error('Failed to read file.'));
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
+async function handleCopyInvite() {
+    const invite = sanitizeOptionalString(masterBotPreview.value?.defaultInviteUrl);
+    if (!invite) return;
+    masterBotInviteCopyError.value = '';
+
+    try {
+        if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(invite);
+        } else if (typeof document !== 'undefined') {
+            const textarea = document.createElement('textarea');
+            textarea.value = invite;
+            textarea.setAttribute('readonly', 'readonly');
+            textarea.style.position = 'absolute';
+            textarea.style.left = '-9999px';
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+        } else {
+            throw new Error('Clipboard unavailable');
+        }
+        masterBotInviteCopyState.value = 'copied';
+        if (masterBotInviteTimer) {
+            clearTimeout(masterBotInviteTimer);
+        }
+        masterBotInviteTimer = setTimeout(() => {
+            masterBotInviteCopyState.value = '';
+            masterBotInviteTimer = null;
+        }, 2000);
+    } catch (error) {
+        console.error('[admin] Failed to copy master bot invite', error);
+        masterBotInviteCopyError.value = 'Unable to copy the invite link.';
+    }
+}
+
+function setMasterBotSaveNotice(message) {
+    masterBotSaveNotice.value = message;
+    if (masterBotSaveNoticeTimer) {
+        clearTimeout(masterBotSaveNoticeTimer);
+        masterBotSaveNoticeTimer = null;
+    }
+    if (message) {
+        masterBotSaveNoticeTimer = setTimeout(() => {
+            masterBotSaveNotice.value = '';
+            masterBotSaveNoticeTimer = null;
+        }, 4000);
+    }
+}
+
+async function handleSaveMasterBot() {
+    if (masterBotSaving.value) return;
+    const errors = validateMasterBotForm(masterBotForm.value);
+    masterBotFormErrors.value = errors;
+    if (Object.keys(errors).length) {
+        masterBotSubmitError.value = 'Please resolve the highlighted fields.';
+        return;
+    }
+
+    masterBotSubmitError.value = '';
+    masterBotSaving.value = true;
+
+    const previousSnapshot = masterBot.value ? JSON.parse(JSON.stringify(masterBot.value)) : null;
+    const previousForm = masterBot.value ? createMasterBotForm(masterBot.value) : null;
+    if (previousForm) {
+        masterBot.value = createMasterBotForm({ ...previousForm, ...masterBotForm.value });
+    } else {
+        masterBot.value = createMasterBotForm(masterBotForm.value);
+    }
+
+    try {
+        const payload = prepareMasterBotPayload(masterBotForm.value, previousSnapshot || previousForm);
+        const saved = await ServerAdmin.masterBot.update(payload);
+        masterBot.value = saved || null;
+        syncMasterBotForm(saved || {});
+        setMasterBotSaveNotice('Settings saved.');
+    } catch (error) {
+        console.error('[admin] Failed to update master bot settings', error);
+        masterBot.value = previousSnapshot || null;
+        setMasterBotSaveNotice('');
+        masterBotSubmitError.value = error?.message
+            ? `Failed to save master bot settings: ${error.message}`
+            : 'Failed to save master bot settings.';
+    } finally {
+        masterBotSaving.value = false;
+    }
+}
+
+function clearAvatarAsset() {
+    masterBotForm.value.avatarAsset = '';
+    masterBotAvatarFileName.value = '';
+    clearMasterBotFieldError('avatarAsset');
+}
+
+onUnmounted(() => {
+    clearMasterBotTimers();
+});
 </script>
 
 <style scoped>
@@ -649,33 +1214,203 @@ async function loadMasterBot() {
     color: rgba(255, 255, 255, 0.7);
 }
 
-.masterbot {
+.panel__success {
+    margin: 0;
+    color: #4ade80;
+}
+
+.masterbot-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+@media (min-width: 900px) {
+    .masterbot-layout {
+        flex-direction: row;
+        align-items: flex-start;
+    }
+}
+
+.masterbot-form {
+    flex: 1 1 50%;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+    border-radius: 0.75rem;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.masterbot-form__grid {
     display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.75rem;
+}
+
+.form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.form-field--full {
+    grid-column: 1 / -1;
+}
+
+.form-field__label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.75);
+}
+
+.form-field input,
+.form-field textarea {
+    width: 100%;
+    padding: 0.5rem 0.65rem;
+    border-radius: 0.5rem;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(15, 23, 42, 0.5);
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.form-field--error input,
+.form-field--error textarea {
+    border-color: rgba(255, 123, 123, 0.6);
+}
+
+.form-field__error {
+    margin: 0;
+    font-size: 0.75rem;
+    color: #ff7b7b;
+}
+
+.masterbot-form__messages {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.masterbot-form__actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.masterbot-avatar {
+    display: flex;
+    flex-direction: column;
     gap: 0.5rem;
 }
 
-.masterbot__row {
+.masterbot-avatar__preview {
+    width: 64px;
+    height: 64px;
+    border-radius: 0.75rem;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.08);
     display: flex;
-    justify-content: space-between;
-    gap: 1rem;
-    font-size: 0.85rem;
+    align-items: center;
+    justify-content: center;
 }
 
-.masterbot__row dt {
+.masterbot-avatar__preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.masterbot-avatar__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.masterbot-avatar__upload {
+    position: relative;
+    overflow: hidden;
+}
+
+.masterbot-avatar__upload input[type='file'] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.masterbot-avatar__filename {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.masterbot-preview {
+    flex: 1 1 45%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 1rem;
+    border-radius: 0.75rem;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.masterbot-preview__profile {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.masterbot-preview__avatar {
+    width: 64px;
+    height: 64px;
+    border-radius: 0.75rem;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.08);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+}
+
+.masterbot-preview__avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.masterbot-preview__name {
     margin: 0;
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.8);
 }
 
-.masterbot__row dd {
+.masterbot-preview__status {
     margin: 0;
-    text-align: right;
-    color: rgba(255, 255, 255, 0.7);
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.65);
 }
 
-.masterbot__mono {
-    font-family: 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+.masterbot-preview__meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.masterbot-preview__invite {
+    margin: 0;
     word-break: break-all;
+    font-family: 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+}
+
+.masterbot-preview__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.masterbot-preview__link {
+    text-decoration: none;
 }
 
 .button {
