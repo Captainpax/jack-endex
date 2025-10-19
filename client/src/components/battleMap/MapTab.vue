@@ -25,8 +25,13 @@
                     <div
                         v-for="shape in mapState.shapes"
                         :key="shape.id"
-                        :class="['map-shape', `map-shape--${shape.type}`]"
+                        :class="[
+                            'map-shape',
+                            `map-shape--${shape.type}`,
+                            { 'map-shape--highlighted': shape.id === highlightedShapeId },
+                        ]"
                         :style="shapeStyle(shape)"
+                        :data-shape-id="shape.id"
                     >
                         <div class="map-shape__surface" :style="shapeSurfaceStyle(shape)">
                             <template v-if="shape.type === 'image'">
@@ -46,8 +51,13 @@
                     <div
                         v-for="token in mapState.tokens"
                         :key="token.id"
-                        :class="['map-token', `map-token--${token.kind}`]"
+                        :class="[
+                            'map-token',
+                            `map-token--${token.kind}`,
+                            { 'map-token--highlighted': token.id === highlightedTokenId },
+                        ]"
                         :style="tokenStyle(token)"
+                        :data-token-id="token.id"
                     >
                         <div class="map-token__inner">
                             <span class="map-token__label">{{ token.label || 'Token' }}</span>
@@ -82,6 +92,19 @@
 
         <template #sidebar>
             <BattleMapSidebar :panels="sidebarPanels">
+                <template #entities>
+                    <MapEntitiesPanel
+                        :map-state="mapState"
+                        @focus-token="handleFocusToken"
+                        @toggle-token-tooltip="handleToggleTokenTooltip"
+                        @focus-shape="handleFocusShape"
+                        @focus-stroke="handleFocusStroke"
+                        @highlight-token="handleHighlightToken"
+                        @highlight-shape="handleHighlightShape"
+                        @highlight-stroke="handleHighlightStroke"
+                        @clear-highlight="handleClearHighlight"
+                    />
+                </template>
                 <template #battle-log>
                     <section class="map-battle-log">
                         <header class="map-battle-log__header">
@@ -115,13 +138,14 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, watchEffect } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, watchEffect } from 'vue';
 import { Games } from '../../api';
 import { useBattleLogger } from '../../composables/useBattleLogger';
 import BattleMapHeader from './BattleMapHeader.vue';
 import BattleMapLayout from './BattleMapLayout.vue';
 import BattleMapSidebar from './BattleMapSidebar.vue';
 import MapControlsPanel from './MapControlsPanel.vue';
+import MapEntitiesPanel from './MapEntitiesPanel.vue';
 import { describePlayerName, mapReadBoolean } from './mapShared';
 import { idsMatch, normalizeId } from '../../utils/ids';
 
@@ -152,14 +176,25 @@ const onlineUserIds = ref([]);
 const syncBusy = ref(false);
 const togglePauseBusy = ref(false);
 const assignDrawerBusy = ref(false);
+const highlightedTokenId = ref(null);
+const highlightedShapeId = ref(null);
+const highlightedStrokeId = ref(null);
+let highlightResetTimer = null;
 
 const sidebarPanels = computed(() => [
+    {
+        id: 'entities',
+        title: 'Map entities',
+        description: 'Manage tokens, shapes, and drawings on the board.',
+        slot: 'entities',
+        defaultOpen: true,
+    },
     {
         id: 'battle-log',
         title: 'Battle log',
         description: 'Entries appear in real time as encounters unfold.',
         slot: 'battle-log',
-        defaultOpen: true,
+        defaultOpen: false,
     },
 ]);
 
@@ -271,6 +306,10 @@ onBeforeUnmount(() => {
     }
     if (subscribedGameId) {
         sendRealtimeMessage('unsubscribe', subscribedGameId);
+    }
+    if (highlightResetTimer) {
+        clearTimeout(highlightResetTimer);
+        highlightResetTimer = null;
     }
 });
 
@@ -464,19 +503,25 @@ function drawStrokes() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.scale(dpr, dpr);
 
+    const highlightStrokeId = highlightedStrokeId.value;
     for (const stroke of mapState.strokes) {
         const points = Array.isArray(stroke.points) ? stroke.points : [];
         if (points.length < 2) continue;
         ctx.save();
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
-        ctx.lineWidth = stroke.size;
+        const isHighlightedStroke = highlightStrokeId && stroke.id === highlightStrokeId;
+        ctx.lineWidth = stroke.size * (isHighlightedStroke ? 1.8 : 1);
         if (stroke.mode === 'erase') {
             ctx.globalCompositeOperation = 'destination-out';
             ctx.strokeStyle = 'rgba(0, 0, 0, 1)';
         } else {
             ctx.globalCompositeOperation = 'source-over';
             ctx.strokeStyle = stroke.color || '#5aadff';
+        }
+        if (isHighlightedStroke) {
+            ctx.shadowColor = stroke.mode === 'erase' ? 'rgba(226, 232, 240, 0.55)' : ctx.strokeStyle;
+            ctx.shadowBlur = 14;
         }
         ctx.beginPath();
         ctx.moveTo(points[0].x * width, points[0].y * height);
@@ -715,6 +760,97 @@ async function updateMapSettings(payload) {
         }
         throw err;
     }
+}
+
+function handleHighlightToken(tokenId) {
+    setHighlightState({ tokenId: tokenId || null });
+}
+
+function handleHighlightShape(shapeId) {
+    setHighlightState({ shapeId: shapeId || null });
+}
+
+function handleHighlightStroke(strokeId) {
+    setHighlightState({ strokeId: strokeId || null });
+}
+
+function handleClearHighlight() {
+    if (highlightResetTimer) {
+        return;
+    }
+    setHighlightState({ tokenId: null, shapeId: null, strokeId: null });
+}
+
+function handleFocusToken(tokenId) {
+    if (!tokenId) return;
+    setHighlightState({ tokenId, duration: 2400 });
+    const selector = `[data-token-id="${escapeSelector(tokenId)}"]`;
+    void focusBoardElement(selector);
+}
+
+function handleToggleTokenTooltip(tokenId) {
+    if (!tokenId) return;
+    const token = mapState.tokens.find((entry) => entry && entry.id === tokenId);
+    if (!token) return;
+    token.showTooltip = !token.showTooltip;
+}
+
+function handleFocusShape(shapeId) {
+    if (!shapeId) return;
+    setHighlightState({ shapeId, duration: 2400 });
+    const selector = `[data-shape-id="${escapeSelector(shapeId)}"]`;
+    void focusBoardElement(selector);
+}
+
+function handleFocusStroke(strokeId) {
+    if (!strokeId) return;
+    setHighlightState({ strokeId, duration: 2400 });
+}
+
+async function focusBoardElement(selector) {
+    if (!selector) return;
+    await nextTick();
+    const boardEl = boardRef.value;
+    if (!boardEl) return;
+    const target = boardEl.querySelector(selector);
+    if (!target) return;
+    if (typeof target.scrollIntoView === 'function') {
+        try {
+            target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+        } catch (err) {
+            if (import.meta.env.DEV) {
+                console.warn('Failed to focus element on board', err);
+            }
+        }
+    }
+}
+
+function setHighlightState({ tokenId = null, shapeId = null, strokeId = null, duration = 0 }) {
+    highlightedTokenId.value = tokenId;
+    highlightedShapeId.value = shapeId;
+    highlightedStrokeId.value = strokeId;
+    scheduleCanvasDraw();
+    if (highlightResetTimer) {
+        clearTimeout(highlightResetTimer);
+        highlightResetTimer = null;
+    }
+    if (duration > 0 && typeof window !== 'undefined') {
+        highlightResetTimer = window.setTimeout(() => {
+            highlightedTokenId.value = null;
+            highlightedShapeId.value = null;
+            highlightedStrokeId.value = null;
+            scheduleCanvasDraw();
+            highlightResetTimer = null;
+        }, duration);
+    }
+}
+
+function escapeSelector(value) {
+    if (typeof value !== 'string') return '';
+    if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+        return CSS.escape(value);
+    }
+    return value.replace(/([^a-zA-Z0-9_-])/g, '\\$1');
 }
 
 function formatRelativeTime(value) {
