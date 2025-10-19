@@ -203,7 +203,7 @@
 </template>
 
 <script setup>
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { CollapsibleSection } from '../ui';
 
 const props = defineProps({
@@ -314,6 +314,16 @@ tokenGroupDefinitions.forEach((definition) => openGroups.add(definition.key));
 shapeGroupDefinitions.forEach((definition) => openGroups.add(definition.key));
 strokeGroupDefinitions.forEach((definition) => openGroups.add(definition.key));
 
+watch(
+    () => normalizedSearch.value,
+    (query) => {
+        if (!query) return;
+        [...tokenGroupDefinitions, ...shapeGroupDefinitions, ...strokeGroupDefinitions].forEach(({ key }) => {
+            openGroups.add(key);
+        });
+    }
+);
+
 const normalizedSearch = computed(() => searchTerm.value.trim().toLowerCase());
 
 const filteredTokens = computed(() => {
@@ -357,7 +367,12 @@ function groupEntities(items, definitions) {
             group.items.push(item);
         }
     }
-    return groups.filter((group) => group.items.length > 0);
+    return groups
+        .filter((group) => group.items.length > 0)
+        .map((group) => ({
+            ...group,
+            items: [...group.items].sort((a, b) => compareEntityLabel(a, b)),
+        }));
 }
 
 function isOpen(key) {
@@ -431,6 +446,26 @@ function strokeSummary(stroke) {
 function capitalize(value) {
     if (!value) return '';
     return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function compareEntityLabel(a, b) {
+    const labelA = resolveEntityLabel(a);
+    const labelB = resolveEntityLabel(b);
+    return labelA.localeCompare(labelB);
+}
+
+function resolveEntityLabel(entity) {
+    if (!entity) return '';
+    const candidates = [entity.label, entity.name, entity.kind, entity.type, entity.id];
+    for (const candidate of candidates) {
+        if (typeof candidate === 'string' && candidate.trim()) {
+            return candidate.trim().toLowerCase();
+        }
+        if (typeof candidate === 'number') {
+            return String(candidate);
+        }
+    }
+    return '';
 }
 </script>
 
