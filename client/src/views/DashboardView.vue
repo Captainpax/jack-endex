@@ -507,15 +507,119 @@ const StoryLogsPanel = {
         onRefresh: { type: Function, default: null },
     },
     setup(props) {
-        const entries = computed(() => {
-            const snap = props.snapshot;
-            if (!snap) return [];
-            if (Array.isArray(snap)) return snap;
-            if (snap?.messages && Array.isArray(snap.messages)) return snap.messages;
-            return [snap];
+        const snapshot = computed(() => {
+            const raw = props.snapshot;
+            if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+                const messages = Array.isArray(raw.messages) ? raw.messages : [];
+                const channel = raw.channel || raw.status?.channel || null;
+                return {
+                    enabled: !!raw.enabled,
+                    status: raw.status || null,
+                    channel,
+                    config: raw.config || null,
+                    fetchedAt: raw.fetchedAt || null,
+                    messages,
+                };
+            }
+            const messages = Array.isArray(raw) ? raw : [];
+            return {
+                enabled: false,
+                status: null,
+                channel: null,
+                config: null,
+                fetchedAt: null,
+                messages,
+            };
         });
+
+        const status = computed(() => snapshot.value.status || null);
+        const channel = computed(() => snapshot.value.channel || null);
+        const entries = computed(() => snapshot.value.messages);
+        const watcherEnabled = computed(() =>
+            Boolean(snapshot.value.enabled && (status.value?.enabled ?? snapshot.value.enabled))
+        );
+        const statusPhase = computed(() => status.value?.phase || (watcherEnabled.value ? 'idle' : 'disabled'));
+        const phaseLabels = {
+            ready: 'Ready',
+            idle: 'Idle',
+            connecting: 'Connecting',
+            error: 'Error',
+            configuring: 'Configuring',
+            missing_token: 'Missing token',
+            unconfigured: 'Missing channel',
+            disabled: 'Disabled',
+        };
+        const phaseLabel = computed(() => phaseLabels[statusPhase.value] || statusPhase.value || 'Unknown');
+        const statusError = computed(() => status.value?.error || null);
+        const disabledWarning = computed(() => {
+            if (watcherEnabled.value) return null;
+            if (!status.value) {
+                return 'The Discord watcher is disabled for this campaign.';
+            }
+            if (status.value.phase === 'missing_token') {
+                return status.value.error || 'No Discord bot token configured for this campaign.';
+            }
+            if (status.value.phase === 'unconfigured') {
+                return status.value.error || 'No Discord channel configured for this campaign.';
+            }
+            return status.value.error || 'The Discord watcher is currently disabled.';
+        });
+        const adminHint = computed(() =>
+            watcherEnabled.value
+                ? null
+                : 'Ask a server admin to configure the Discord bot token and channel ID in Server Management → Story Log.'
+        );
+        const pollInterval = computed(() => status.value?.pollIntervalMs || null);
+        const fetchedAt = computed(() => snapshot.value.fetchedAt || null);
+
+        const timestampFormatter = new Intl.DateTimeFormat(undefined, {
+            dateStyle: 'medium',
+            timeStyle: 'short',
+        });
+        const formatTimestamp = (value) => {
+            if (!value) return 'Unknown time';
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) return value;
+            return timestampFormatter.format(date);
+        };
+
+        const formatFileSize = (bytes) => {
+            if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) return '';
+            const units = ['B', 'KB', 'MB', 'GB'];
+            let size = bytes;
+            let unitIndex = 0;
+            while (size >= 1024 && unitIndex < units.length - 1) {
+                size /= 1024;
+                unitIndex += 1;
+            }
+            return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+        };
+
+        const authorInitial = (entry) => {
+            const author = entry?.author;
+            const name = author?.displayName || author?.username || author?.id || '??';
+            const initial = typeof name === 'string' && name.trim() ? name.trim().charAt(0).toUpperCase() : '?';
+            return initial;
+        };
+
         const refresh = () => props.onRefresh?.();
-        return { entries, refresh };
+        return {
+            entries,
+            refresh,
+            status,
+            channel,
+            watcherEnabled,
+            statusPhase,
+            phaseLabel,
+            statusError,
+            disabledWarning,
+            adminHint,
+            pollInterval,
+            fetchedAt,
+            formatTimestamp,
+            formatFileSize,
+            authorInitial,
+        };
     },
     template: `
         <section class="panel">
@@ -523,10 +627,109 @@ const StoryLogsPanel = {
                 <h3 class="panel__title">Story log</h3>
                 <button type="button" class="button button--small" @click="refresh">Refresh</button>
             </header>
-            <ul class="panel__list panel__list--dense" v-if="entries.length">
-                <li v-for="entry in entries" :key="entry.id || entry.issuedAt" class="panel__list-item">
-                    <strong>{{ entry.author || entry.senderName || 'Narrator' }}</strong>
-                    <span>{{ entry.content || entry.message }}</span>
+            <section class="story-log-panel__status" role="status">
+                <span :class="['story-log-panel__badge', 'story-log-panel__badge--' + statusPhase]">
+                    {{ phaseLabel }}
+                </span>
+                <div class="story-log-panel__status-body">
+                    <p class="story-log-panel__status-line">
+                        <strong>Phase:</strong>
+                        <span>{{ phaseLabel }}</span>
+                        <span class="story-log-panel__status-phase">({{ statusPhase }})</span>
+                    </p>
+                    <p v-if="pollInterval" class="story-log-panel__status-line">
+                        <strong>Polling interval:</strong>
+                        <span>{{ (pollInterval / 1000).toFixed(0) }}s</span>
+                    </p>
+                    <p v-if="fetchedAt" class="story-log-panel__status-line">
+                        <strong>Last fetched:</strong>
+                        <span>{{ formatTimestamp(fetchedAt) }}</span>
+                    </p>
+                    <p v-if="statusError" class="story-log-panel__status-error">{{ statusError }}</p>
+                    <p v-else-if="disabledWarning" class="story-log-panel__status-error">{{ disabledWarning }}</p>
+                    <p v-if="adminHint" class="story-log-panel__status-hint">{{ adminHint }}</p>
+                </div>
+            </section>
+            <section class="story-log-panel__channel" v-if="channel">
+                <div class="story-log-panel__channel-name">
+                    <span class="story-log-panel__channel-label">Channel:</span>
+                    <template v-if="channel.url">
+                        <a :href="channel.url" target="_blank" rel="noopener" class="story-log-panel__channel-link">
+                            #{{ channel.name || channel.id }}
+                        </a>
+                    </template>
+                    <template v-else>
+                        <span class="story-log-panel__channel-text">#{{ channel.name || channel.id }}</span>
+                    </template>
+                </div>
+                <p v-if="channel.topic" class="story-log-panel__channel-topic">{{ channel.topic }}</p>
+            </section>
+            <p v-else class="story-log-panel__channel story-log-panel__channel--empty">
+                Channel information is not available.
+            </p>
+            <ul class="story-log-panel__messages" v-if="entries.length">
+                <li
+                    v-for="entry in entries"
+                    :key="entry.id || entry.createdAt || entry.issuedAt"
+                    class="story-log-message"
+                >
+                    <div class="story-log-message__avatar">
+                        <img
+                            v-if="entry.author && entry.author.avatarUrl"
+                            :src="entry.author.avatarUrl"
+                            :alt="entry.author.displayName || entry.author.username || 'Author avatar'"
+                        />
+                        <span v-else class="story-log-message__avatar-fallback">{{ authorInitial(entry) }}</span>
+                    </div>
+                    <div class="story-log-message__body">
+                        <header class="story-log-message__meta">
+                            <span class="story-log-message__author">
+                                {{ entry.author?.displayName || entry.author?.username || entry.author || entry.senderName || 'Narrator' }}
+                            </span>
+                            <time
+                                class="story-log-message__timestamp"
+                                :datetime="entry.createdAt || ''"
+                                >{{ formatTimestamp(entry.createdAt) }}</time
+                            >
+                            <a
+                                v-if="entry.jumpLink"
+                                :href="entry.jumpLink"
+                                target="_blank"
+                                rel="noopener"
+                                class="story-log-message__jump-link"
+                            >
+                                Open in Discord
+                            </a>
+                        </header>
+                        <p v-if="entry.content || entry.message" class="story-log-message__content">
+                            {{ entry.content || entry.message }}
+                        </p>
+                        <ul
+                            v-if="entry.attachments && entry.attachments.length"
+                            class="story-log-message__attachments"
+                        >
+                            <li
+                                v-for="file in entry.attachments"
+                                :key="file.id || file.url || file.proxyUrl"
+                                class="story-log-message__attachment"
+                            >
+                                <a
+                                    :href="file.url || file.proxyUrl"
+                                    target="_blank"
+                                    rel="noopener"
+                                    class="story-log-message__attachment-link"
+                                >
+                                    {{ file.name || 'Attachment' }}
+                                </a>
+                                <span v-if="file.contentType" class="story-log-message__attachment-meta">
+                                    {{ file.contentType }}
+                                </span>
+                                <span v-if="file.size" class="story-log-message__attachment-meta">
+                                    {{ formatFileSize(file.size) }}
+                                </span>
+                            </li>
+                        </ul>
+                    </div>
                 </li>
             </ul>
             <p v-else class="panel__placeholder">No story log messages yet.</p>
@@ -756,6 +959,244 @@ const HelpPanel = {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+}
+
+.story-log-panel__status {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+    background: rgba(12, 15, 30, 0.6);
+    border-radius: 1rem;
+    padding: 1rem 1.25rem;
+    box-shadow: inset 0 0 0 1px rgba(120, 175, 255, 0.15);
+}
+
+.story-log-panel__badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.5rem 0.85rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: rgba(96, 110, 255, 0.18);
+    color: rgba(230, 236, 255, 0.95);
+    min-width: 6rem;
+}
+
+.story-log-panel__badge--ready,
+.story-log-panel__badge--idle {
+    background: rgba(46, 204, 113, 0.2);
+    color: #b2f5c8;
+}
+
+.story-log-panel__badge--connecting,
+.story-log-panel__badge--configuring {
+    background: rgba(46, 134, 222, 0.2);
+    color: #9ad1ff;
+}
+
+.story-log-panel__badge--error,
+.story-log-panel__badge--missing_token,
+.story-log-panel__badge--unconfigured,
+.story-log-panel__badge--disabled {
+    background: rgba(231, 76, 60, 0.25);
+    color: #ffb7b0;
+}
+
+.story-log-panel__status-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.story-log-panel__status-line {
+    margin: 0;
+    font-size: 0.9rem;
+    display: flex;
+    gap: 0.4rem;
+    align-items: baseline;
+}
+
+.story-log-panel__status-phase {
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.story-log-panel__status-error {
+    margin: 0;
+    font-size: 0.9rem;
+    color: #ff9d9d;
+}
+
+.story-log-panel__status-hint {
+    margin: 0;
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.story-log-panel__channel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.75rem 1rem;
+    border-radius: 0.9rem;
+    background: rgba(12, 15, 30, 0.45);
+    box-shadow: inset 0 0 0 1px rgba(120, 175, 255, 0.12);
+}
+
+.story-log-panel__channel--empty {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.story-log-panel__channel-name {
+    display: flex;
+    gap: 0.35rem;
+    align-items: baseline;
+    font-size: 0.9rem;
+}
+
+.story-log-panel__channel-label {
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.story-log-panel__channel-link {
+    color: #8cc6ff;
+    text-decoration: none;
+}
+
+.story-log-panel__channel-link:hover {
+    text-decoration: underline;
+}
+
+.story-log-panel__channel-text {
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.story-log-panel__channel-topic {
+    margin: 0;
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.65);
+}
+
+.story-log-panel__messages {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.story-log-message {
+    display: flex;
+    gap: 0.85rem;
+    padding: 0.85rem 1rem;
+    border-radius: 1rem;
+    background: rgba(12, 17, 35, 0.55);
+    box-shadow: inset 0 0 0 1px rgba(120, 175, 255, 0.08);
+}
+
+.story-log-message__avatar {
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.08);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.story-log-message__avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.story-log-message__avatar-fallback {
+    font-weight: 600;
+    font-size: 1rem;
+    color: rgba(255, 255, 255, 0.8);
+}
+
+.story-log-message__body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    width: 100%;
+}
+
+.story-log-message__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: baseline;
+}
+
+.story-log-message__author {
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.95);
+}
+
+.story-log-message__timestamp {
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.story-log-message__jump-link {
+    font-size: 0.8rem;
+    color: #8cc6ff;
+    text-decoration: none;
+    margin-left: auto;
+}
+
+.story-log-message__jump-link:hover {
+    text-decoration: underline;
+}
+
+.story-log-message__content {
+    margin: 0;
+    white-space: pre-wrap;
+    line-height: 1.5;
+    color: rgba(255, 255, 255, 0.85);
+    word-break: break-word;
+}
+
+.story-log-message__attachments {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.story-log-message__attachment {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.story-log-message__attachment-link {
+    color: #8cc6ff;
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.story-log-message__attachment-link:hover {
+    text-decoration: underline;
+}
+
+.story-log-message__attachment-meta {
+    color: rgba(255, 255, 255, 0.55);
 }
 
 .panel__section-title {
