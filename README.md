@@ -188,15 +188,17 @@ If no per-campaign token is supplied, the server falls back to `DISCORD_PRIMARY_
 
 A lightweight gateway client powers the `/demonLookup <name>` slash command. It also exposes `/link <username>` so players can bind their Discord account to a Jack Endex profile. To enable it:
 
-1. Set `DISCORD_APPLICATION_ID` and `DISCORD_PRIMARY_BOT_TOKEN` in your `.env`. Optionally set `DISCORD_COMMAND_GUILD_ID` for per-guild command registration and `DISCORD_PRIMARY_BOT_INVITE` so DMs can invite the shared bot to their own servers.
+1. Configure the shared Discord bot credentials in the **Server Management → Master Bot** panel (token, application ID, presence, and icon). Those values are stored in MongoDB under the `masterDiscordBot` server setting.
 
-2. Run the lookup bot (ensure MongoDB is reachable so it can query the codex):
+2. If you still rely on environment variables, the bot falls back to `DISCORD_PRIMARY_BOT_TOKEN` (or the legacy keys) and `DISCORD_APPLICATION_ID`. You can also set `DISCORD_COMMAND_GUILD_ID` for per-guild command registration and `DISCORD_PRIMARY_BOT_INVITE` so DMs can invite the shared bot to their own servers.
+
+3. Run the lookup bot (ensure MongoDB is reachable so it can query the codex):
 
    ```bash
    npm run bot:demon
    ```
 
-The bot automatically registers or updates its slash commands at startup. `/demonLookup` responds with a formatted codex summary (including close-match suggestions for typos), and `/link` stores the invoking Discord user’s ID on the matching Jack Endex account.
+The bot automatically registers or updates its slash commands at startup. During bootstrap `server/bot/demonLookupBot.js` connects to MongoDB, decrypts the persisted master bot settings (using the same `MASTER_BOT_SECRET_KEY` that the API server was configured with), and reuses the admin-defined token, application ID, and presence when registering commands. `/demonLookup` responds with a formatted codex summary (including close-match suggestions for typos), and `/link` stores the invoking Discord user’s ID on the matching Jack Endex account.
 
 ## Helpful scripts
 
