@@ -65,6 +65,10 @@ const pendingTrades = new Map();
 const storyBroadcastQueue = new Map();
 const FUSION_OVERRIDE_RANDOM = 'none';
 const DISCORD_API_BASE = 'https://discord.com/api/v10';
+const DISCORD_OAUTH_AUTHORIZE_URL = 'https://discord.com/oauth2/authorize';
+const DISCORD_OAUTH_TOKEN_URL = 'https://discord.com/api/oauth2/token';
+const DISCORD_OAUTH_SCOPES = Object.freeze(['identify', 'guilds']);
+const DISCORD_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const SERVER_ADMIN_USERNAMES = new Set(['captainpax', 'amzyoshio']);
 const MASTER_DISCORD_SETTINGS_KEY = 'masterDiscordBot';
 const DEFAULT_MASTER_BOT_SETTINGS = Object.freeze({
@@ -83,6 +87,11 @@ const DEFAULT_MASTER_BOT_SETTINGS = Object.freeze({
         sendGameStartMessage: true,
         autoSyncUsers: false,
         notifyDemonUpdate: false,
+    },
+    oauth: {
+        clientId: '',
+        clientSecret: '',
+        redirectUrl: '',
     },
 });
 const readiness = {
@@ -4250,6 +4259,92 @@ function parseUUID(value) {
     return id;
 }
 
+function escapeRegExp(value) {
+    return value.replace(/[|\\{}()\[\]^$+*?.-]/g, '\\$&');
+}
+
+async function isUsernameTakenInsensitive(username) {
+    const pattern = `^${escapeRegExp(username)}$`;
+    const existing = await User.findOne({
+        username: { $regex: pattern, $options: 'i' },
+    })
+        .lean()
+        .exec();
+    return !!existing;
+}
+
+function sanitizeDiscordUsernameSeed(raw) {
+    if (typeof raw !== 'string') return '';
+    const normalized = raw
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^A-Za-z0-9_]/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .toLowerCase();
+    const sliced = normalized.slice(0, 30);
+    return sliced.length >= 3 ? sliced : '';
+}
+
+async function findAvailableUsername(base) {
+    const sanitizedBase = sanitizeDiscordUsernameSeed(base);
+    if (!sanitizedBase) return null;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+        const suffix = attempt === 0 ? '' : `_${attempt}`;
+        const maxBaseLength = 30 - suffix.length;
+        if (maxBaseLength < 3) continue;
+        const candidate = `${sanitizedBase.slice(0, maxBaseLength)}${suffix}`;
+        // eslint-disable-next-line no-await-in-loop
+        const taken = await isUsernameTakenInsensitive(candidate);
+        if (!taken) {
+            return candidate;
+        }
+    }
+    return null;
+}
+
+async function generateUniqueUsernameFromDiscordProfile(profile) {
+    const seeds = [profile?.global_name, profile?.username];
+    if (profile?.id) {
+        seeds.push(`discord_${profile.id}`);
+    }
+
+    for (const seed of seeds) {
+        // eslint-disable-next-line no-await-in-loop
+        const candidate = await findAvailableUsername(seed);
+        if (candidate) return candidate;
+    }
+
+    while (true) {
+        const fallbackSeed = `discord_${crypto.randomBytes(4).toString('hex')}`;
+        // eslint-disable-next-line no-await-in-loop
+        const candidate = await findAvailableUsername(fallbackSeed);
+        if (candidate) return candidate;
+    }
+}
+
+function createDiscordAvatarUrl(profile) {
+    if (!profile || typeof profile !== 'object') return '';
+    const id = typeof profile.id === 'string' ? profile.id : '';
+    if (!id) return '';
+    const avatar = typeof profile.avatar === 'string' ? profile.avatar : '';
+    if (avatar) {
+        const format = avatar.startsWith('a_') ? 'gif' : 'png';
+        return `https://cdn.discordapp.com/avatars/${id}/${avatar}.${format}`;
+    }
+    const discriminatorRaw = typeof profile.discriminator === 'string' ? profile.discriminator : '';
+    const discriminator = Number.parseInt(discriminatorRaw, 10);
+    if (Number.isInteger(discriminator) && discriminator >= 0) {
+        const index = discriminator % 5;
+        return `https://cdn.discordapp.com/embed/avatars/${index}.png`;
+    }
+    return '';
+}
+
+function createOAuthPasswordPlaceholder() {
+    return `oauth$${crypto.randomBytes(32).toString('hex')}`;
+}
+
 // --- helpers ---
 function normalizeDB(raw) {
     const db = raw && typeof raw === 'object' ? raw : {};
@@ -4521,6 +4616,36 @@ function normalizeEventToggles(raw, template) {
     return base;
 }
 
+function normalizeOAuthSettings(raw) {
+    const template = DEFAULT_MASTER_BOT_SETTINGS.oauth;
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const clientId = typeof source.clientId === 'string' ? source.clientId.trim() : template.clientId;
+    const clientSecret = typeof source.clientSecret === 'string'
+        ? source.clientSecret.trim()
+        : template.clientSecret;
+    const redirectUrlRaw = typeof source.redirectUrl === 'string'
+        ? source.redirectUrl.trim()
+        : template.redirectUrl;
+
+    let redirectUrl = '';
+    if (redirectUrlRaw) {
+        try {
+            const url = new URL(redirectUrlRaw);
+            if (url.protocol === 'http:' || url.protocol === 'https:') {
+                redirectUrl = url.toString();
+            }
+        } catch {
+            redirectUrl = '';
+        }
+    }
+
+    return {
+        clientId: clientId.slice(0, 128),
+        clientSecret: clientSecret.slice(0, 256),
+        redirectUrl,
+    };
+}
+
 function normalizeMasterBotSettings(raw) {
     const source = raw && typeof raw === 'object' ? raw : {};
     const prefix = typeof source.prefix === 'string' && source.prefix.trim()
@@ -4530,7 +4655,8 @@ function normalizeMasterBotSettings(raw) {
     const channelBindings = normalizeStringMap(source.channelBindings, DEFAULT_MASTER_BOT_SETTINGS.channelBindings);
     const webhooks = normalizeStringMap(source.webhooks, DEFAULT_MASTER_BOT_SETTINGS.webhooks);
     const events = normalizeEventToggles(source.events, DEFAULT_MASTER_BOT_SETTINGS.events);
-    return { prefix, adminRoles, channelBindings, webhooks, events };
+    const oauth = normalizeOAuthSettings(source.oauth);
+    return { prefix, adminRoles, channelBindings, webhooks, events, oauth };
 }
 
 async function getMasterBotSettings() {
@@ -4657,6 +4783,223 @@ function requireAuth(req, res, next) {
     next();
 }
 
+function persistSession(req) {
+    return new Promise((resolve, reject) => {
+        if (!req.session) {
+            resolve();
+            return;
+        }
+        req.session.save((err) => {
+            if (err) {
+                reject(err);
+            } else {
+                resolve();
+            }
+        });
+    });
+}
+
+async function redirectWithSession(req, res, location) {
+    try {
+        await persistSession(req);
+    } catch (err) {
+        discordLogger.error('Failed to persist session for Discord OAuth redirect.', err);
+        res.status(500).json({ error: 'session_save_failed' });
+        return false;
+    }
+    res.redirect(location);
+    return true;
+}
+
+function buildDiscordOAuthRedirectLocation({ error } = {}) {
+    if (error) {
+        return `/?discordError=${encodeURIComponent(error)}`;
+    }
+    return '/';
+}
+
+app.get('/api/auth/discord/start', async (req, res) => {
+    try {
+        const settings = await getMasterBotSettings();
+        const oauth = settings?.oauth || {};
+        const clientId = typeof oauth.clientId === 'string' ? oauth.clientId : '';
+        const redirectUrl = typeof oauth.redirectUrl === 'string' ? oauth.redirectUrl : '';
+
+        if (!clientId || !redirectUrl) {
+            return res.status(400).json({ error: 'discord_oauth_not_configured' });
+        }
+
+        const state = crypto.randomBytes(16).toString('hex');
+        req.session.discordOAuth = {
+            state,
+            createdAt: Date.now(),
+        };
+
+        const authorizeUrl = new URL(DISCORD_OAUTH_AUTHORIZE_URL);
+        authorizeUrl.searchParams.set('response_type', 'code');
+        authorizeUrl.searchParams.set('client_id', clientId);
+        authorizeUrl.searchParams.set('scope', DISCORD_OAUTH_SCOPES.join(' '));
+        authorizeUrl.searchParams.set('redirect_uri', redirectUrl);
+        authorizeUrl.searchParams.set('state', state);
+        authorizeUrl.searchParams.set('prompt', 'consent');
+
+        await redirectWithSession(req, res, authorizeUrl.toString());
+    } catch (err) {
+        discordLogger.error('Failed to initiate Discord OAuth flow.', err);
+        res.status(500).json({ error: 'discord_oauth_start_failed' });
+    }
+});
+
+app.get('/api/auth/discord/callback', async (req, res) => {
+    const queryError = typeof req.query?.error === 'string' ? req.query.error : '';
+    const stateParam = typeof req.query?.state === 'string' ? req.query.state : '';
+    const code = typeof req.query?.code === 'string' ? req.query.code : '';
+
+    const storedState = req.session.discordOAuth;
+    delete req.session.discordOAuth;
+
+    if (queryError) {
+        const location = buildDiscordOAuthRedirectLocation({ error: 'discord_authorization_denied' });
+        await redirectWithSession(req, res, location);
+        return;
+    }
+
+    const expectedState = storedState && typeof storedState.state === 'string' ? storedState.state : '';
+    const createdAt = storedState && Number.isFinite(Number(storedState.createdAt))
+        ? Number(storedState.createdAt)
+        : 0;
+    const now = Date.now();
+
+    if (!stateParam || !expectedState || stateParam !== expectedState) {
+        const location = buildDiscordOAuthRedirectLocation({ error: 'discord_invalid_state' });
+        await redirectWithSession(req, res, location);
+        return;
+    }
+
+    if (createdAt && now - createdAt > DISCORD_OAUTH_STATE_TTL_MS) {
+        const location = buildDiscordOAuthRedirectLocation({ error: 'discord_state_expired' });
+        await redirectWithSession(req, res, location);
+        return;
+    }
+
+    if (!code) {
+        const location = buildDiscordOAuthRedirectLocation({ error: 'discord_missing_code' });
+        await redirectWithSession(req, res, location);
+        return;
+    }
+
+    const settings = await getMasterBotSettings();
+    const oauth = settings?.oauth || {};
+    const clientId = typeof oauth.clientId === 'string' ? oauth.clientId : '';
+    const clientSecret = typeof oauth.clientSecret === 'string' ? oauth.clientSecret : '';
+    const redirectUrl = typeof oauth.redirectUrl === 'string' ? oauth.redirectUrl : '';
+
+    if (!clientId || !clientSecret || !redirectUrl) {
+        const location = buildDiscordOAuthRedirectLocation({ error: 'discord_oauth_not_configured' });
+        await redirectWithSession(req, res, location);
+        return;
+    }
+
+    let accessToken;
+    try {
+        const body = new URLSearchParams({
+            client_id: clientId,
+            client_secret: clientSecret,
+            grant_type: 'authorization_code',
+            code,
+            redirect_uri: redirectUrl,
+        });
+        const tokenResponse = await fetch(DISCORD_OAUTH_TOKEN_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: body.toString(),
+        });
+
+        const tokenPayload = await tokenResponse.json().catch(() => null);
+        if (!tokenResponse.ok || !tokenPayload || typeof tokenPayload.access_token !== 'string') {
+            discordLogger.warn('Discord token exchange failed.', {
+                status: tokenResponse.status,
+                error: tokenPayload?.error,
+                error_description: tokenPayload?.error_description,
+            });
+            const location = buildDiscordOAuthRedirectLocation({ error: 'discord_token_exchange_failed' });
+            await redirectWithSession(req, res, location);
+            return;
+        }
+
+        accessToken = tokenPayload.access_token;
+    } catch (err) {
+        discordLogger.error('Failed to exchange Discord authorization code.', err);
+        const location = buildDiscordOAuthRedirectLocation({ error: 'discord_token_request_failed' });
+        await redirectWithSession(req, res, location);
+        return;
+    }
+
+    let profile;
+    try {
+        const profileResponse = await fetch(`${DISCORD_API_BASE}/users/@me`, {
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+            },
+        });
+        const profilePayload = await profileResponse.json().catch(() => null);
+        if (!profileResponse.ok || !profilePayload || typeof profilePayload.id !== 'string') {
+            discordLogger.warn('Discord profile request failed.', {
+                status: profileResponse.status,
+                error: profilePayload?.message,
+            });
+            const location = buildDiscordOAuthRedirectLocation({ error: 'discord_profile_fetch_failed' });
+            await redirectWithSession(req, res, location);
+            return;
+        }
+        profile = profilePayload;
+    } catch (err) {
+        discordLogger.error('Failed to fetch Discord user profile.', err);
+        const location = buildDiscordOAuthRedirectLocation({ error: 'discord_profile_request_failed' });
+        await redirectWithSession(req, res, location);
+        return;
+    }
+
+    try {
+        let user = await User.findOne({ discordId: profile.id }).exec();
+        if (!user) {
+            const username = await generateUniqueUsernameFromDiscordProfile(profile);
+            user = new User({
+                id: uuid(),
+                username,
+                pass: createOAuthPasswordPlaceholder(),
+                banned: false,
+            });
+        }
+
+        user.discordId = profile.id;
+        user.discordUsername = typeof profile.username === 'string' ? profile.username : undefined;
+        user.discordGlobalName = typeof profile.global_name === 'string' ? profile.global_name : undefined;
+        const avatarUrl = createDiscordAvatarUrl(profile);
+        user.discordAvatar = avatarUrl || undefined;
+
+        await user.save();
+
+        if (user.banned) {
+            delete req.session.userId;
+            const location = buildDiscordOAuthRedirectLocation({ error: 'discord_user_banned' });
+            await redirectWithSession(req, res, location);
+            return;
+        }
+
+        req.session.userId = user.id;
+        const location = buildDiscordOAuthRedirectLocation();
+        await redirectWithSession(req, res, location);
+        return;
+    } catch (err) {
+        discordLogger.error('Failed to upsert Discord user record.', err);
+        const location = buildDiscordOAuthRedirectLocation({ error: 'discord_user_sync_failed' });
+        await redirectWithSession(req, res, location);
+    }
+});
+
 // --- Auth ---
 app.get('/api/auth/me', async (req, res) => {
     const db = await readDB();
@@ -4672,6 +5015,14 @@ app.get('/api/auth/me', async (req, res) => {
         email: sanitized.email || null,
         banned: !!sanitized.banned,
         isAdmin: isServerAdminUser(sanitized),
+        discord: sanitized.discordId
+            ? {
+                  id: sanitized.discordId,
+                  username: sanitized.discordUsername || null,
+                  globalName: sanitized.discordGlobalName || null,
+                  avatar: sanitized.discordAvatar || null,
+              }
+            : null,
     });
 });
 
