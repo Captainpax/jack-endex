@@ -58,6 +58,7 @@ import ItemsTab from '../components/ItemsTab.vue';
 import MySheetTab from '../components/MySheetTab.vue';
 import DemonTab from '../components/DemonTab.vue';
 import ServerManagementTab from '../components/ServerManagementTab.vue';
+import CampaignSettings from '../components/CampaignSettings.vue';
 
 import { Help, StoryLogs } from '../api';
 import { buildNavigation } from '../constants/navigation';
@@ -83,6 +84,7 @@ const SUPPORTED_TAB_KEYS = new Set([
     'items',
     'demons',
     'storyLogs',
+    'settings',
     'help',
     'serverManagement',
 ]);
@@ -251,6 +253,8 @@ const activeComponent = computed(() => {
             return DemonTab;
         case 'storyLogs':
             return StoryLogsPanel;
+        case 'settings':
+            return CampaignSettings;
         case 'help':
             return HelpPanel;
         case 'serverManagement':
@@ -282,6 +286,13 @@ const activeComponentProps = computed(() => {
             return { game, me: me.value };
         case StoryLogsPanel:
             return { snapshot: storyLogSnapshot.value, onRefresh: fetchStoryLog };
+        case CampaignSettings:
+            return {
+                game,
+                me: me.value,
+                onRefreshGame: refreshActiveGame,
+                onRefreshStory: fetchStoryLog,
+            };
         case HelpPanel:
             return {
                 docs: helpDocList.value,
