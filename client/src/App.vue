@@ -23,7 +23,7 @@
                             <button type="button" class="game-list__button" @click="() => selectGame(game.id)">
                                 <span class="game-list__name">{{ game.name || `Campaign ${game.id}` }}</span>
                                 <span class="game-list__meta">
-                                    DM · {{ describePlayer(game.dm) }} · Players {{ game.players?.length || 0 }}
+                                    DM · {{ describeGameDungeonMaster(game) }} · Players {{ game.players?.length || 0 }}
                                 </span>
                             </button>
                         </li>
@@ -42,7 +42,7 @@
                 <header class="app-shell__content-header">
                     <h2>{{ activeGame.name }}</h2>
                     <p class="app-shell__content-meta">
-                        DM · {{ describePlayer(activeGame.dm) }} — Updated {{ formatUpdated(activeGame.updatedAt) }}
+                        DM · {{ describeGameDungeonMaster(activeGame) }} — Updated {{ formatUpdated(activeGame.updatedAt) }}
                     </p>
                 </header>
                 <component :is="activeComponent" v-bind="activeComponentProps" />
@@ -187,6 +187,36 @@ function describePlayer(player) {
     return 'Unknown';
 }
 
+function resolveGameDungeonMaster(game) {
+    if (!game) return null;
+    const players = Array.isArray(game.players) ? game.players : [];
+    if (players.length) {
+        const byRole = players.find((player) => player?.role === 'dm');
+        if (byRole) return byRole;
+    }
+
+    const normalizedDmId = normalizeId(game.dmId) ?? game.dmId ?? null;
+    if (normalizedDmId && players.length) {
+        const byId = players.find((player) => {
+            if (!player) return false;
+            const { userId, id, user } = player;
+            return (
+                idsMatch(userId, normalizedDmId) ||
+                idsMatch(id, normalizedDmId) ||
+                idsMatch(user?.id, normalizedDmId)
+            );
+        });
+        if (byId) return byId;
+    }
+
+    if (game.dm) return game.dm;
+    return normalizedDmId;
+}
+
+function describeGameDungeonMaster(game) {
+    return describePlayer(resolveGameDungeonMaster(game));
+}
+
 function formatUpdated(value) {
     if (!value) return 'recently';
     const timestamp = Date.parse(value);
@@ -262,7 +292,13 @@ async function fetchGame(id) {
     try {
         const data = await Games.get(id);
         error.value = '';
-        activeGame.value = data ? { ...data, id: normalizeId(data.id) ?? data.id } : null;
+        activeGame.value = data
+            ? {
+                  ...data,
+                  id: normalizeId(data.id) ?? data.id,
+                  dmId: normalizeId(data.dmId) ?? data.dmId,
+              }
+            : null;
         if (activeTab.value === 'storyLogs') {
             await fetchStoryLog();
         }
