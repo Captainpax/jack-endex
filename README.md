@@ -1,12 +1,12 @@
 # Jack Endex Campaign Dashboard
 
-Jack Endex is a full-stack toolkit for running tabletop campaigns with a digital codex, combat tracker, and Discord integration. The backend is powered by Express and MongoDB, while the client is a React + Vite single-page app.
+Jack Endex is a full-stack toolkit for running tabletop campaigns with a digital codex, combat tracker, and Discord integration. The backend is powered by Express and MongoDB, while the client is a Vue 3 single-page app built with Vite.
 
 ## Project structure
 
 The repository is split into three top-level workspaces plus static assets:
 
-- `client/` – the Vite + React single-page application source.
+- `client/` – the Vite + Vue 3 single-page application source.
 - `server/` – the Express API, data models, utilities, and Discord integrations.
 - `shared/` – assets that are consumed by both the server and client (for example the `txtdocs/` reference library).
 - `public/` – static files copied verbatim into the Vite build.
@@ -48,7 +48,7 @@ Running `npm run build` outputs the compiled client bundle to `dist/`, which the
    npm run dev
    ```
 
-The API listens on `http://localhost:3000` and the React client on `http://localhost:5173`.
+The API listens on `http://localhost:3000` and the Vite dev server for the Vue client on `http://localhost:5173`.
 
 ## Docker
 
@@ -199,7 +199,7 @@ The bot automatically registers or updates its slash commands at startup. `/demo
 | `npm run bot:demon` | Starts the Discord gateway bot that powers the slash command. |
 | `npm run dev` | Runs the API server and Vite dev client together. |
 | `npm run start` | Launches the API server only (expects a built client in `dist/`). |
-| `npm run build` | Builds the production React bundle. |
+| `npm run build` | Builds the production Vue bundle. |
 | `npm run lint` | Lints the entire project. |
 
 ## Importing additional data
