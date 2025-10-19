@@ -63,25 +63,21 @@
                     </div>
                 </div>
             </div>
-
-            <div class="map-status">
-                <span class="map-status__badge" :class="{ 'is-paused': mapState.paused }">
-                    {{ mapState.paused ? 'Paused' : 'Live' }}
-                </span>
-                <span class="map-status__item" v-if="drawerName">
-                    Drawer:
-                    <strong>{{ drawerName }}</strong>
-                    <span class="map-status__dot" :class="{ 'is-online': isDrawerOnline }"></span>
-                    <span class="map-status__presence">{{ isDrawerOnline ? 'Online' : 'Offline' }}</span>
-                </span>
-                <span class="map-status__item" v-if="drawerAssignedLabel">
-                    Assigned {{ drawerAssignedLabel }}
-                </span>
-                <span class="map-status__item">
-                    Drawing {{ mapState.settings.allowPlayerDrawing ? 'enabled' : 'disabled' }} ·
-                    Token moves {{ mapState.settings.allowPlayerTokenMoves ? 'enabled' : 'disabled' }}
-                </span>
-            </div>
+            <MapControlsPanel
+                :map-state="mapState"
+                :drawer-name="drawerName"
+                :drawer-assigned-label="drawerAssignedLabel"
+                :is-drawer-online="isDrawerOnline"
+                :sync-busy="syncBusy"
+                :pause-busy="togglePauseBusy"
+                :assign-busy="assignDrawerBusy"
+                :can-pause="canPauseMap"
+                :can-assign-drawer="canAssignDrawer"
+                :assign-label="assignDrawerLabel"
+                @sync="handleManualSync"
+                @toggle-pause="handleTogglePause"
+                @assign-drawer="handleAssignDrawer"
+            />
         </template>
 
         <template #sidebar>
@@ -125,6 +121,7 @@ import { useBattleLogger } from '../../composables/useBattleLogger';
 import BattleMapHeader from './BattleMapHeader.vue';
 import BattleMapLayout from './BattleMapLayout.vue';
 import BattleMapSidebar from './BattleMapSidebar.vue';
+import MapControlsPanel from './MapControlsPanel.vue';
 import { describePlayerName, mapReadBoolean } from './mapShared';
 import { idsMatch, normalizeId } from '../../utils/ids';
 
@@ -153,6 +150,8 @@ const boardRef = ref(null);
 const canvasRef = ref(null);
 const onlineUserIds = ref([]);
 const syncBusy = ref(false);
+const togglePauseBusy = ref(false);
+const assignDrawerBusy = ref(false);
 
 const sidebarPanels = computed(() => [
     {
@@ -332,6 +331,31 @@ const isDrawerOnline = computed(() => {
     const drawerId = mapState.drawer.userId;
     if (!drawerId) return false;
     return onlineUserIds.value.some((id) => idsMatch(id, drawerId));
+});
+
+const meId = computed(() => normalizeId(props.me?.id));
+const dungeonMasterId = computed(() => normalizeId(props.game?.dmId));
+const canManageMap = computed(() => idsMatch(dungeonMasterId.value, meId.value));
+const isDrawerGameMaster = computed(() => idsMatch(mapState.drawer.userId, dungeonMasterId.value));
+const hasAssignedDrawer = computed(() => !!mapState.drawer.userId && !isDrawerGameMaster.value);
+const assignDrawerCandidateId = computed(() => {
+    if (meId.value && !idsMatch(meId.value, dungeonMasterId.value)) {
+        return meId.value;
+    }
+    return null;
+});
+const canPauseMap = computed(() => canManageMap.value);
+const canAssignDrawer = computed(
+    () => canManageMap.value && (hasAssignedDrawer.value || !!assignDrawerCandidateId.value)
+);
+const assignDrawerLabel = computed(() => {
+    if (hasAssignedDrawer.value) {
+        return 'Release drawer';
+    }
+    if (assignDrawerCandidateId.value) {
+        return idsMatch(assignDrawerCandidateId.value, meId.value) ? 'Assign to me' : 'Assign drawer';
+    }
+    return 'Assign drawer';
 });
 
 function handleRealtimeEvent(event) {
@@ -641,6 +665,58 @@ async function handleManualSync() {
     await requestSync({ manual: true });
 }
 
+async function handleTogglePause() {
+    if (!canPauseMap.value || togglePauseBusy.value) return;
+    const nextPaused = !mapState.paused;
+    togglePauseBusy.value = true;
+    try {
+        await updateMapSettings({ paused: nextPaused });
+        log(nextPaused ? 'map_pause' : 'map_resume', `Map ${nextPaused ? 'paused' : 'resumed'}`);
+    } catch (err) {
+        if (import.meta.env.DEV) {
+            console.warn('Failed to toggle map pause', err);
+        }
+    } finally {
+        togglePauseBusy.value = false;
+    }
+}
+
+async function handleAssignDrawer() {
+    if (!canAssignDrawer.value || assignDrawerBusy.value) return;
+    const releaseToGameMaster = hasAssignedDrawer.value;
+    const nextDrawerId = releaseToGameMaster ? dungeonMasterId.value : assignDrawerCandidateId.value;
+    if (!releaseToGameMaster && !nextDrawerId) return;
+    assignDrawerBusy.value = true;
+    try {
+        await updateMapSettings({ drawerUserId: nextDrawerId });
+        log(
+            'map_assign_drawer',
+            nextDrawerId ? `Assigned drawer to ${nextDrawerId}` : 'Released drawer to game master'
+        );
+    } catch (err) {
+        if (import.meta.env.DEV) {
+            console.warn('Failed to update drawer assignment', err);
+        }
+    } finally {
+        assignDrawerBusy.value = false;
+    }
+}
+
+async function updateMapSettings(payload) {
+    const gameId = currentGameId.value;
+    if (!gameId) return null;
+    try {
+        const snapshot = await Games.updateMapSettings(gameId, payload);
+        applyMapState(snapshot);
+        return snapshot;
+    } catch (err) {
+        if (import.meta.env.DEV) {
+            console.warn('Failed to update map settings', err);
+        }
+        throw err;
+    }
+}
+
 function formatRelativeTime(value) {
     if (!value) return '';
     const timestamp = Date.parse(value);
@@ -892,54 +968,6 @@ function resolveTokenColor(color, kind) {
     display: flex;
     align-items: center;
     gap: 8px;
-}
-
-.map-status {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    align-items: center;
-    font-size: 0.85rem;
-    color: var(--muted);
-}
-
-.map-status__badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 2px 8px;
-    border-radius: 999px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    background: rgba(34, 197, 94, 0.18);
-    color: rgba(34, 197, 94, 0.95);
-}
-
-.map-status__badge.is-paused {
-    background: rgba(248, 113, 113, 0.18);
-    color: rgba(248, 113, 113, 0.95);
-}
-
-.map-status__item {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.map-status__dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: rgba(148, 163, 184, 0.6);
-    display: inline-block;
-}
-
-.map-status__dot.is-online {
-    background: rgba(74, 222, 128, 0.95);
-}
-
-.map-status__presence {
-    font-weight: 600;
 }
 
 .map-battle-log__description {
