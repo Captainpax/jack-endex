@@ -51,6 +51,7 @@ import {
     DISCORD_OAUTH_TOKEN_URL,
     applyDiscordTokenResponse,
 } from './services/discordOAuth.js';
+import { updateDiscordBotIdentity } from './services/discordBotIdentity.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -107,6 +108,7 @@ const DEFAULT_MASTER_BOT_SETTINGS = Object.freeze({
     displayName: '',
     avatarAsset: '',
 });
+let cachedMasterBotSettings = null;
 const readiness = {
     db: false,
     discord: false,
@@ -1565,6 +1567,10 @@ function findMapToken(map, tokenId) {
  * @returns {string|null}
  */
 function getDiscordBotToken(env = process.env) {
+    const cachedToken = cachedMasterBotSettings?.botToken;
+    if (typeof cachedToken === 'string' && cachedToken.trim()) {
+        return readBotToken(cachedToken);
+    }
     if (env && typeof env.DISCORD_BOT_TOKEN === 'string' && env.DISCORD_BOT_TOKEN.trim()) {
         return readBotToken(env.DISCORD_BOT_TOKEN);
     }
@@ -4897,6 +4903,9 @@ function prepareMasterBotSettingsForStorage(settings) {
 function maskMasterBotSettings(settings) {
     const maskedSecret = settings.oauthClientSecret ? SECRET_MASK : '';
     const maskedBotToken = settings.botToken ? SECRET_MASK : '';
+    const warnings = Array.isArray(settings.discordSyncWarnings)
+        ? settings.discordSyncWarnings.filter((warning) => typeof warning === 'string' && warning.trim())
+        : [];
     return {
         prefix: settings.prefix,
         adminRoles: [...settings.adminRoles],
@@ -4917,13 +4926,20 @@ function maskMasterBotSettings(settings) {
         defaultPresence: settings.defaultPresence,
         displayName: settings.displayName,
         avatarAsset: settings.avatarAsset,
+        ...(warnings.length ? { discordSyncWarnings: warnings } : {}),
     };
 }
 
-async function getMasterBotSettings() {
+async function getMasterBotSettings({ refresh = false } = {}) {
+    if (!refresh && cachedMasterBotSettings) {
+        return cachedMasterBotSettings;
+    }
     const doc = await ServerSetting.findOne({ key: MASTER_DISCORD_SETTINGS_KEY }).lean();
-    if (!doc) return normalizeMasterBotSettings({});
-    return normalizeMasterBotSettings(doc.value || {});
+    const normalized = doc
+        ? normalizeMasterBotSettings(doc.value || {})
+        : normalizeMasterBotSettings({});
+    cachedMasterBotSettings = normalized;
+    return normalized;
 }
 
 async function saveMasterBotSettings(settings) {
@@ -4936,7 +4952,37 @@ async function saveMasterBotSettings(settings) {
         { value: stored },
         { upsert: true, setDefaultsOnInsert: true },
     );
-    return normalized;
+    cachedMasterBotSettings = normalized;
+
+    const responseSettings = { ...normalized };
+    const tokenChanged = existing.botToken !== normalized.botToken;
+    const displayNameChanged = existing.displayName !== normalized.displayName;
+    const presenceChanged = existing.defaultPresence !== normalized.defaultPresence;
+    const avatarChanged = existing.avatarAsset !== normalized.avatarAsset;
+
+    if (
+        normalized.botToken &&
+        (tokenChanged || displayNameChanged || presenceChanged || avatarChanged)
+    ) {
+        try {
+            const result = await updateDiscordBotIdentity({
+                token: normalized.botToken,
+                displayName: normalized.displayName,
+                avatarAsset: normalized.avatarAsset,
+                defaultPresence: normalized.defaultPresence,
+                fetchImpl: globalThis.fetch,
+                logger: discordLogger,
+            });
+            if (result?.warnings?.length) {
+                responseSettings.discordSyncWarnings = [...result.warnings];
+            }
+        } catch (err) {
+            discordLogger.warn('Failed to synchronize Discord bot identity.', err);
+            responseSettings.discordSyncWarnings = ['sync_failed'];
+        }
+    }
+
+    return responseSettings;
 }
 
 const app = express();
@@ -8620,6 +8666,15 @@ async function startServer() {
     await ensureInitialItemDocs();
     await ensureInitialDemonDocs();
     startupLogger.info('Initial data ready.');
+
+    try {
+        startupLogger.info('Loading master Discord bot settings…');
+        const masterBotSettings = await getMasterBotSettings();
+        const tokenState = masterBotSettings?.botToken ? 'present' : 'absent';
+        startupLogger.info(`Master Discord bot settings loaded (token ${tokenState}).`);
+    } catch (err) {
+        startupLogger.warn('Failed to load master Discord bot settings during startup.', err);
+    }
 
     startupLogger.info('Checking Discord bot availability…');
     await ensureDiscordBotOnline();

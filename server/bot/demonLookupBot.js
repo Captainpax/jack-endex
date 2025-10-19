@@ -11,6 +11,8 @@ import {
 } from 'discord.js';
 import { loadEnv, envString, envNumber } from '../config/env.js';
 import mongoose from '../lib/mongoose.js';
+import ServerSetting from '../models/ServerSetting.js';
+import { createSecretBox } from '../lib/secretStorage.js';
 import User from '../models/User.js';
 import {
     searchDemons,
@@ -24,13 +26,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 await loadEnv({ root: path.resolve(__dirname, '..', '..') });
 
-const token = envString('DISCORD_PRIMARY_BOT_TOKEN')
-    || envString('DISCORD_DEFAULT_BOT_TOKEN')
-    || envString('DISCORD_BOT_TOKEN')
-    || envString('BOT_TOKEN');
+const MASTER_DISCORD_SETTINGS_KEY = 'masterDiscordBot';
 const uri = envString('MONGODB_URI');
 const dbName = envString('MONGODB_DB_NAME');
-const applicationId = envString('DISCORD_APPLICATION_ID');
+let applicationId = envString('DISCORD_APPLICATION_ID');
 const commandGuildId = envString('DISCORD_COMMAND_GUILD_ID')
     || envString('DISCORD_PRIMARY_GUILD_ID')
     || envString('DISCORD_GUILD_ID')
@@ -43,16 +42,17 @@ const COMMAND_REGISTER_RETRY_DELAY_MS = Math.max(
     envNumber('BOT_COMMAND_REGISTER_RETRY_MS', 2_000) || 2_000,
 );
 
-if (!token) {
-    console.error('Missing bot token. Set DISCORD_PRIMARY_BOT_TOKEN or DISCORD_BOT_TOKEN in your .env file.');
-    process.exit(1);
-}
+const masterBotSecretBox = createSecretBox(envString('MASTER_BOT_SECRET_KEY', ''));
+let masterBotSettings = null;
+let botToken = '';
+let defaultPresenceMessage = '';
+
 if (!uri) {
     console.error('Missing MONGODB_URI environment variable.');
     process.exit(1);
 }
 
-const rest = new REST({ version: '10' }).setToken(token);
+const rest = new REST({ version: '10' });
 
 async function delay(ms) {
     await new Promise((resolve) => setTimeout(resolve, ms));
@@ -83,6 +83,94 @@ async function connectToDatabaseWithRetry(
     }
 
     throw lastError ?? new Error('Bot failed to connect to MongoDB.');
+}
+
+function sanitizeOptionalString(value, maxLength = 256) {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    if (!trimmed) return '';
+    return trimmed.slice(0, maxLength);
+}
+
+function readSecretField(value) {
+    if (masterBotSecretBox.isEncrypted?.(value)) {
+        return masterBotSecretBox.decrypt(value) || '';
+    }
+    if (typeof value === 'string') {
+        return value.trim();
+    }
+    return '';
+}
+
+function isPlainObject(value) {
+    return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+async function loadPersistedMasterBotSettings() {
+    try {
+        const doc = await ServerSetting.findOne({ key: MASTER_DISCORD_SETTINGS_KEY }).lean();
+        if (!doc || !isPlainObject(doc.value)) {
+            return null;
+        }
+        const source = doc.value;
+        const botTokenValue = readSecretField(source.botToken);
+        const botApplicationId = sanitizeOptionalString(source.botApplicationId, 128);
+        const defaultPresence = sanitizeOptionalString(source.defaultPresence, 128);
+        const displayName = sanitizeOptionalString(source.displayName, 100);
+        const avatarAsset = sanitizeOptionalString(source.avatarAsset, 256);
+        return {
+            botToken: botTokenValue,
+            botApplicationId,
+            defaultPresence,
+            displayName,
+            avatarAsset,
+        };
+    } catch (err) {
+        console.error('[bot] Failed to load persisted master bot settings:', err);
+        return null;
+    }
+}
+
+function resolveLegacyBotToken() {
+    return (
+        envString('DISCORD_PRIMARY_BOT_TOKEN')
+        || envString('DISCORD_DEFAULT_BOT_TOKEN')
+        || envString('DISCORD_BOT_TOKEN')
+        || envString('BOT_TOKEN')
+    );
+}
+
+async function hydrateBotCredentials() {
+    masterBotSettings = await loadPersistedMasterBotSettings();
+
+    if (masterBotSettings) {
+        console.log('[bot] Loaded master Discord bot settings from MongoDB.');
+    } else {
+        console.log('[bot] Master Discord bot settings not found; using environment fallbacks.');
+    }
+
+    const persistedToken = masterBotSettings?.botToken ? masterBotSettings.botToken.trim() : '';
+    botToken = persistedToken || resolveLegacyBotToken();
+
+    const tokenSource = persistedToken ? 'persisted settings' : 'environment variables';
+
+    if (!botToken) {
+        console.error(
+            'Missing bot token. Configure the master bot settings or set DISCORD_PRIMARY_BOT_TOKEN in your environment.',
+        );
+        process.exit(1);
+    }
+
+    rest.setToken(botToken);
+    console.log(`[bot] Using Discord bot token from ${tokenSource}.`);
+
+    const persistedAppId = masterBotSettings?.botApplicationId
+        ? masterBotSettings.botApplicationId.trim()
+        : '';
+    applicationId = persistedAppId || envString('DISCORD_APPLICATION_ID');
+    defaultPresenceMessage = masterBotSettings?.defaultPresence
+        ? masterBotSettings.defaultPresence.trim()
+        : '';
 }
 
 const slashCommandBuilders = [
@@ -424,8 +512,16 @@ function startClient() {
         const tag = readyClient.user?.tag || readyClient.user?.username || 'bot';
         console.log(`[bot] Ready as ${tag}.`);
         if (readyClient.user) {
+            const trimmedPresence = typeof defaultPresenceMessage === 'string'
+                ? defaultPresenceMessage.trim()
+                : '';
+            const activities = trimmedPresence
+                ? [{ name: trimmedPresence, type: ActivityType.Playing }]
+                : masterBotSettings
+                    ? []
+                    : [{ name: '/codex <demon>', type: ActivityType.Listening }];
             readyClient.user.setPresence({
-                activities: [{ name: '/codex <demon>', type: ActivityType.Listening }],
+                activities,
                 status: 'online',
             }).catch((err) => {
                 console.warn('[bot] Failed to set presence:', err);
@@ -471,7 +567,7 @@ function startClient() {
         console.warn('[bot] Warning:', message);
     });
 
-    return client.login(token).catch((err) => {
+    return client.login(botToken).catch((err) => {
         console.error('[bot] Failed to log in:', err);
         throw err;
     });
@@ -510,6 +606,7 @@ process.on('unhandledRejection', (reason) => {
 async function main() {
     try {
         await connectToDatabaseWithRetry(uri, { dbName: dbName || undefined });
+        await hydrateBotCredentials();
         await registerSlashCommandsWithRetry();
         console.log('[bot] Connected to MongoDB. Starting Discord client…');
         await startClient();

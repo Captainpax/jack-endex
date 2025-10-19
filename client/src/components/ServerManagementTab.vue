@@ -1052,7 +1052,12 @@ async function handleSaveMasterBot() {
         const saved = await ServerAdmin.masterBot.update(payload);
         masterBot.value = saved || null;
         syncMasterBotForm(saved || {});
-        setMasterBotSaveNotice('Settings saved.');
+        const warnings = Array.isArray(saved?.discordSyncWarnings) ? saved.discordSyncWarnings : [];
+        if (warnings.length) {
+            setMasterBotSaveNotice('Settings saved, but Discord could not be updated. Check the server logs for details.');
+        } else {
+            setMasterBotSaveNotice('Settings saved.');
+        }
     } catch (error) {
         console.error('[admin] Failed to update master bot settings', error);
         masterBot.value = previousSnapshot || null;
