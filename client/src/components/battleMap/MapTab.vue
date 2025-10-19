@@ -1,132 +1,130 @@
 <template>
-    <section class="map-tab">
-        <header class="map-header">
-            <div class="map-header__info">
-                <h3 class="map-header__title">Battle map</h3>
-                <p class="map-header__meta" v-if="updatedAtLabel">
-                    Last updated {{ updatedAtLabel }}
-                </p>
-            </div>
-            <div class="map-header__actions">
-                <button type="button" class="btn secondary" :disabled="syncBusy" @click="handleManualSync">
-                    <span v-if="syncBusy">Syncing…</span>
-                    <span v-else>Sync map</span>
-                </button>
-            </div>
-        </header>
+    <BattleMapLayout>
+        <template #header>
+            <BattleMapHeader
+                :updated-at-label="updatedAtLabel"
+                :sync-busy="syncBusy"
+                @sync="handleManualSync"
+            />
+        </template>
 
-        <div class="map-layout">
-            <div class="map-board-wrapper">
-                <div class="map-board" ref="boardRef" :style="boardStyle">
-                    <div class="map-board__background" :style="backgroundSurfaceStyle">
-                        <img
-                            v-if="hasBackgroundImage"
-                            class="map-board__background-image"
-                            :src="background.url"
-                            alt="Battle map background"
-                            draggable="false"
-                            :style="backgroundImageStyle"
-                        />
-                    </div>
-                    <canvas class="map-board__canvas" ref="canvasRef"></canvas>
-                    <div class="map-board__shapes">
-                        <div
-                            v-for="shape in mapState.shapes"
-                            :key="shape.id"
-                            :class="['map-shape', `map-shape--${shape.type}`]"
-                            :style="shapeStyle(shape)"
-                        >
-                            <div class="map-shape__surface" :style="shapeSurfaceStyle(shape)">
-                                <template v-if="shape.type === 'image'">
-                                    <img
-                                        v-if="shape.url"
-                                        class="map-shape__image"
-                                        :src="shape.url"
-                                        alt=""
-                                        draggable="false"
-                                    />
-                                    <div v-else class="map-shape__empty">No image</div>
-                                </template>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="map-board__tokens">
-                        <div
-                            v-for="token in mapState.tokens"
-                            :key="token.id"
-                            :class="['map-token', `map-token--${token.kind}`]"
-                            :style="tokenStyle(token)"
-                        >
-                            <div class="map-token__inner">
-                                <span class="map-token__label">{{ token.label || 'Token' }}</span>
-                            </div>
-                            <div v-if="token.showTooltip && token.tooltip" class="map-token__tooltip">
-                                {{ token.tooltip }}
-                            </div>
-                        </div>
-                    </div>
-                    <div v-if="boardOverlayMessages.length" class="map-board__overlay">
-                        <div class="map-board__overlay-content">
-                            <p v-for="message in boardOverlayMessages" :key="message">{{ message }}</p>
+        <template #board>
+            <div class="map-board" ref="boardRef" :style="boardStyle">
+                <div class="map-board__background" :style="backgroundSurfaceStyle">
+                    <img
+                        v-if="hasBackgroundImage"
+                        class="map-board__background-image"
+                        :src="background.url"
+                        alt="Battle map background"
+                        draggable="false"
+                        :style="backgroundImageStyle"
+                    />
+                </div>
+                <canvas class="map-board__canvas" ref="canvasRef"></canvas>
+                <div class="map-board__shapes">
+                    <div
+                        v-for="shape in mapState.shapes"
+                        :key="shape.id"
+                        :class="['map-shape', `map-shape--${shape.type}`]"
+                        :style="shapeStyle(shape)"
+                    >
+                        <div class="map-shape__surface" :style="shapeSurfaceStyle(shape)">
+                            <template v-if="shape.type === 'image'">
+                                <img
+                                    v-if="shape.url"
+                                    class="map-shape__image"
+                                    :src="shape.url"
+                                    alt=""
+                                    draggable="false"
+                                />
+                                <div v-else class="map-shape__empty">No image</div>
+                            </template>
                         </div>
                     </div>
                 </div>
-
-                <div class="map-status">
-                    <span class="map-status__badge" :class="{ 'is-paused': mapState.paused }">
-                        {{ mapState.paused ? 'Paused' : 'Live' }}
-                    </span>
-                    <span class="map-status__item" v-if="drawerName">
-                        Drawer:
-                        <strong>{{ drawerName }}</strong>
-                        <span class="map-status__dot" :class="{ 'is-online': isDrawerOnline }"></span>
-                        <span class="map-status__presence">{{ isDrawerOnline ? 'Online' : 'Offline' }}</span>
-                    </span>
-                    <span class="map-status__item" v-if="drawerAssignedLabel">
-                        Assigned {{ drawerAssignedLabel }}
-                    </span>
-                    <span class="map-status__item">
-                        Drawing {{ mapState.settings.allowPlayerDrawing ? 'enabled' : 'disabled' }} ·
-                        Token moves {{ mapState.settings.allowPlayerTokenMoves ? 'enabled' : 'disabled' }}
-                    </span>
+                <div class="map-board__tokens">
+                    <div
+                        v-for="token in mapState.tokens"
+                        :key="token.id"
+                        :class="['map-token', `map-token--${token.kind}`]"
+                        :style="tokenStyle(token)"
+                    >
+                        <div class="map-token__inner">
+                            <span class="map-token__label">{{ token.label || 'Token' }}</span>
+                        </div>
+                        <div v-if="token.showTooltip && token.tooltip" class="map-token__tooltip">
+                            {{ token.tooltip }}
+                        </div>
+                    </div>
+                </div>
+                <div v-if="boardOverlayMessages.length" class="map-board__overlay">
+                    <div class="map-board__overlay-content">
+                        <p v-for="message in boardOverlayMessages" :key="message">{{ message }}</p>
+                    </div>
                 </div>
             </div>
 
-            <aside class="map-sidebar">
-                <section class="map-battle-log">
-                    <header class="map-battle-log__header">
-                        <h3>Battle log</h3>
-                        <p class="map-battle-log__description">
-                            Entries appear in real time as encounters unfold.
-                        </p>
-                    </header>
-                    <div class="map-battle-log__scroller">
-                        <p v-if="!battleLogEntries.length" class="map-battle-log__empty">
-                            No battle log entries yet.
-                        </p>
-                        <article v-for="entry in battleLogEntries" :key="entry.id" class="map-battle-log__entry">
-                            <div class="map-battle-log__meta">
-                                <span class="map-battle-log__time">{{ formatLogTime(entry.createdAt) }}</span>
-                                <span class="map-battle-log__actor">{{ resolveActorName(entry.actorId) }}</span>
-                                <span class="map-battle-log__action"><code>{{ entry.action }}</code></span>
-                            </div>
-                            <p v-if="entry.message" class="map-battle-log__message">{{ entry.message }}</p>
-                            <details v-if="hasLogDetails(entry)" class="map-battle-log__details">
-                                <summary>Details</summary>
-                                <pre>{{ formatLogDetails(entry.details) }}</pre>
-                            </details>
-                        </article>
-                    </div>
-                </section>
-            </aside>
-        </div>
-    </section>
+            <div class="map-status">
+                <span class="map-status__badge" :class="{ 'is-paused': mapState.paused }">
+                    {{ mapState.paused ? 'Paused' : 'Live' }}
+                </span>
+                <span class="map-status__item" v-if="drawerName">
+                    Drawer:
+                    <strong>{{ drawerName }}</strong>
+                    <span class="map-status__dot" :class="{ 'is-online': isDrawerOnline }"></span>
+                    <span class="map-status__presence">{{ isDrawerOnline ? 'Online' : 'Offline' }}</span>
+                </span>
+                <span class="map-status__item" v-if="drawerAssignedLabel">
+                    Assigned {{ drawerAssignedLabel }}
+                </span>
+                <span class="map-status__item">
+                    Drawing {{ mapState.settings.allowPlayerDrawing ? 'enabled' : 'disabled' }} ·
+                    Token moves {{ mapState.settings.allowPlayerTokenMoves ? 'enabled' : 'disabled' }}
+                </span>
+            </div>
+        </template>
+
+        <template #sidebar>
+            <BattleMapSidebar :panels="sidebarPanels">
+                <template #battle-log>
+                    <section class="map-battle-log">
+                        <header class="map-battle-log__header">
+                            <h3>Battle log</h3>
+                            <p class="map-battle-log__description">
+                                Entries appear in real time as encounters unfold.
+                            </p>
+                        </header>
+                        <div class="map-battle-log__scroller">
+                            <p v-if="!battleLogEntries.length" class="map-battle-log__empty">
+                                No battle log entries yet.
+                            </p>
+                            <article v-for="entry in battleLogEntries" :key="entry.id" class="map-battle-log__entry">
+                                <div class="map-battle-log__meta">
+                                    <span class="map-battle-log__time">{{ formatLogTime(entry.createdAt) }}</span>
+                                    <span class="map-battle-log__actor">{{ resolveActorName(entry.actorId) }}</span>
+                                    <span class="map-battle-log__action"><code>{{ entry.action }}</code></span>
+                                </div>
+                                <p v-if="entry.message" class="map-battle-log__message">{{ entry.message }}</p>
+                                <details v-if="hasLogDetails(entry)" class="map-battle-log__details">
+                                    <summary>Details</summary>
+                                    <pre>{{ formatLogDetails(entry.details) }}</pre>
+                                </details>
+                            </article>
+                        </div>
+                    </section>
+                </template>
+            </BattleMapSidebar>
+        </template>
+    </BattleMapLayout>
 </template>
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, watchEffect } from 'vue';
 import { Games } from '../../api';
 import { useBattleLogger } from '../../composables/useBattleLogger';
+import BattleMapHeader from './BattleMapHeader.vue';
+import BattleMapLayout from './BattleMapLayout.vue';
+import BattleMapSidebar from './BattleMapSidebar.vue';
 import { describePlayerName, mapReadBoolean } from './mapShared';
 import { idsMatch, normalizeId } from '../../utils/ids';
 
@@ -155,6 +153,16 @@ const boardRef = ref(null);
 const canvasRef = ref(null);
 const onlineUserIds = ref([]);
 const syncBusy = ref(false);
+
+const sidebarPanels = computed(() => [
+    {
+        id: 'battle-log',
+        title: 'Battle log',
+        description: 'Entries appear in real time as encounters unfold.',
+        slot: 'battle-log',
+        defaultOpen: true,
+    },
+]);
 
 const mapState = reactive(createMapState(props.game?.map));
 
