@@ -590,6 +590,9 @@ async function saveSettings() {
     if (selectedChannel.value) {
         payload.channelName = selectedChannel.value.name || selectedChannel.value.id;
     }
+    if (channelBotStatus.value && typeof channelBotStatus.value.present === 'boolean') {
+        payload.botInstalled = channelBotStatus.value.present;
+    }
     try {
         await StoryLogs.configure(props.game.id, payload);
         saveNotice.value = 'Campaign settings updated.';
