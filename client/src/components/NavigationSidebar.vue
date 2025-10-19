@@ -165,4 +165,14 @@ function emitSelect(key) {
     color: rgba(255, 255, 255, 0.6);
     text-align: center;
 }
+
+.nav-drawer__nav.nav-drawer--muted {
+    opacity: 0.6;
+    filter: saturate(0.7);
+}
+
+.nav-drawer__nav.nav-drawer--muted .nav-drawer__button {
+    pointer-events: none;
+    cursor: not-allowed;
+}
 </style>
