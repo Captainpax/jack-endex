@@ -63,6 +63,7 @@ const UPLOADS_ROOT = path.join(__dirname, 'uploads');
 const MUSIC_UPLOADS_ROOT = path.join(UPLOADS_ROOT, 'music');
 const storyWatchers = new Map();
 const storyWatcherSkipReasons = new Map();
+const storyValidationQueue = new Map();
 const storySubscribers = new Map();
 const gameSubscribers = new Map();
 const gamePresence = new Map();
@@ -71,6 +72,7 @@ const pendingPersonaRequests = new Map();
 const pendingTrades = new Map();
 const storyBroadcastQueue = new Map();
 const discordBotIdentityCache = new Map();
+let masterBotSettingsCache = null;
 const FUSION_OVERRIDE_RANDOM = 'none';
 const DISCORD_API_BASE = 'https://discord.com/api/v10';
 const DISCORD_OAUTH_AUTHORIZE_URL = 'https://discord.com/oauth2/authorize';
@@ -106,6 +108,8 @@ const DEFAULT_MASTER_BOT_SETTINGS = Object.freeze({
     botToken: '',
     botApplicationId: '',
     defaultInviteUrl: '',
+    defaultGuildId: '',
+    defaultChannelId: '',
     defaultPresence: '',
     displayName: '',
     avatarAsset: '',
@@ -1575,11 +1579,29 @@ function findMapToken(map, tokenId) {
  * @returns {string|null}
  */
 function getDiscordBotToken(env = process.env) {
+    const masterToken = readBotToken(getCachedMasterBotSettings().botToken);
+    if (masterToken) {
+        return masterToken;
+    }
     if (env && typeof env.DISCORD_BOT_TOKEN === 'string' && env.DISCORD_BOT_TOKEN.trim()) {
         return readBotToken(env.DISCORD_BOT_TOKEN);
     }
     if (env && typeof env.BOT_TOKEN === 'string' && env.BOT_TOKEN.trim()) {
         return readBotToken(env.BOT_TOKEN);
+    }
+    return DEFAULT_DISCORD_BOT_TOKEN || null;
+}
+
+function resolveStoryBotToken(story) {
+    const masterToken = getDiscordBotToken();
+    if (masterToken) {
+        return masterToken;
+    }
+    if (story && typeof story === 'object') {
+        const override = readBotToken(story.botToken);
+        if (override) {
+            return override;
+        }
     }
     return DEFAULT_DISCORD_BOT_TOKEN || null;
 }
@@ -2314,6 +2336,7 @@ function readStoryConfigUpdate(body, game) {
     const hasBotToken = Object.prototype.hasOwnProperty.call(body || {}, 'botToken');
     const hasChannelName = Object.prototype.hasOwnProperty.call(body || {}, 'channelName');
     const hasGuildName = Object.prototype.hasOwnProperty.call(body || {}, 'guildName');
+    const hasBotInstalled = Object.prototype.hasOwnProperty.call(body || {}, 'botInstalled');
     const allowedPlayers = new Set(
         Array.isArray(game.players)
             ? game.players.map((p) => (p && typeof p.userId === 'string' ? p.userId : null)).filter(Boolean)
@@ -2342,6 +2365,7 @@ function readStoryConfigUpdate(body, game) {
             ? Math.min(120_000, Math.max(5_000, Math.round(pollMsRaw)))
             : current.pollIntervalMs,
         scribeIds,
+        botInstalled: hasBotInstalled ? !!body?.botInstalled : current.botInstalled,
     };
 }
 
@@ -2496,6 +2520,8 @@ function presentStoryConfig(story, { includeSecrets = false } = {}) {
               allowPlayerPosts: false,
               scribeIds: [],
               pollIntervalMs: 15_000,
+              botInstalled: false,
+              botStatus: createStoryBotStatus(),
           };
     const output = {
         channelId: normalized.channelId || '',
@@ -2508,7 +2534,9 @@ function presentStoryConfig(story, { includeSecrets = false } = {}) {
             ? Number(normalized.pollIntervalMs)
             : 15_000,
         webhookConfigured: !!normalized.webhookUrl,
-        botTokenConfigured: !!(normalized.botToken || getDiscordBotToken()),
+        botTokenConfigured: !!resolveStoryBotToken(normalized),
+        botInstalled: !!normalized.botInstalled,
+        botStatus: normalizeStoryBotStatus(normalized.botStatus),
         primaryBot: {
             available: PRIMARY_DISCORD_INFO.available,
             inviteUrl: PRIMARY_DISCORD_INFO.inviteUrl,
@@ -2561,6 +2589,211 @@ function removeStoryWatcher(gameId) {
     storyWatcherSkipReasons.delete(gameId);
 }
 
+function scheduleStoryValidation(gameId, { delayMs = 250 } = {}) {
+    if (!gameId) return;
+    if (storyValidationQueue.has(gameId)) {
+        clearTimeout(storyValidationQueue.get(gameId));
+    }
+    const timer = setTimeout(() => {
+        storyValidationQueue.delete(gameId);
+        runStoryValidation(gameId).catch((err) => {
+            console.warn(`[discord] Story validation run failed for game ${gameId}`, err);
+        });
+    }, Math.max(0, delayMs));
+    storyValidationQueue.set(gameId, timer);
+}
+
+async function runStoryValidation(gameId) {
+    if (!gameId) return;
+    const nowIso = new Date().toISOString();
+    try {
+        const db = await readDB();
+        const game = getGame(db, gameId);
+        if (!game) {
+            return;
+        }
+
+        const story = ensureStoryConfig(game);
+        const statusUpdate = { ...createStoryBotStatus(story.botStatus), checkedAt: nowIso };
+        let changed = false;
+
+        const applyStatus = (updates = {}) => {
+            Object.assign(statusUpdate, updates);
+            statusUpdate.checkedAt = statusUpdate.checkedAt || nowIso;
+            story.botStatus = createStoryBotStatus(statusUpdate);
+            if (story.botStatus.present === true) {
+                story.botInstalled = true;
+            } else if (story.botStatus.present === false) {
+                story.botInstalled = false;
+            }
+            changed = true;
+        };
+
+        const finalize = async () => {
+            if (!changed) {
+                return;
+            }
+            ensureStoryConfig(game);
+            await persistGame(db, game, { broadcast: false });
+            queueStoryBroadcast(game.id, true);
+            removeStoryWatcher(game.id);
+            getOrCreateStoryWatcher(game);
+        };
+
+        const token = resolveStoryBotToken(story);
+        if (!token) {
+            applyStatus({
+                present: story.botInstalled ? true : null,
+                canRead: null,
+                canPost: null,
+                error: 'No Discord bot token configured for this campaign.',
+                reason: 'missing_token',
+            });
+            story.botInstalled = false;
+            await finalize();
+            return;
+        }
+
+        if (!story.guildId || !story.channelId) {
+            applyStatus({
+                present: story.botInstalled ? true : null,
+                canRead: null,
+                canPost: null,
+                error: 'Discord server or channel not fully configured for this campaign.',
+                reason: 'missing_configuration',
+            });
+            await finalize();
+            return;
+        }
+
+        const identity = await getDiscordBotIdentity(token);
+        if (!identity || typeof identity.id !== 'string') {
+            applyStatus({
+                present: null,
+                canRead: null,
+                canPost: null,
+                error: 'Unable to resolve the Discord bot identity.',
+                reason: 'identity_unavailable',
+            });
+            await finalize();
+            return;
+        }
+
+        applyStatus({ botId: identity.id });
+
+        const memberResult = await fetchDiscordBotMember(story.guildId, token, identity.id);
+        if (memberResult.status === 404) {
+            applyStatus({
+                present: false,
+                canRead: false,
+                canPost: false,
+                error: 'The bot is not a member of the selected Discord server.',
+                reason: 'bot_not_in_guild',
+            });
+            await finalize();
+            return;
+        }
+        if (memberResult.error) {
+            applyStatus({
+                present: null,
+                canRead: null,
+                canPost: null,
+                error: 'Failed to verify bot membership with Discord.',
+                reason: 'bot_member_lookup_failed',
+            });
+            await finalize();
+            return;
+        }
+
+        applyStatus({ present: true });
+
+        const roleMap = await fetchDiscordGuildRoleMap(story.guildId, token);
+        if (!roleMap) {
+            applyStatus({
+                canRead: null,
+                canPost: null,
+                error: 'Unable to load Discord roles to verify permissions.',
+                reason: 'roles_unavailable',
+            });
+            await finalize();
+            return;
+        }
+
+        const channelResult = await fetchDiscordChannel(story.channelId, token);
+        if (channelResult.status === 404) {
+            applyStatus({
+                canRead: false,
+                canPost: false,
+                error: 'Discord reports that the configured channel no longer exists.',
+                reason: 'channel_not_found',
+            });
+            await finalize();
+            return;
+        }
+        if (channelResult.error || !channelResult.channel) {
+            applyStatus({
+                canRead: null,
+                canPost: null,
+                error: 'Failed to load the configured Discord channel.',
+                reason: 'channel_lookup_failed',
+            });
+            await finalize();
+            return;
+        }
+
+        const permissionContext = computeGuildPermissionContext(
+            memberResult.member,
+            roleMap,
+            story.guildId,
+        );
+        if (!permissionContext) {
+            applyStatus({
+                canRead: null,
+                canPost: null,
+                error: 'Unable to compute the bot\'s permissions for the selected channel.',
+                reason: 'permission_context_unavailable',
+            });
+            await finalize();
+            return;
+        }
+
+        const access = computeChannelPermissionAccess(channelResult.channel, {
+            guildId: story.guildId,
+            botId: identity.id,
+            permissionContext,
+        });
+
+        applyStatus({
+            canRead: access.canView,
+            canPost: access.canSend,
+            error: access.canView
+                ? null
+                : 'The bot cannot read messages in the selected channel.',
+            reason: access.canView ? null : 'missing_read_access',
+        });
+
+        await finalize();
+    } catch (err) {
+        console.warn(`[discord] Failed to validate Discord channel for game ${gameId}`, err);
+        try {
+            const db = await readDB();
+            const game = getGame(db, gameId);
+            if (!game) return;
+            const story = ensureStoryConfig(game);
+            story.botStatus = createStoryBotStatus({
+                checkedAt: nowIso,
+                error: 'An unexpected error occurred while validating the Discord channel.',
+                reason: 'validation_failed',
+            });
+            ensureStoryConfig(game);
+            await persistGame(db, game, { broadcast: false });
+            queueStoryBroadcast(game.id, true);
+        } catch (persistErr) {
+            console.warn('[discord] Failed to persist story validation error', persistErr);
+        }
+    }
+}
+
 /**
  * Ensure a watcher exists for the supplied game configuration.
  *
@@ -2569,7 +2802,7 @@ function removeStoryWatcher(gameId) {
  */
 function getOrCreateStoryWatcher(game) {
     const story = ensureStoryConfig(game);
-    const token = story.botToken || getDiscordBotToken();
+    const token = resolveStoryBotToken(story);
     const existing = storyWatchers.get(game.id);
     if (!token || !story.channelId) {
         const reason = !token ? 'missing bot token' : 'missing channel ID';
@@ -2580,6 +2813,52 @@ function getOrCreateStoryWatcher(game) {
         }
         removeStoryWatcher(game.id);
         return null;
+    }
+
+    const status = normalizeStoryBotStatus(story.botStatus);
+    if (story.guildId) {
+        if (status.present === false) {
+            const reason = 'bot not in guild';
+            const previousReason = storyWatcherSkipReasons.get(game.id);
+            if (previousReason !== reason) {
+                console.warn(`[discord] Skipping watcher for game ${game.id}: ${reason}.`);
+                storyWatcherSkipReasons.set(game.id, reason);
+            }
+            removeStoryWatcher(game.id);
+            return null;
+        }
+        if (status.present !== true) {
+            scheduleStoryValidation(game.id, { delayMs: 100 });
+            const reason = 'bot membership not validated';
+            const previousReason = storyWatcherSkipReasons.get(game.id);
+            if (previousReason !== reason) {
+                console.warn(`[discord] Skipping watcher for game ${game.id}: ${reason}.`);
+                storyWatcherSkipReasons.set(game.id, reason);
+            }
+            removeStoryWatcher(game.id);
+            return null;
+        }
+        if (status.canRead === false) {
+            const reason = 'bot lacks channel read access';
+            const previousReason = storyWatcherSkipReasons.get(game.id);
+            if (previousReason !== reason) {
+                console.warn(`[discord] Skipping watcher for game ${game.id}: ${reason}.`);
+                storyWatcherSkipReasons.set(game.id, reason);
+            }
+            removeStoryWatcher(game.id);
+            return null;
+        }
+        if (status.canRead !== true) {
+            scheduleStoryValidation(game.id, { delayMs: 100 });
+            const reason = 'bot channel permissions unverified';
+            const previousReason = storyWatcherSkipReasons.get(game.id);
+            if (previousReason !== reason) {
+                console.warn(`[discord] Skipping watcher for game ${game.id}: ${reason}.`);
+                storyWatcherSkipReasons.set(game.id, reason);
+            }
+            removeStoryWatcher(game.id);
+            return null;
+        }
     }
     storyWatcherSkipReasons.delete(game.id);
 
@@ -2623,7 +2902,7 @@ function getOrCreateStoryWatcher(game) {
  */
 function getStorySnapshot(game) {
     const story = ensureStoryConfig(game);
-    const token = story.botToken || getDiscordBotToken();
+    const token = resolveStoryBotToken(story);
     if (!token) {
         removeStoryWatcher(game.id);
         return {
@@ -2656,6 +2935,56 @@ function getStorySnapshot(game) {
         };
     }
 
+    const statusInfo = normalizeStoryBotStatus(story.botStatus);
+    if (story.guildId) {
+        if (statusInfo.present === false) {
+            removeStoryWatcher(game.id);
+            return {
+                enabled: false,
+                status: {
+                    enabled: false,
+                    phase: 'configuring',
+                    error: 'The Discord bot is not a member of the selected server.',
+                    pollIntervalMs: story.pollIntervalMs,
+                    channel: null,
+                },
+                channel: null,
+                messages: [],
+            };
+        }
+        if (statusInfo.canRead === false) {
+            removeStoryWatcher(game.id);
+            return {
+                enabled: false,
+                status: {
+                    enabled: false,
+                    phase: 'configuring',
+                    error: 'The Discord bot cannot read messages in the configured channel.',
+                    pollIntervalMs: story.pollIntervalMs,
+                    channel: null,
+                },
+                channel: null,
+                messages: [],
+            };
+        }
+        if (statusInfo.present !== true || statusInfo.canRead !== true) {
+            scheduleStoryValidation(game.id, { delayMs: 100 });
+            return {
+                enabled: false,
+                status: {
+                    enabled: false,
+                    phase: 'configuring',
+                    error: statusInfo.error
+                        || 'Validating Discord bot access to the selected channel…',
+                    pollIntervalMs: story.pollIntervalMs,
+                    channel: null,
+                },
+                channel: null,
+                messages: [],
+            };
+        }
+    }
+
     const watcher = getOrCreateStoryWatcher(game);
     if (!watcher) {
         return {
@@ -2663,7 +2992,9 @@ function getStorySnapshot(game) {
             status: {
                 enabled: false,
                 phase: 'configuring',
-                error: 'Discord watcher is not ready yet.',
+                error:
+                    statusInfo.error
+                    || 'Discord watcher is not ready yet.',
                 pollIntervalMs: story.pollIntervalMs,
                 channel: null,
             },
@@ -4432,6 +4763,33 @@ async function fetchDiscordGuildRoleMap(guildId, token) {
     }
 }
 
+async function fetchDiscordChannel(channelId, token) {
+    if (!channelId || !token) {
+        return { channel: null, status: 0, error: 'missing_parameters' };
+    }
+    try {
+        const res = await fetch(`${DISCORD_API_BASE}/channels/${channelId}`, {
+            headers: {
+                Authorization: `Bot ${token}`,
+                Accept: 'application/json',
+            },
+        });
+        if (res.status === 404) {
+            return { channel: null, status: 404 };
+        }
+        if (!res.ok) {
+            return { channel: null, status: res.status, error: 'request_failed' };
+        }
+        const payload = await res.json().catch(() => null);
+        if (!payload || typeof payload !== 'object') {
+            return { channel: null, status: res.status, error: 'invalid_payload' };
+        }
+        return { channel: payload, status: res.status };
+    } catch (err) {
+        return { channel: null, status: 0, error: err?.message || 'request_failed' };
+    }
+}
+
 function computeGuildPermissionContext(member, roleMap, guildId) {
     if (!member || !roleMap) return null;
     const baseRole = typeof roleMap.get === 'function' ? roleMap.get(guildId) : null;
@@ -4513,9 +4871,10 @@ function computeChannelPermissionAccess(channel, { guildId, botId, permissionCon
     return { canView, canSend };
 }
 
-async function computeBotChannelAccess(guildId, channels) {
+async function computeBotChannelAccess(guildId, channels, { token: overrideToken } = {}) {
     const permissionsByChannel = new Map();
-    const botToken = getDiscordBotToken();
+    const resolvedOverride = readBotToken(overrideToken);
+    const botToken = resolvedOverride || getDiscordBotToken();
     if (!botToken) {
         return {
             botId: null,
@@ -4606,11 +4965,60 @@ async function computeBotChannelAccess(guildId, channels) {
     };
 }
 
+const EMPTY_STORY_BOT_STATUS = Object.freeze({
+    present: null,
+    canRead: null,
+    canPost: null,
+    checkedAt: null,
+    error: null,
+    reason: null,
+    botId: null,
+});
+
+function normalizeStoryBotStatus(raw) {
+    const base = { ...EMPTY_STORY_BOT_STATUS };
+    if (!raw || typeof raw !== 'object') {
+        return base;
+    }
+    if (typeof raw.present === 'boolean') {
+        base.present = raw.present;
+    }
+    if (typeof raw.canRead === 'boolean') {
+        base.canRead = raw.canRead;
+    }
+    if (typeof raw.canPost === 'boolean') {
+        base.canPost = raw.canPost;
+    }
+    if (typeof raw.botId === 'string') {
+        const trimmed = raw.botId.trim();
+        base.botId = trimmed ? trimmed : null;
+    }
+    if (typeof raw.reason === 'string') {
+        const trimmed = raw.reason.trim();
+        base.reason = trimmed ? trimmed.slice(0, 120) : null;
+    }
+    if (typeof raw.error === 'string') {
+        const trimmed = raw.error.trim();
+        base.error = trimmed ? trimmed.slice(0, 500) : null;
+    }
+    if (typeof raw.checkedAt === 'string') {
+        const date = new Date(raw.checkedAt);
+        if (!Number.isNaN(date.getTime())) {
+            base.checkedAt = date.toISOString();
+        }
+    }
+    return base;
+}
+
+function createStoryBotStatus(overrides = {}) {
+    return normalizeStoryBotStatus(overrides);
+}
+
 /**
  * Ensure the story configuration is normalized on the game object.
  *
  * @param {any} game
- * @returns {{ channelId: string, guildId: string, channelName: string, guildName: string, webhookUrl: string, botToken: string, allowPlayerPosts: boolean, scribeIds: string[], pollIntervalMs: number }}
+ * @returns {{ channelId: string, guildId: string, channelName: string, guildName: string, webhookUrl: string, botToken: string, allowPlayerPosts: boolean, scribeIds: string[], pollIntervalMs: number, botInstalled: boolean, botStatus: ReturnType<typeof normalizeStoryBotStatus> }}
  */
 function ensureStoryConfig(game) {
     const raw = game && typeof game.story === 'object' ? game.story : {};
@@ -4640,6 +5048,9 @@ function ensureStoryConfig(game) {
           )
         : [];
 
+    const botInstalled = typeof raw.botInstalled === 'boolean' ? raw.botInstalled : !!raw.botInstalled;
+    const botStatus = normalizeStoryBotStatus(raw.botStatus);
+
     const normalized = {
         channelId,
         guildId,
@@ -4650,6 +5061,8 @@ function ensureStoryConfig(game) {
         allowPlayerPosts,
         scribeIds,
         pollIntervalMs,
+        botInstalled,
+        botStatus,
     };
     game.story = normalized;
     return normalized;
@@ -5255,6 +5668,24 @@ function normalizeMasterBotSettings(raw, { existing } = {}) {
         fallback.defaultInviteUrl || DEFAULT_MASTER_BOT_SETTINGS.defaultInviteUrl,
     );
 
+    const defaultGuildId = readSnowflake(
+        pickStringValue({
+            value: source.defaultGuildId,
+            fallbackChain: [fallback.defaultGuildId, DEFAULT_MASTER_BOT_SETTINGS.defaultGuildId],
+            allowEmpty: true,
+            maxLength: 32,
+        }),
+    ) || '';
+
+    const defaultChannelId = readSnowflake(
+        pickStringValue({
+            value: source.defaultChannelId,
+            fallbackChain: [fallback.defaultChannelId, DEFAULT_MASTER_BOT_SETTINGS.defaultChannelId],
+            allowEmpty: true,
+            maxLength: 32,
+        }),
+    ) || '';
+
     const defaultPresence = pickStringValue({
         value: source.defaultPresence,
         fallbackChain: [fallback.defaultPresence, DEFAULT_MASTER_BOT_SETTINGS.defaultPresence],
@@ -5293,6 +5724,8 @@ function normalizeMasterBotSettings(raw, { existing } = {}) {
         botToken,
         botApplicationId,
         defaultInviteUrl,
+        defaultGuildId,
+        defaultChannelId,
         defaultPresence,
         displayName,
         avatarAsset,
@@ -5319,6 +5752,8 @@ function prepareMasterBotSettingsForStorage(settings) {
         botToken: botTokenStored,
         botApplicationId: settings.botApplicationId,
         defaultInviteUrl: settings.defaultInviteUrl,
+        defaultGuildId: settings.defaultGuildId,
+        defaultChannelId: settings.defaultChannelId,
         defaultPresence: settings.defaultPresence,
         displayName: settings.displayName,
         avatarAsset: settings.avatarAsset,
@@ -5345,11 +5780,40 @@ function maskMasterBotSettings(settings) {
         botToken: maskedBotToken,
         botApplicationId: settings.botApplicationId,
         defaultInviteUrl: settings.defaultInviteUrl,
+        defaultGuildId: settings.defaultGuildId,
+        defaultChannelId: settings.defaultChannelId,
         defaultPresence: settings.defaultPresence,
         displayName: settings.displayName,
         avatarAsset: settings.avatarAsset,
     };
 }
+
+function getCachedMasterBotSettings() {
+    if (!masterBotSettingsCache) {
+        masterBotSettingsCache = normalizeMasterBotSettings({});
+    }
+    return masterBotSettingsCache;
+}
+
+function applyMasterBotSettingsCache(settings) {
+    const normalized = normalizeMasterBotSettings(settings || {});
+    const primaryToken = readBotToken(normalized.botToken);
+    const defaultGuild = readSnowflake(normalized.defaultGuildId)
+        || readSnowflake(DEFAULT_DISCORD_GUILD_ID)
+        || null;
+    const defaultChannel = readSnowflake(normalized.defaultChannelId)
+        || readSnowflake(DEFAULT_DISCORD_CHANNEL_ID)
+        || null;
+
+    masterBotSettingsCache = { ...normalized, botToken: primaryToken || '' };
+    PRIMARY_DISCORD_INFO.available = !!(primaryToken || DEFAULT_DISCORD_BOT_TOKEN);
+    PRIMARY_DISCORD_INFO.inviteUrl = normalized.defaultInviteUrl || DEFAULT_DISCORD_INVITE || null;
+    PRIMARY_DISCORD_INFO.applicationId = normalized.botApplicationId || DEFAULT_DISCORD_APPLICATION_ID || null;
+    PRIMARY_DISCORD_INFO.defaultGuildId = defaultGuild;
+    PRIMARY_DISCORD_INFO.defaultChannelId = defaultChannel;
+}
+
+applyMasterBotSettingsCache(getCachedMasterBotSettings());
 
 function resolveDiscordOAuthClient(settings) {
     const clientId =
@@ -5375,8 +5839,9 @@ function resolveDiscordOAuthClient(settings) {
 
 async function getMasterBotSettings() {
     const doc = await ServerSetting.findOne({ key: MASTER_DISCORD_SETTINGS_KEY }).lean();
-    if (!doc) return normalizeMasterBotSettings({});
-    return normalizeMasterBotSettings(doc.value || {});
+    const normalized = doc ? normalizeMasterBotSettings(doc.value || {}) : normalizeMasterBotSettings({});
+    applyMasterBotSettingsCache(normalized);
+    return normalized;
 }
 
 async function saveMasterBotSettings(settings) {
@@ -5389,6 +5854,7 @@ async function saveMasterBotSettings(settings) {
         { value: stored },
         { upsert: true, setDefaultsOnInsert: true },
     );
+    applyMasterBotSettingsCache(normalized);
     return normalized;
 }
 
@@ -6425,11 +6891,15 @@ app.post('/api/games', requireAuth, async (req, res) => {
         story: {
             channelId: '',
             guildId: '',
+            channelName: '',
+            guildName: '',
             webhookUrl: '',
             botToken: '',
             allowPlayerPosts: false,
             scribeIds: [],
             pollIntervalMs: 15_000,
+            botInstalled: false,
+            botStatus: createStoryBotStatus(),
         },
         map: {
             strokes: [],
@@ -8808,12 +9278,47 @@ storyConfigRouter.put('/', async (req, res) => {
         return res.status(403).json({ error: 'forbidden' });
     }
 
+    const previous = ensureStoryConfig(game);
     const update = readStoryConfigUpdate(req.body || {}, game);
+    const targetChanged =
+        (update.guildId || '') !== (previous.guildId || '')
+        || (update.channelId || '') !== (previous.channelId || '');
+
     game.story = { ...game.story, ...update };
+    if (targetChanged) {
+        game.story.botStatus = createStoryBotStatus(
+            update.botInstalled === true ? { present: true } : {},
+        );
+    } else if (
+        Object.prototype.hasOwnProperty.call(req.body || {}, 'botInstalled')
+        && update.botInstalled !== previous.botInstalled
+    ) {
+        const baseStatus = createStoryBotStatus(previous.botStatus);
+        if (update.botInstalled === true) {
+            baseStatus.present = true;
+        } else if (update.botInstalled === false) {
+            baseStatus.present = false;
+        }
+        baseStatus.canRead = null;
+        baseStatus.canPost = null;
+        baseStatus.error = null;
+        baseStatus.reason = null;
+        baseStatus.checkedAt = null;
+        game.story.botStatus = createStoryBotStatus(baseStatus);
+    }
     ensureStoryConfig(game);
     removeStoryWatcher(game.id);
     getOrCreateStoryWatcher(game);
     await persistGame(db, game);
+
+    if (targetChanged) {
+        scheduleStoryValidation(game.id, { delayMs: 50 });
+    } else if (
+        Object.prototype.hasOwnProperty.call(req.body || {}, 'botInstalled')
+        && update.botInstalled !== previous.botInstalled
+    ) {
+        scheduleStoryValidation(game.id, { delayMs: 250 });
+    }
 
     res.json({
         ok: true,
@@ -8900,7 +9405,7 @@ app.delete('/api/games/:id/story-log/messages/:messageId', requireAuth, async (r
     }
 
     const story = ensureStoryConfig(game);
-    const token = story.botToken || getDiscordBotToken();
+    const token = resolveStoryBotToken(story);
     if (!token || !story.channelId) {
         return res.status(400).json({ error: 'not_configured' });
     }
@@ -9099,6 +9604,13 @@ function clearStoryBroadcastQueue() {
     storyBroadcastQueue.clear();
 }
 
+function clearStoryValidationQueue() {
+    for (const timer of storyValidationQueue.values()) {
+        clearTimeout(timer);
+    }
+    storyValidationQueue.clear();
+}
+
 function clearPersonaRequests() {
     for (const request of pendingPersonaRequests.values()) {
         if (request?.timeout) {
@@ -9216,6 +9728,7 @@ async function shutdownServer({ signal = null, exitCode = 0 } = {}) {
         gameSubscribers.clear();
         userSockets.clear();
         gamePresence.clear();
+        clearStoryValidationQueue();
 
         shutdownLogger.info('Graceful shutdown complete.');
         return exitCode;
@@ -9280,6 +9793,9 @@ async function startServer() {
     await ensureInitialItemDocs();
     await ensureInitialDemonDocs();
     startupLogger.info('Initial data ready.');
+
+    startupLogger.info('Loading Discord master settings…');
+    await getMasterBotSettings();
 
     startupLogger.info('Checking Discord bot availability…');
     await ensureDiscordBotOnline();

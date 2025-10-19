@@ -881,6 +881,7 @@ export const StoryLogs = {
      *   guildName?: string,
      *   webhookUrl?: string,
      *   botToken?: string,
+     *   botInstalled?: boolean,
      *   allowPlayerPosts?: boolean,
      *   scribeIds?: string[],
      *   pollIntervalMs?: number
