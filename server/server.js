@@ -254,6 +254,9 @@ const DEFAULT_DISCORD_GUILD_ID = envString('DISCORD_PRIMARY_GUILD_ID')
     || envString('DISCORD_GUILD_ID')
     || envString('DISCORD_SERVER_ID');
 const DEFAULT_DISCORD_CHANNEL_ID = envString('DISCORD_PRIMARY_CHANNEL_ID') || envString('DISCORD_CHANNEL_ID');
+const DEFAULT_DISCORD_OAUTH_CLIENT_ID = envString('DISCORD_OAUTH_CLIENT_ID');
+const DEFAULT_DISCORD_OAUTH_CLIENT_SECRET = envString('DISCORD_OAUTH_CLIENT_SECRET');
+const DEFAULT_DISCORD_OAUTH_REDIRECT_URI = envString('DISCORD_OAUTH_REDIRECT_URI');
 const DEFAULT_DISCORD_POLL_INTERVAL_MS = envNumber('DISCORD_POLL_INTERVAL_MS', 15_000) || 15_000;
 const PRIMARY_DISCORD_INFO = {
     available: !!DEFAULT_DISCORD_BOT_TOKEN,
@@ -5596,9 +5599,47 @@ function normalizeOAuthSettings(raw, { fallback = DEFAULT_MASTER_BOT_SETTINGS.oa
 
 function normalizeMasterBotSettings(raw, { existing } = {}) {
     const source = isPlainObject(raw) ? raw : {};
+    const preferEnvDefaults = existing === undefined;
     const fallback = isPlainObject(existing) ? existing : DEFAULT_MASTER_BOT_SETTINGS;
-    const fallbackOauth = normalizeOAuthSettings(fallback.oauth || {});
+
+    const envOauthClientId = preferEnvDefaults
+        ? pickStringValue({
+            value: DEFAULT_DISCORD_OAUTH_CLIENT_ID,
+            maxLength: 128,
+            allowEmpty: true,
+        })
+        : '';
+    const envOauthClientSecret = preferEnvDefaults
+        ? resolveSecretField(DEFAULT_DISCORD_OAUTH_CLIENT_SECRET, {
+            fallback:
+                DEFAULT_MASTER_BOT_SETTINGS.oauthClientSecret
+                || DEFAULT_MASTER_BOT_SETTINGS.oauth.clientSecret,
+            maxLength: 256,
+        })
+        : '';
+    const envOauthRedirectUri = preferEnvDefaults
+        ? normalizeHttpUrl(
+            DEFAULT_DISCORD_OAUTH_REDIRECT_URI,
+            DEFAULT_MASTER_BOT_SETTINGS.oauthRedirectUri
+                || DEFAULT_MASTER_BOT_SETTINGS.oauth.redirectUrl,
+        )
+        : '';
+
+    const fallbackOauthTemplate = preferEnvDefaults
+        ? {
+            ...DEFAULT_MASTER_BOT_SETTINGS.oauth,
+            clientId: envOauthClientId || DEFAULT_MASTER_BOT_SETTINGS.oauth.clientId,
+            clientSecret: envOauthClientSecret || DEFAULT_MASTER_BOT_SETTINGS.oauth.clientSecret,
+            redirectUrl: envOauthRedirectUri || DEFAULT_MASTER_BOT_SETTINGS.oauth.redirectUrl,
+        }
+        : DEFAULT_MASTER_BOT_SETTINGS.oauth;
+    const fallbackOauthSource = fallback === DEFAULT_MASTER_BOT_SETTINGS ? {} : fallback.oauth;
+    const fallbackOauth = normalizeOAuthSettings(fallbackOauthSource || {}, { fallback: fallbackOauthTemplate });
     const legacyOauth = normalizeOAuthSettings(source.oauth, { fallback: fallbackOauth });
+
+    const sourceHasTopLevelOauthClientId = Object.prototype.hasOwnProperty.call(source, 'oauthClientId');
+    const sourceHasLegacyOauthClientId =
+        isPlainObject(source.oauth) && Object.prototype.hasOwnProperty.call(source.oauth, 'clientId');
 
     const prefix = pickStringValue({
         value: source.prefix,
@@ -5624,32 +5665,78 @@ function normalizeMasterBotSettings(raw, { existing } = {}) {
     const eventsSource = isPlainObject(source.events) ? source.events : fallback.events;
     const events = normalizeEventToggles(eventsSource ?? fallback.events, DEFAULT_MASTER_BOT_SETTINGS.events);
 
-    const oauthClientId = pickStringValue({
+    const oauthClientIdFallbacks = [legacyOauth.clientId, fallback.oauthClientId, fallbackOauth.clientId];
+    if (preferEnvDefaults) {
+        oauthClientIdFallbacks.push(envOauthClientId);
+    }
+    let oauthClientId = pickStringValue({
         value: source.oauthClientId,
-        fallbackChain: [legacyOauth.clientId, fallback.oauthClientId, fallbackOauth.clientId],
+        fallbackChain: oauthClientIdFallbacks,
         maxLength: 128,
         allowEmpty: true,
     });
+    if (
+        preferEnvDefaults
+        && !oauthClientId
+        && envOauthClientId
+        && !sourceHasTopLevelOauthClientId
+        && !sourceHasLegacyOauthClientId
+    ) {
+        oauthClientId = envOauthClientId;
+    }
 
+    const sourceHasTopLevelOauthSecret = Object.prototype.hasOwnProperty.call(source, 'oauthClientSecret');
+    const sourceHasLegacyOauthSecret =
+        isPlainObject(source.oauth) && Object.prototype.hasOwnProperty.call(source.oauth, 'clientSecret');
+    const fallbackSecretFallback =
+        fallbackOauth.clientSecret
+        || (preferEnvDefaults ? envOauthClientSecret : '')
+        || DEFAULT_MASTER_BOT_SETTINGS.oauthClientSecret
+        || DEFAULT_MASTER_BOT_SETTINGS.oauth.clientSecret;
     const fallbackOauthSecret = resolveSecretField(
         fallback.oauthClientSecret !== undefined ? fallback.oauthClientSecret : fallbackOauth.clientSecret,
-        { fallback: DEFAULT_MASTER_BOT_SETTINGS.oauthClientSecret, maxLength: 256 },
+        { fallback: fallbackSecretFallback, maxLength: 256 },
     );
+    const sourceSecretCandidate =
+        source.oauthClientSecret !== undefined ? source.oauthClientSecret : legacyOauth.clientSecret;
+    let oauthClientSecret = resolveSecretField(sourceSecretCandidate, {
+        fallback: fallbackOauthSecret || fallbackSecretFallback,
+        maxLength: 256,
+    });
+    if (
+        preferEnvDefaults
+        && !oauthClientSecret
+        && envOauthClientSecret
+        && !sourceHasTopLevelOauthSecret
+        && !sourceHasLegacyOauthSecret
+    ) {
+        oauthClientSecret = envOauthClientSecret;
+    }
 
-    const oauthClientSecret = resolveSecretField(
-        source.oauthClientSecret !== undefined ? source.oauthClientSecret : legacyOauth.clientSecret,
-        { fallback: fallbackOauthSecret, maxLength: 256 },
-    );
-
+    const sourceHasTopLevelRedirect = Object.prototype.hasOwnProperty.call(source, 'oauthRedirectUri');
+    const sourceHasLegacyRedirect =
+        isPlainObject(source.oauth) && Object.prototype.hasOwnProperty.call(source.oauth, 'redirectUrl');
+    const redirectFallbackBase =
+        (preferEnvDefaults && envOauthRedirectUri)
+        || DEFAULT_MASTER_BOT_SETTINGS.oauthRedirectUri
+        || DEFAULT_MASTER_BOT_SETTINGS.oauth.redirectUrl;
     const redirectFallback = normalizeHttpUrl(
         fallback.oauthRedirectUri !== undefined ? fallback.oauthRedirectUri : fallbackOauth.redirectUrl,
-        DEFAULT_MASTER_BOT_SETTINGS.oauthRedirectUri || DEFAULT_MASTER_BOT_SETTINGS.oauth.redirectUrl,
+        redirectFallbackBase,
     );
-
-    const oauthRedirectUri = normalizeHttpUrl(
+    let oauthRedirectUri = normalizeHttpUrl(
         source.oauthRedirectUri,
-        legacyOauth.redirectUrl || redirectFallback,
+        legacyOauth.redirectUrl || redirectFallback || redirectFallbackBase,
     );
+    if (
+        preferEnvDefaults
+        && !oauthRedirectUri
+        && envOauthRedirectUri
+        && !sourceHasTopLevelRedirect
+        && !sourceHasLegacyRedirect
+    ) {
+        oauthRedirectUri = envOauthRedirectUri;
+    }
 
     const botToken = resolveSecretField(source.botToken, {
         fallback: fallback.botToken || DEFAULT_MASTER_BOT_SETTINGS.botToken,

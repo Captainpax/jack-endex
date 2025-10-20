@@ -173,6 +173,20 @@ fields are protected at rest with AES-256-GCM when `MASTER_BOT_SECRET_KEY` is de
 encryption/decryption lives in `server/lib/secretStorage.js` and can be reused for other secrets. Without the key the values are
 stored in plain text, so make sure to provide a strong, 32+ character passphrase in production.
 
+To seed the OAuth credentials without touching the database directly, provide the following environment variables before the
+server boots:
+
+```ini
+DISCORD_OAUTH_CLIENT_ID=123456789012345678
+DISCORD_OAUTH_CLIENT_SECRET=super-secret-client-token
+DISCORD_OAUTH_REDIRECT_URI=https://jack-api.example.com/api/auth/discord/callback
+```
+
+When these variables are present the `/api/auth/discord/start` endpoint automatically falls back to them, so the Discord login
+flow works on first boot. The values appear (with secrets masked) in **Admin → Master bot**, letting operators review or
+overwrite them later. Subsequent updates through the admin UI keep the environment-derived defaults unless an administrator
+explicitly replaces or clears a field.
+
 ### Story synchronization
 
 Each campaign can read and post to a dedicated Discord channel. In **Settings → Discord story integration** the DM can set:
