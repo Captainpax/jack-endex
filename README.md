@@ -174,7 +174,7 @@ encryption/decryption lives in `server/lib/secretStorage.js` and can be reused f
 stored in plain text, so make sure to provide a strong, 32+ character passphrase in production.
 
 To seed the OAuth credentials without touching the database directly, provide the following environment variables before the
-server boots:
+server boots (mirrored in `.env.example` under "Discord OAuth"):
 
 ```ini
 DISCORD_OAUTH_CLIENT_ID=123456789012345678
