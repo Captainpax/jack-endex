@@ -39,6 +39,7 @@ import {
     buildDiscordOAuthRedirectLocation,
     sanitizeDiscordRedirectPath,
 } from './lib/discordOAuthRedirect.js';
+import { createDiscordOAuthStartHandler } from './routes/discordOAuthStart.handler.js';
 import { DEFAULT_WORLD_SKILLS } from '../shared/worldSkills.js';
 import { findCombatSkillById, findCombatSkillByName } from '../shared/combatSkills.js';
 import { MUSIC_TRACKS, getMusicTrack } from '../shared/music/index.js';
@@ -6085,52 +6086,18 @@ async function redirectWithSession(req, res, location) {
     return true;
 }
 
-app.get('/api/auth/discord/start', async (req, res) => {
-    try {
-        const settings = await getMasterBotSettings();
-        const clientId =
-            typeof settings.oauthClientId === 'string' && settings.oauthClientId
-                ? settings.oauthClientId
-                : typeof settings.oauth?.clientId === 'string'
-                    ? settings.oauth.clientId
-                    : '';
-        const redirectUrl =
-            typeof settings.oauthRedirectUri === 'string' && settings.oauthRedirectUri
-                ? settings.oauthRedirectUri
-                : typeof settings.oauth?.redirectUrl === 'string'
-                    ? settings.oauth.redirectUrl
-                    : '';
-
-        if (!clientId || !redirectUrl) {
-            return res.status(400).json({ error: 'discord_oauth_not_configured' });
-        }
-
-        const redirectParam = Array.isArray(req.query?.redirect)
-            ? req.query.redirect[0]
-            : req.query?.redirect;
-        const redirectPath = sanitizeDiscordRedirectPath(redirectParam);
-
-        const state = crypto.randomBytes(16).toString('hex');
-        req.session.discordOAuth = {
-            state,
-            createdAt: Date.now(),
-            ...(redirectPath ? { redirect: redirectPath } : {}),
-        };
-
-        const authorizeUrl = new URL(DISCORD_OAUTH_AUTHORIZE_URL);
-        authorizeUrl.searchParams.set('response_type', 'code');
-        authorizeUrl.searchParams.set('client_id', clientId);
-        authorizeUrl.searchParams.set('scope', DISCORD_OAUTH_SCOPES.join(' '));
-        authorizeUrl.searchParams.set('redirect_uri', redirectUrl);
-        authorizeUrl.searchParams.set('state', state);
-        authorizeUrl.searchParams.set('prompt', 'consent');
-
-        await redirectWithSession(req, res, authorizeUrl.toString());
-    } catch (err) {
-        discordLogger.error('Failed to initiate Discord OAuth flow.', err);
-        res.status(500).json({ error: 'discord_oauth_start_failed' });
-    }
+const discordOAuthStartHandler = createDiscordOAuthStartHandler({
+    getMasterBotSettings,
+    sanitizeDiscordRedirectPath,
+    buildDiscordOAuthRedirectLocation,
+    redirectWithSession,
+    randomState: () => crypto.randomBytes(16).toString('hex'),
+    logger: discordLogger,
+    authorizeUrl: DISCORD_OAUTH_AUTHORIZE_URL,
+    scopes: DISCORD_OAUTH_SCOPES,
 });
+
+app.get('/api/auth/discord/start', discordOAuthStartHandler);
 
 app.get('/api/auth/discord/callback', async (req, res) => {
     const queryError = typeof req.query?.error === 'string' ? req.query.error : '';
